@@ -94,6 +94,43 @@ def send_alert(store_id: str, title: str, body: str, urgent: bool = False) -> bo
     return send_telegram(store_id, message)
 
 
+def send_alert_with_buttons(
+    store_id: str,
+    text: str,
+    buttons: list[list[tuple[str, str]]],
+) -> bool:
+    """
+    Envía mensaje con teclado inline de confirmación.
+    buttons: lista de filas, cada fila es lista de (label, callback_data).
+    Permite que el encargado confirme donaciones con un solo toque.
+    """
+    if not _TOKEN:
+        return False
+    chat_id = _get_chat_id(store_id)
+    if not chat_id:
+        return False
+
+    inline_keyboard = [
+        [{"text": label, "callback_data": cb} for label, cb in row]
+        for row in buttons
+    ]
+    url = f"https://api.telegram.org/bot{_TOKEN}/sendMessage"
+    try:
+        resp = requests.post(
+            url,
+            json={
+                "chat_id": chat_id,
+                "text": text[:4096],
+                "reply_markup": {"inline_keyboard": inline_keyboard},
+            },
+            timeout=10,
+        )
+        return resp.status_code == 200
+    except Exception as e:
+        print(f"[notifier] send_alert_with_buttons error: {e}")
+        return False
+
+
 def send_dm(telegram_user_id: str, text: str) -> bool:
     """Envía un mensaje directo a un usuario de Telegram por su ID numérico."""
     if not _TOKEN or not telegram_user_id:

@@ -42,28 +42,37 @@ def advance(days: float, store_id: str = STORE_ID, generate_brief: bool = True) 
     today = date.today()
     delta = timedelta(days=days)
     result = {"days": days, "batches_updated": 0, "actions_created": 0,
-              "actions_completed": 0, "brief_generated": False}
+              "actions_completed": 0, "stock_reduced": 0, "brief_generated": False}
 
-    # 1. Actualizar fechas de caducidad de batches activos
+    # 1. Actualizar fechas de caducidad de batches activos + reducción realista de stock
     batches = db.table("batches").select("*").eq("store_id", store_id).eq("status", "active").execute()
     updated = 0
+    stock_reduced = 0
     for batch in (batches.data or []):
         old_date = date.fromisoformat(batch["expiry_date"])
         new_date = old_date - delta
         new_status = "active"
         if new_date < today:
-            new_status = "sold"  # caducó — marcar como vendido/retirado
-        db.table("batches").update({
-            "expiry_date": new_date.isoformat(),
-            "status": new_status,
-        }).eq("id", batch["id"]).execute()
+            new_status = "sold"
+        update_data = {"expiry_date": new_date.isoformat(), "status": new_status}
+
+        # Simular ventas diarias: reducir stock entre 0-30% por día avanzado
+        qty = int(batch.get("quantity", 0))
+        if qty > 0 and new_status == "active":
+            sold_per_day = max(0, int(qty * random.uniform(0.05, 0.20)))
+            total_sold = min(qty - 1, sold_per_day * int(days))
+            if total_sold > 0:
+                update_data["quantity"] = qty - total_sold
+                stock_reduced += total_sold
+
+        db.table("batches").update(update_data).eq("id", batch["id"]).execute()
         updated += 1
     result["batches_updated"] = updated
+    result["stock_reduced"] = stock_reduced
 
-    # 2. Marcar algunas acciones pending como completadas (simula trabajo del personal)
+    # 2. Marcar acciones pending como completadas (simula trabajo del personal)
     pending = db.table("actions").select("*").eq("store_id", store_id).eq("status", "pending").execute()
     pending_list = pending.data or []
-    # Completar ~60% de las acciones que NO sean CRÍTICO (score < 85)
     to_complete = [a for a in pending_list if (a.get("priority_score") or 0) < 85]
     n_complete = max(0, int(len(to_complete) * 0.6))
     completed = 0
@@ -141,11 +150,32 @@ def advance(days: float, store_id: str = STORE_ID, generate_brief: bool = True) 
         except Exception:
             pass
 
+    # 6. Notificar por Telegram: resumen del avance para la demo
+    try:
+        from backend.agents import notifier
+        fresh_pending = db.table("actions").select("priority_score").eq("store_id", store_id).eq("status", "pending").execute()
+        criticos = [a for a in (fresh_pending.data or []) if (a.get("priority_score") or 0) >= 85]
+        sim_day = today + timedelta(days=days)
+        tg_text = (
+            f"KUINE — Avance de simulación +{days:.0f}d\n\n"
+            f"Día simulado: {sim_day.isoformat()}\n"
+            f"Lotes actualizados: {result['batches_updated']}\n"
+            f"Acciones nuevas: {result['actions_created']}\n"
+            f"Acciones completadas: {result['actions_completed']}\n"
+            f"Ventas simuladas: {result['stock_reduced']} unidades\n\n"
+            f"Acciones CRITICAS ahora: {len(criticos)}\n\n"
+            f"El dashboard y las acciones reflejan el nuevo estado."
+        )
+        notifier.send_telegram(store_id, tg_text)
+    except Exception:
+        pass
+
     print(
         f"[advance_demo] +{days}d → "
         f"{result['batches_updated']} lotes, "
         f"{result['actions_created']} acciones nuevas, "
-        f"{result['actions_completed']} completadas"
+        f"{result['actions_completed']} completadas, "
+        f"{result['stock_reduced']} uds vendidas"
     )
     return result
 

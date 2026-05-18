@@ -95,41 +95,68 @@ def build_scheduler(store_id: str) -> BackgroundScheduler:
 
 def _proactive_monitor(store_id: str) -> None:
     """
-    Kuine monitoriza la tienda cada 30 minutos y avisa a Chuwi si algo cambia.
-    Detecta: nuevos CRÍTICOS, exceso de stock próximo a caducar → propone donación.
+    Kuine monitoriza la tienda cada 30 minutos.
+    Para productos con exceso de stock próximos a caducar: envía botones de donación
+    para que el encargado confirme con un solo toque (sin escribir nada).
     """
     from backend.core import database
     from backend.agents import notifier
+    import datetime as _dt
 
     try:
+        today_iso = _dt.date.today().isoformat()
         batches = database.get_batches_expiring_soon(store_id, days=2)
         pending_ids = {a.get("batch_id") for a in database.get_pending_actions(store_id)}
 
         nuevos_criticos = [
             b for b in batches
             if b.get("id") not in pending_ids
-            and (
-                b.get("expiry_date", "9999") <= __import__("datetime").date.today().isoformat()
-            )
+            and b.get("expiry_date", "9999") <= today_iso
         ]
 
         if not nuevos_criticos:
             return
 
-        lines = ["Kuine ha detectado productos sin acción asignada:\n"]
-        for b in nuevos_criticos[:4]:
-            p = (b.get("products") or {})
+        # Para productos con exceso de stock: proponer donación con botones inline
+        donacion_candidatos = [b for b in nuevos_criticos if int(b.get("quantity", 0)) >= 5]
+        sin_donacion = [b for b in nuevos_criticos if int(b.get("quantity", 0)) < 5]
+
+        for batch in donacion_candidatos[:3]:
+            p = (batch.get("products") or {})
             name = p.get("name", "Producto")
             pasillo = p.get("pasillo", "?")
-            qty = b.get("quantity", 0)
-            exp = b.get("expiry_date", "?")
-            lines.append(f"• {name} | Pasillo {pasillo} | {qty} uds | Caduca {exp}")
-            if qty >= 5:
-                lines.append(f"  → Stock elevado: considera donación al banco de alimentos")
+            qty = int(batch.get("quantity", 0))
+            exp = batch.get("expiry_date", "?")
+            batch_id = batch.get("id", "")
 
-        lines.append("\nRevisa las acciones pendientes o escribe a Chuwi.")
-        notifier.send_alert(store_id, "Kuine — Alerta proactiva", "\n".join(lines), urgent=False)
-        logger.info(f"[kuine] Alerta proactiva: {len(nuevos_criticos)} productos sin acción")
+            text = (
+                f"KUINE — Donación sugerida\n\n"
+                f"{name} | Pasillo {pasillo}\n"
+                f"{qty} unidades | Caduca {exp}\n\n"
+                f"Stock elevado + caducidad hoy. ¿Lo donamos?"
+            )
+            buttons = [
+                [("❤️ Banco de Alimentos", f"donate_now:banco_alimentos:{batch_id}"),
+                 ("🤝 Cáritas", f"donate_now:caritas:{batch_id}")],
+                [("🏥 Cruz Roja", f"donate_now:cruz_roja:{batch_id}"),
+                 ("💰 Mejor rebajar", f"donate_now:rebajar:{batch_id}")],
+                [("❌ Ya gestionado", f"donate_now:skip:{batch_id}")],
+            ]
+            notifier.send_alert_with_buttons(store_id, text, buttons)
+
+        if sin_donacion:
+            lines = ["Kuine — Nuevos productos sin acción asignada:\n"]
+            for b in sin_donacion[:4]:
+                p = (b.get("products") or {})
+                name = p.get("name", "Producto")
+                pasillo = p.get("pasillo", "?")
+                qty = b.get("quantity", 0)
+                exp = b.get("expiry_date", "?")
+                lines.append(f"• {name} | Pasillo {pasillo} | {qty} uds | Caduca {exp}")
+            lines.append("\nRevisa las acciones pendientes o escribe a Chuwi.")
+            notifier.send_alert(store_id, "Kuine — Alerta proactiva", "\n".join(lines), urgent=False)
+
+        logger.info(f"[kuine] Monitor proactivo: {len(nuevos_criticos)} productos, {len(donacion_candidatos)} con botones de donación")
 
     except Exception as e:
         logger.debug(f"[kuine] Monitor proactivo: {e}")

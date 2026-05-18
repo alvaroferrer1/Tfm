@@ -442,21 +442,483 @@ def _route_action_keyboard(action_id: str, remaining: int) -> InlineKeyboardMark
     return InlineKeyboardMarkup(rows)
 
 
-# ── Detección de intenciones y estado ─────────────────────────────────────────
+# ── Herramientas del agente Chuwi ── Claude decide cuál usar, no if/else ──────
+# Esta es la diferencia entre un agente real y un bot: Claude razona sobre
+# qué información necesita y llama las herramientas que corresponden.
 
-_INTENT_KEYWORDS: dict[str, list[str]] = {
-    "brief": ["brief", "resumen", "apertura", "hoy", "mañana", "día"],
-    "acciones": ["accion", "acción", "pendiente", "urgente", "critico", "crítico", "tarea"],
-    "ruta": ["ruta", "pasillo", "recorrido", "orden", "camino"],
-    "merma": ["merma", "perdida", "pérdida", "caducado", "vencido", "tirado"],
-    "donaciones": ["donacion", "donación", "banco de alimentos", "impacto", "social"],
-    "scan": ["escanear", "escanea", "codigo", "código", "barcode", "barras", "/scan"],
-    "proveedores": ["proveedor", "suministrador"],
-    "pedido": ["pedido", "pedir", "reposicion", "reposición", "comprar"],
-    "ayuda": ["ayuda", "qué puedes", "que puedes", "qué sabes", "que sabes", "capacidades"],
-    "stats": ["stats", "dashboard", "kpi", "kpis", "resumen tienda", "cuadro de mando"],
-    "citar": ["normativa", "por qué", "porque hay que", "citar", "justifica", "reglamento", "regla"],
+_TOOL_LABELS: dict[str, str] = {
+    "get_store_overview": "Consultando estado de la tienda",
+    "get_pending_actions": "Cargando acciones pendientes",
+    "get_daily_route": "Generando ruta del día",
+    "complete_action": "Registrando acción completada",
+    "analyze_product": "Analizando producto",
+    "get_merma_stats": "Consultando estadísticas de merma",
+    "get_donation_impact": "Calculando impacto social",
+    "register_donation": "Registrando donación",
+    "get_suppliers": "Cargando ficha de proveedores",
+    "get_esg_metrics": "Calculando métricas ESG",
+    "advance_demo_time": "Avanzando tiempo de simulación",
+    "get_order_suggestions": "Calculando pedido semanal",
 }
+
+CHUWI_TOOLS = [
+    {
+        "name": "get_store_overview",
+        "description": (
+            "Estado general de la tienda: acciones pendientes, críticos, valor en riesgo y resumen del brief. "
+            "Usar cuando el empleado pregunte por el estado de hoy, qué hay que hacer, si hay urgencias, "
+            "o cuando necesites contexto antes de responder otra pregunta."
+        ),
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "get_pending_actions",
+        "description": (
+            "Lista detallada de todas las acciones pendientes ordenadas por prioridad. "
+            "Usar cuando pregunten qué acciones hay, qué productos son críticos, "
+            "qué hay que hacer hoy, o para saber qué acción completar."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "max_results": {"type": "integer", "default": 10, "description": "Número máximo de acciones"},
+            },
+        },
+    },
+    {
+        "name": "get_daily_route",
+        "description": (
+            "Ruta óptima del día organizada por pasillos para hacer las acciones pendientes de forma eficiente. "
+            "Usar cuando pidan la ruta del día, el recorrido, o cómo hacer las acciones en orden."
+        ),
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "complete_action",
+        "description": (
+            "Marca una acción como completada y lo registra en la base de datos. "
+            "Usar cuando el empleado diga que ya hizo algo, que está listo, hecho, terminado. "
+            "IMPORTANTE: si no sabes el action_id, primero llama a get_pending_actions."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action_id": {"type": "string", "description": "ID de la acción a completar"},
+                "notes": {"type": "string", "description": "Notas opcionales del empleado"},
+            },
+            "required": ["action_id"],
+        },
+    },
+    {
+        "name": "analyze_product",
+        "description": (
+            "Analiza un producto por código de barras: días hasta caducidad, precio, acción recomendada. "
+            "Usar cuando el empleado mencione un código de barras o pida analizar un producto específico."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "barcode": {"type": "string", "description": "Código de barras del producto (6-14 dígitos)"},
+            },
+            "required": ["barcode"],
+        },
+    },
+    {
+        "name": "get_merma_stats",
+        "description": (
+            "Estadísticas de merma: valor perdido en euros, unidades, productos más problemáticos. "
+            "Usar cuando pregunten sobre merma, pérdidas, qué se ha tirado, valor perdido."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days": {"type": "integer", "default": 7, "description": "Días hacia atrás (default: 7)"},
+            },
+        },
+    },
+    {
+        "name": "get_donation_impact",
+        "description": (
+            "Impacto social de las donaciones al banco de alimentos y otras entidades. "
+            "Usar cuando pregunten sobre donaciones, impacto social, CO2 evitado, cuánto se ha donado."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days": {"type": "integer", "default": 30, "description": "Días hacia atrás"},
+            },
+        },
+    },
+    {
+        "name": "register_donation",
+        "description": (
+            "Registra una donación al banco de alimentos u otra entidad solidaria. "
+            "Usar cuando el empleado confirme que va a donar o haya donado un producto. "
+            "Si el empleado no especifica la entidad, preguntar antes de registrar."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entity": {
+                    "type": "string",
+                    "enum": ["banco_alimentos", "caritas", "cruz_roja", "comedor_social"],
+                    "description": "Entidad receptora de la donación",
+                },
+                "quantity": {"type": "integer", "minimum": 1, "description": "Unidades donadas"},
+                "product_name": {"type": "string", "description": "Nombre del producto donado"},
+                "batch_id": {"type": "string", "description": "ID del lote si se conoce"},
+            },
+            "required": ["entity", "quantity"],
+        },
+    },
+    {
+        "name": "get_suppliers",
+        "description": (
+            "Ficha de proveedores con tasa de merma histórica y nivel de riesgo. "
+            "Solo accesible para encargados. Usar cuando pregunten por proveedores, suministradores o quién da más problemas."
+        ),
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "get_esg_metrics",
+        "description": (
+            "Métricas de impacto ambiental y social: CO2 evitado (kg), agua ahorrada (litros), "
+            "deducción fiscal estimada por donaciones (Ley 49/2002). "
+            "Usar cuando pregunten por sostenibilidad, impacto, ESG, CO2, deducciones."
+        ),
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "get_order_suggestions",
+        "description": (
+            "Sugerencias de pedido semanal basadas en historial de merma y stock actual. "
+            "Solo encargados. Usar cuando pregunten qué pedir, cómo reponer stock."
+        ),
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "advance_demo_time",
+        "description": (
+            "Para la presentación: avanza N días en la simulación, actualizando caducidades, "
+            "creando nuevas acciones urgentes y garantizando productos CRÍTICO/ALTO/BAJO visibles. "
+            "Solo usar si el encargado lo pide explícitamente para la demo."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days": {
+                    "type": "number",
+                    "minimum": 0.5,
+                    "maximum": 30,
+                    "description": "Días a avanzar (puede ser decimal, ej: 1.5 = día y medio)",
+                },
+            },
+            "required": ["days"],
+        },
+    },
+]
+
+
+def _execute_tool_sync(tool_name: str, tool_input: dict, user: Optional[dict]) -> dict:
+    """
+    Ejecuta una herramienta de Chuwi de forma síncrona.
+    Llamado desde código async via run_in_executor.
+    Claude llama a estas herramientas — no hay routing manual.
+    """
+    is_mgr = _is_manager(user)
+    try:
+        if tool_name == "get_store_overview":
+            pending = database.get_pending_actions(STORE_ID)
+            critical = [a for a in pending if (a.get("priority_score") or 0) >= 85]
+            alto = [a for a in pending if 65 <= (a.get("priority_score") or 0) < 85]
+            brief = database.get_latest_brief(STORE_ID)
+            batches = database.get_batches_expiring_soon(STORE_ID, days=7)
+            value_at_risk = sum(
+                int(b.get("quantity", 0)) * float((b.get("products") or {}).get("price", 0))
+                for b in batches
+            )
+            semaforo = "ROJO" if len(critical) >= 5 else "AMARILLO" if len(critical) >= 2 else "VERDE"
+            return {
+                "semaforo": semaforo,
+                "pending_total": len(pending),
+                "criticos": len(critical),
+                "altos": len(alto),
+                "value_at_risk_eur": round(value_at_risk, 2),
+                "lotes_caducando_7d": len(batches),
+                "brief_hoy": brief.get("summary", "") if brief else None,
+                "brief_fecha": brief.get("date", "") if brief else None,
+            }
+
+        elif tool_name == "get_pending_actions":
+            max_r = int(tool_input.get("max_results", 10))
+            pending = database.get_pending_actions(STORE_ID)
+            sorted_p = sorted(pending, key=lambda a: -(a.get("priority_score") or 0))
+            actions = []
+            for a in sorted_p[:max_r]:
+                batch = a.get("batches") or {}
+                product = (batch.get("products") or {}) if batch else {}
+                exp = batch.get("expiry_date", "")
+                try:
+                    days_left = (date.fromisoformat(exp) - date.today()).days if exp else None
+                except Exception:
+                    days_left = None
+                actions.append({
+                    "id": a.get("id"),
+                    "product": product.get("name", "?"),
+                    "pasillo": product.get("pasillo", "?"),
+                    "action_type": a.get("action_type", ""),
+                    "priority_score": a.get("priority_score", 0),
+                    "new_price": a.get("new_price"),
+                    "days_left": days_left,
+                    "notes": (a.get("notes") or "")[:120],
+                })
+            return {"total": len(pending), "mostrando": len(actions), "acciones": actions}
+
+        elif tool_name == "get_daily_route":
+            from backend.agents import evaluator as ev, route as rt
+            batches = database.get_batches_expiring_soon(STORE_ID, days=7)
+            if not batches:
+                return {"ruta": "Sin productos próximos a caducar esta semana. Todo en orden."}
+            risk_reports = [(b, ev.evaluate(b.get("products") or {}, [b])) for b in batches]
+            daily_route = rt.generate(STORE_ID, risk_reports)
+            return {"ruta": rt.format_route_message(daily_route)}
+
+        elif tool_name == "complete_action":
+            action_id = tool_input.get("action_id", "")
+            u_name = (user.get("email") or user.get("id", "empleado")).split("@")[0] if user else "empleado"
+            database.complete_action(action_id, u_name)
+            return {"ok": True, "completada_por": u_name, "action_id": action_id}
+
+        elif tool_name == "analyze_product":
+            barcode = str(tool_input.get("barcode", ""))
+            u_id = (user or {}).get("id", "")
+            result = supervisor.run_scan(STORE_ID, barcode, u_id)
+            return {"analisis": result}
+
+        elif tool_name == "get_merma_stats":
+            days = int(tool_input.get("days", 7))
+            logs = database.get_merma_history(STORE_ID, days=days)
+            total_value = sum(float(l.get("value_lost", 0)) for l in logs)
+            total_qty = sum(int(l.get("quantity_lost", 0)) for l in logs)
+            top = []
+            for log in logs[:5]:
+                batch = log.get("batches") or {}
+                product = (batch.get("products") or {}) if batch else {}
+                top.append({
+                    "producto": product.get("name", log.get("reason", "?")[:30]),
+                    "fecha": log.get("date", "?"),
+                    "cantidad": log.get("quantity_lost", 0),
+                    "valor_eur": round(float(log.get("value_lost", 0)), 2),
+                })
+            return {
+                "dias": days,
+                "valor_total_eur": round(total_value, 2),
+                "unidades_total": total_qty,
+                "registros": len(logs),
+                "top_productos": top,
+            }
+
+        elif tool_name == "get_donation_impact":
+            days = int(tool_input.get("days", 30))
+            stats = database.get_donation_stats(STORE_ID, days=days)
+            return stats
+
+        elif tool_name == "register_donation":
+            entity = tool_input.get("entity", "banco_alimentos")
+            quantity = int(tool_input.get("quantity", 0))
+            product_name = tool_input.get("product_name", "")
+            batch_id = tool_input.get("batch_id")
+            u_name = (user.get("email") or "empleado") if user else "empleado"
+            entity_display = {
+                "banco_alimentos": "Banco de Alimentos",
+                "caritas": "Cáritas",
+                "cruz_roja": "Cruz Roja",
+                "comedor_social": "Comedor Social",
+            }.get(entity, entity)
+            donation_data = {
+                "store_id": STORE_ID,
+                "entity": entity_display,
+                "quantity": quantity,
+                "value_donated": 0.0,
+                "donated_at": datetime.utcnow().isoformat(),
+                "donated_by": u_name,
+            }
+            if batch_id:
+                donation_data["batch_id"] = batch_id
+            database.log_donation(donation_data)
+            return {"ok": True, "entidad": entity_display, "cantidad": quantity, "producto": product_name}
+
+        elif tool_name == "get_suppliers":
+            if not is_mgr:
+                return {"error": "Solo encargados pueden ver la ficha de proveedores."}
+            stats = database.get_supplier_stats(STORE_ID)
+            return {"proveedores": stats}
+
+        elif tool_name == "get_esg_metrics":
+            if not is_mgr:
+                return {"error": "Solo encargados pueden ver las métricas ESG completas."}
+            from backend.agents.esg import get_store_esg_summary
+            return get_store_esg_summary(STORE_ID, 30)
+
+        elif tool_name == "get_order_suggestions":
+            if not is_mgr:
+                return {"error": "Solo encargados pueden ver sugerencias de pedido."}
+            suggestions = database.get_order_suggestions(STORE_ID)
+            return {"sugerencias": suggestions[:15] if suggestions else []}
+
+        elif tool_name == "advance_demo_time":
+            if not is_mgr:
+                return {"error": "Solo encargados pueden avanzar el tiempo de la demo."}
+            days = float(tool_input.get("days", 1))
+            from backend.data.advance_demo import advance as _adv
+            result = _adv(days, store_id=STORE_ID, generate_brief=True)
+            return {"ok": True, "dias_avanzados": days, **result}
+
+        else:
+            return {"error": f"Herramienta desconocida: {tool_name}"}
+
+    except Exception as e:
+        logger.error(f"[chuwi] tool error {tool_name}: {e}")
+        return {"error": str(e)}
+
+
+async def _run_agent_loop(
+    bot,
+    placeholder,
+    chat_history: list,
+    user_text: str,
+    user: Optional[dict],
+) -> str:
+    """
+    Chuwi como agente REAL: Claude con herramientas decide qué consultar y cómo responder.
+    No hay routing de keywords — Claude razona, llama herramientas, y responde con streaming.
+
+    Flujo:
+    1. Streaming desde el inicio — texto aparece progresivamente
+    2. Si Claude llama una herramienta: mostramos "⏳ Consultando..." mientras ejecutamos
+    3. Con los resultados de herramientas, Claude genera la respuesta final (también streaming)
+    """
+    system_extra = _build_agent_system(user)
+    messages = _compact_history(list(chat_history))
+    messages.append({"role": "user", "content": user_text})
+
+    client = llm.get_async_client()
+    ev_loop = asyncio.get_event_loop()
+    buffer = ""
+    last_edit_len = 0
+    last_edit_time = time.monotonic()
+    EDIT_EVERY = 80
+    MIN_INTERVAL = 1.2
+
+    async def _progressive_edit(text: str, cursor: bool = True) -> None:
+        nonlocal last_edit_len, last_edit_time
+        chars_new = len(text) - last_edit_len
+        time_new = time.monotonic() - last_edit_time
+        if chars_new >= EDIT_EVERY and time_new >= MIN_INTERVAL:
+            try:
+                suffix = " ▌" if cursor else ""
+                await placeholder.edit_text(_md_to_html(text + suffix), parse_mode=ParseMode.HTML)
+                last_edit_len = len(text)
+                last_edit_time = time.monotonic()
+            except Exception:
+                pass
+
+    # ── Primera llamada: streaming con herramientas disponibles ──
+    pending_tools: list[dict] = []
+    current_tool: Optional[dict] = None
+    final_content: list = []
+
+    try:
+        async with client.messages.stream(
+            model=llm.MODEL,
+            max_tokens=2048,
+            system=llm._cached_system(system_extra),
+            tools=CHUWI_TOOLS,
+            tool_choice={"type": "auto"},
+            messages=messages,
+        ) as stream:
+            async for event in stream:
+                etype = getattr(event, "type", "")
+
+                if etype == "content_block_start":
+                    block = getattr(event, "content_block", None)
+                    btype = getattr(block, "type", "")
+                    if btype == "tool_use":
+                        label = _TOOL_LABELS.get(block.name, block.name)
+                        current_tool = {"id": block.id, "name": block.name, "input": ""}
+                        try:
+                            await placeholder.edit_text(f"⏳ {label}...")
+                        except Exception:
+                            pass
+
+                elif etype == "content_block_delta":
+                    delta = getattr(event, "delta", None)
+                    dtype = getattr(delta, "type", "")
+                    if dtype == "text_delta":
+                        buffer += delta.text
+                        await _progressive_edit(buffer)
+                    elif dtype == "input_json_delta" and current_tool:
+                        current_tool["input"] += getattr(delta, "partial_json", "")
+
+                elif etype == "content_block_stop":
+                    if current_tool:
+                        pending_tools.append(current_tool)
+                        current_tool = None
+
+            final_msg = await stream.get_final_message()
+            final_content = list(final_msg.content)
+            stop_reason = final_msg.stop_reason
+
+        # ── Si Claude llamó herramientas: ejecutar y obtener respuesta final ──
+        if stop_reason == "tool_use" and pending_tools:
+            tool_results = []
+            for tc in pending_tools:
+                try:
+                    tool_input = json.loads(tc["input"]) if tc["input"].strip() else {}
+                except Exception:
+                    tool_input = {}
+                result = await ev_loop.run_in_executor(
+                    None, _execute_tool_sync, tc["name"], tool_input, user
+                )
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": tc["id"],
+                    "content": json.dumps(result, ensure_ascii=False, default=str),
+                })
+
+            messages.append({"role": "assistant", "content": final_content})
+            messages.append({"role": "user", "content": tool_results})
+
+            # Stream la respuesta final con los datos de las herramientas
+            buffer = ""
+            last_edit_len = 0
+            last_edit_time = time.monotonic()
+
+            async with client.messages.stream(
+                model=llm.MODEL,
+                max_tokens=1024,
+                system=llm._cached_system(system_extra),
+                messages=messages,
+            ) as stream2:
+                async for chunk in stream2.text_stream:
+                    buffer += chunk
+                    await _progressive_edit(buffer)
+
+    except Exception as e:
+        logger.error(f"[chuwi] agent loop error: {e}")
+        if not buffer:
+            try:
+                buffer = _agent_respond(chat_history, user_text, user)
+            except Exception as e2:
+                buffer = f"Error: {e2}"
+
+    return buffer or "Sin respuesta."
+
+
+# ── Detección de intenciones (solo para estado de ruta/donación, NO para routing) ──
+
+_ROUTE_START_WORDS = [
+    "iniciar ruta", "empezar ruta", "comenzar ruta", "hacer la ruta",
 
 _COMPLETION_WORDS = [
     "listo", "hecho", "terminé", "termine", "completé", "complete",
@@ -1743,6 +2205,74 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     await query.edit_message_text("Ruta terminada.", reply_markup=_back_keyboard())
         return
 
+    # ── Donación proactiva sugerida por Kuine ── empleado elige entidad con un toque ──
+    if data.startswith("donate_now:"):
+        # formato: donate_now:{entity}:{batch_id}
+        parts = data.split(":", 2)
+        entity_key = parts[1] if len(parts) > 1 else "banco_alimentos"
+        batch_id = parts[2] if len(parts) > 2 else ""
+
+        if entity_key == "skip":
+            await query.edit_message_text(
+                "Entendido. La acción queda pendiente en el sistema.",
+                reply_markup=_back_keyboard()
+            )
+            return
+
+        entity_display = {
+            "banco_alimentos": "Banco de Alimentos",
+            "caritas": "Cáritas",
+            "cruz_roja": "Cruz Roja",
+            "rebajar": None,
+        }.get(entity_key, entity_key)
+
+        if entity_key == "rebajar":
+            await query.edit_message_text(
+                "Bien. El sistema mantendrá la acción de rebaja de precio activa.",
+                reply_markup=_back_keyboard()
+            )
+            return
+
+        try:
+            u_name = (user.get("email") or "empleado").split("@")[0] if user else "empleado"
+            batch = None
+            qty = 5
+            if batch_id:
+                batches = database.get_batches_expiring_soon(STORE_ID, days=3)
+                batch = next((b for b in batches if b.get("id") == batch_id), None)
+                if batch:
+                    qty = int(batch.get("quantity", 5))
+
+            database.log_donation({
+                "store_id": STORE_ID,
+                "batch_id": batch_id or None,
+                "entity": entity_display,
+                "quantity": qty,
+                "value_donated": 0.0,
+                "donated_at": datetime.utcnow().isoformat(),
+                "donated_by": u_name,
+            })
+            product_name = ""
+            if batch:
+                p = batch.get("products") or {}
+                product_name = p.get("name", "")
+
+            await query.edit_message_text(
+                f"✅ Donación registrada\n\n"
+                f"{'Producto: ' + product_name + chr(10) if product_name else ''}"
+                f"Entidad: {entity_display}\n"
+                f"Cantidad: {qty} unidades\n"
+                f"Registrado por: {u_name}\n\n"
+                "Cada donación evita merma y ayuda a quien lo necesita. Gracias.",
+                reply_markup=_main_menu_keyboard(_is_manager(user))
+            )
+        except Exception as e:
+            await query.edit_message_text(
+                f"Error al registrar la donación: {e}",
+                reply_markup=_back_keyboard()
+            )
+        return
+
     # ── Pausar ruta ──
     if data == "route_pause":
         _clear_conv_state(user_id)
@@ -2193,45 +2723,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await _process_barcode(update, context, user, barcode, chat_id)
         return
 
-    # ── Detección de "listo" / "hecho" ──
-    if _is_completion_message(user_text):
-        await _handle_action_complete(update, context, user)
-        return
-
-    # ── Detección de intención para shortcuts sin LLM ──
-    intent = _detect_intent(user_text)
-    quick_actions = {"merma", "donaciones"}
-
-    if intent in quick_actions:
-        chat_history = _get_chat_history(chat_key)
-        placeholder = await update.message.reply_text("...")
-        done = asyncio.Event()
-        task = asyncio.create_task(_typing_loop(context.bot, chat_id, done))
-        try:
-            loop = asyncio.get_running_loop()
-            if intent == "merma":
-                response = await loop.run_in_executor(None, _sync_merma_text)
-            else:
-                response = await loop.run_in_executor(None, _sync_donaciones_text)
-        except Exception as e:
-            response = f"Error: {e}"
-        finally:
-            done.set()
-            await task
-
-        chat_history.append({"role": "user", "content": user_text})
-        chat_history.append({"role": "assistant", "content": response})
-        _persist_chat_history(chat_key, _compact_history(chat_history))
-        keyboard = _smart_keyboard(response, _is_manager(user))
-        await _safe_edit(placeholder, response, reply_markup=keyboard)
-        return
-
-    # ── Conversación general — streaming progresivo (agente real, no bot) ──
+    # ── Agente real: Claude decide qué herramientas usar y cómo responder ──
+    # No hay if/else por keywords. Claude razona con contexto y tools.
     chat_history = _get_chat_history(chat_key)
     placeholder = await update.message.reply_text("⌛")
     await context.bot.send_chat_action(chat_id=chat_id, action="typing")
 
-    response = await _agent_stream(
+    response = await _run_agent_loop(
         context.bot, placeholder, chat_history, user_text, user
     )
 
