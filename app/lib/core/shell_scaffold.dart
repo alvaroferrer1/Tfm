@@ -15,6 +15,7 @@ class ShellScaffold extends ConsumerWidget {
     if (location.startsWith('/actions')) return 2;
     if (location.startsWith('/map')) return 3;
     if (location.startsWith('/reports')) return 4;
+    if (location.startsWith('/agents')) return 5;
     return 0;
   }
 
@@ -58,6 +59,8 @@ class ShellScaffold extends ConsumerWidget {
               context.go('/map');
             case 4:
               context.go('/reports');
+            case 5:
+              context.go('/agents');
           }
         },
         items: [
@@ -85,6 +88,11 @@ class ShellScaffold extends ConsumerWidget {
             icon: const Icon(Icons.bar_chart_outlined),
             activeIcon: const Icon(Icons.bar_chart),
             label: tr(ref, 'nav_reports'),
+          ),
+          const BottomNavigationBarItem(
+            icon: Icon(Icons.psychology_outlined),
+            activeIcon: Icon(Icons.psychology),
+            label: 'Agentes',
           ),
         ],
       ),

@@ -1,13 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/api_service.dart';
 import '../../core/supabase_client.dart';
-import '../../core/theme.dart';
 
 final _userProfileProvider = FutureProvider<Map<String, dynamic>>((ref) async {
   return api.getCurrentUser();
+});
+
+final _telegramStatusProvider = FutureProvider<Map<String, dynamic>>((ref) async {
+  try {
+    return await api.getTelegramStatus();
+  } catch (_) {
+    return {};
+  }
 });
 
 class ProfileScreen extends ConsumerStatefulWidget {
@@ -134,6 +142,20 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                     const SizedBox(height: 14),
                     SizedBox(
                       width: double.infinity,
+                      child: ElevatedButton.icon(
+                        icon: const Icon(Icons.telegram, size: 18),
+                        label: const Text('Abrir Chuwi en Telegram'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF2AABEE),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 13),
+                        ),
+                        onPressed: () => _openTelegram(ref),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
                       child: OutlinedButton.icon(
                         icon: _unlinking
                             ? const SizedBox(
@@ -158,7 +180,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                     const SizedBox(height: 8),
                     const _Step(
                       number: '1',
-                      text: 'Abre Telegram y busca el bot de MermaOps (Chuwi)',
+                      text: 'Pulsa el botón de abajo para abrir Chuwi en Telegram',
                     ),
                     const _Step(
                       number: '2',
@@ -167,6 +189,20 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                     const _Step(
                       number: '3',
                       text: 'Copia ese número y pégalo aquí abajo',
+                    ),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        icon: const Icon(Icons.telegram, size: 18),
+                        label: const Text('Abrir Chuwi en Telegram'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF2AABEE),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 13),
+                        ),
+                        onPressed: () => _openTelegram(ref),
+                      ),
                     ),
                     const SizedBox(height: 14),
                     TextField(
@@ -254,6 +290,15 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _openTelegram(WidgetRef ref) async {
+    final status = await ref.read(_telegramStatusProvider.future);
+    final username = (status['bot_username'] as String? ?? '').replaceAll('@', '');
+    final url = Uri.parse(username.isNotEmpty ? 'https://t.me/$username' : 'https://t.me');
+    if (await canLaunchUrl(url)) {
+      await launchUrl(url, mode: LaunchMode.externalApplication);
+    }
   }
 
   Future<void> _link(BuildContext context) async {

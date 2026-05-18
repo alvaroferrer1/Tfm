@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 _client: Client | None = None
+_admin_client: Client | None = None
 
 
 def get_db() -> Client:
@@ -16,6 +17,18 @@ def get_db() -> Client:
             raise RuntimeError("SUPABASE_URL y SUPABASE_KEY deben estar definidos en .env")
         _client = create_client(url, key)
     return _client
+
+
+def get_admin_db() -> Client:
+    """Cliente con service role key — bypassa RLS. Solo para seed/admin, nunca en el API."""
+    global _admin_client
+    if _admin_client is None:
+        url = os.getenv("SUPABASE_URL", "")
+        key = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_KEY", "")
+        if not url or not key:
+            raise RuntimeError("SUPABASE_URL y SUPABASE_SERVICE_KEY deben estar definidos en .env")
+        _admin_client = create_client(url, key)
+    return _admin_client
 
 
 # ── Stores ──────────────────────────────────────────────────────────────────
@@ -127,13 +140,40 @@ def get_pending_actions(store_id: str) -> list[dict]:
 
 def complete_action(action_id: str, completed_by: str, notes: str = "", photo_url: str = "") -> None:
     from datetime import datetime
-    get_db().table("actions").update({
+    db = get_db()
+    now = datetime.utcnow().isoformat()
+    db.table("actions").update({
         "status": "completed",
         "completed_by": completed_by,
-        "completed_at": datetime.utcnow().isoformat(),
+        "completed_at": now,
         "notes": notes,
         "photo_url": photo_url,
     }).eq("id", action_id).execute()
+
+    # Registrar en merma_log automáticamente al completar
+    try:
+        action_row = db.table("actions").select(
+            "store_id, batch_id, action_type, donation_quantity"
+        ).eq("id", action_id).single().execute().data
+        if action_row and action_row.get("batch_id"):
+            batch = db.table("batches").select(
+                "store_id, product_id, quantity, products(price, cost)"
+            ).eq("id", action_row["batch_id"]).single().execute().data
+            if batch:
+                qty = action_row.get("donation_quantity") or batch.get("quantity", 0)
+                products = batch.get("products") or {}
+                cost = float(products.get("cost", 0))
+                merma_entry = {
+                    "store_id": action_row["store_id"],
+                    "batch_id": action_row["batch_id"],
+                    "quantity_lost": qty,
+                    "value_lost": round(qty * cost, 2),
+                    "reason": action_row.get("action_type", "completado"),
+                    "date": datetime.utcnow().date().isoformat(),
+                }
+                db.table("merma_log").insert(merma_entry).execute()
+    except Exception:
+        pass  # No bloquear el completado por error en log
 
 
 # ── Merma log ─────────────────────────────────────────────────────────────────
@@ -479,8 +519,49 @@ def get_overdue_critical_actions(store_id: str, hours: int = 4) -> list[dict]:
 
 # ── Agent runs ────────────────────────────────────────────────────────────────
 
-def log_agent_run(run: dict) -> None:
+def log_agent_run(run: dict) -> str:
+    """Inserta un run de agente. Devuelve el id para referencia en supervisor_decisions."""
+    import uuid
+    if "id" not in run:
+        run["id"] = str(uuid.uuid4())
     get_db().table("agent_runs").insert(run).execute()
+    return run["id"]
+
+
+def get_agent_runs(store_id: str, agent_type: str | None = None, limit: int = 20) -> list[dict]:
+    q = (
+        get_db().table("agent_runs")
+        .select("*")
+        .eq("store_id", store_id)
+        .order("started_at", desc=True)
+        .limit(limit)
+    )
+    if agent_type:
+        q = q.eq("agent_type", agent_type)
+    return q.execute().data or []
+
+
+# ── Supervisor decisions (Fase 3) ─────────────────────────────────────────────
+
+def log_supervisor_decision(decision: dict) -> str:
+    """Registra una decisión explícita de Kuine sobre un producto/lote."""
+    import uuid
+    if "id" not in decision:
+        decision["id"] = str(uuid.uuid4())
+    get_db().table("supervisor_decisions").insert(decision).execute()
+    return decision["id"]
+
+
+def get_supervisor_decisions(store_id: str, limit: int = 50) -> list[dict]:
+    result = (
+        get_db().table("supervisor_decisions")
+        .select("*")
+        .eq("store_id", store_id)
+        .order("created_at", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    return result.data or []
 
 
 # ── Supplier stats (Feature #16) ──────────────────────────────────────────────
@@ -519,3 +600,132 @@ def get_supplier_stats(store_id: str) -> list[dict]:
 
     stats.sort(key=lambda s: s["avg_merma_pct"], reverse=True)
     return stats
+
+
+# ── Agent conversations (Fase 1) ──────────────────────────────────────────────
+
+def create_agent_conversation(store_id: str, telegram_user_id: str | None = None) -> str:
+    """Crea una nueva conversación. Devuelve el id."""
+    import uuid
+    conv_id = str(uuid.uuid4())
+    get_db().table("agent_conversations").insert({
+        "id": conv_id,
+        "store_id": store_id,
+        "telegram_user_id": str(telegram_user_id) if telegram_user_id else None,
+    }).execute()
+    return conv_id
+
+
+def get_active_conversation(store_id: str, telegram_user_id: str) -> str | None:
+    """Obtiene el id de la conversación activa del usuario (si existe)."""
+    result = (
+        get_db().table("agent_conversations")
+        .select("id")
+        .eq("store_id", store_id)
+        .eq("telegram_user_id", str(telegram_user_id))
+        .eq("is_active", True)
+        .order("last_message_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    if result.data:
+        return result.data[0]["id"]
+    return None
+
+
+def close_agent_conversation(conversation_id: str) -> None:
+    from datetime import datetime
+    get_db().table("agent_conversations").update({
+        "is_active": False,
+    }).eq("id", conversation_id).execute()
+
+
+def log_agent_message(
+    conversation_id: str,
+    store_id: str,
+    role: str,
+    content: str,
+    intent_tag: str | None = None,
+    tools_used: list | None = None,
+    tokens_in: int = 0,
+    tokens_out: int = 0,
+    agent_source: str = "chuwi",
+) -> str:
+    """Inserta un mensaje en agent_messages. Actualiza contadores de la conversación."""
+    import uuid
+    msg_id = str(uuid.uuid4())
+    get_db().table("agent_messages").insert({
+        "id": msg_id,
+        "conversation_id": conversation_id,
+        "store_id": store_id,
+        "role": role,
+        "content": content[:8000],  # truncar para no exceder límite
+        "intent_tag": intent_tag,
+        "tools_used": tools_used or [],
+        "tokens_in": tokens_in,
+        "tokens_out": tokens_out,
+        "agent_source": agent_source,
+    }).execute()
+    # Actualizar contadores en la conversación
+    try:
+        from datetime import datetime
+        get_db().table("agent_conversations").update({
+            "last_message_at": datetime.utcnow().isoformat(),
+            "message_count": get_db().table("agent_messages")
+                .select("id", count="exact")
+                .eq("conversation_id", conversation_id)
+                .execute().count or 0,
+        }).eq("id", conversation_id).execute()
+    except Exception:
+        pass
+    return msg_id
+
+
+def get_conversation_messages(conversation_id: str, limit: int = 50) -> list[dict]:
+    result = (
+        get_db().table("agent_messages")
+        .select("*")
+        .eq("conversation_id", conversation_id)
+        .order("created_at")
+        .limit(limit)
+        .execute()
+    )
+    return result.data or []
+
+
+# ── Agent sessions (Fase 1) ───────────────────────────────────────────────────
+
+def create_agent_session(store_id: str, telegram_user_id: str | None = None) -> str:
+    """Crea una sesión de agente. Devuelve el id."""
+    import uuid
+    session_id = str(uuid.uuid4())
+    get_db().table("agent_sessions").insert({
+        "id": session_id,
+        "store_id": store_id,
+        "telegram_user_id": str(telegram_user_id) if telegram_user_id else None,
+    }).execute()
+    return session_id
+
+
+def close_agent_session(session_id: str, kuine_calls: int = 0, resolved: bool = False) -> None:
+    from datetime import datetime
+    get_db().table("agent_sessions").update({
+        "session_end": datetime.utcnow().isoformat(),
+        "kuine_calls": kuine_calls,
+        "resolved": resolved,
+    }).eq("id", session_id).execute()
+
+
+def increment_session_stats(session_id: str, tools_called: int = 0, kuine_calls: int = 0) -> None:
+    try:
+        row = get_db().table("agent_sessions").select(
+            "messages_count, tools_called, kuine_calls"
+        ).eq("id", session_id).single().execute().data
+        if row:
+            get_db().table("agent_sessions").update({
+                "messages_count": row.get("messages_count", 0) + 1,
+                "tools_called": row.get("tools_called", 0) + tools_called,
+                "kuine_calls": row.get("kuine_calls", 0) + kuine_calls,
+            }).eq("id", session_id).execute()
+    except Exception:
+        pass

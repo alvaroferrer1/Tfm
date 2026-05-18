@@ -1,5 +1,25 @@
 # MermaOps — comandos de desarrollo
-.PHONY: install run seed test test-fast lint clean
+.PHONY: install run seed test test-fast lint clean check migrate
+
+# Arrancar el sistema con guia de pruebas (verifica + arranca + guia)
+start:
+	python scripts/start.py
+
+# Solo verificar sin arrancar
+verify:
+	python scripts/start.py --check
+
+# Diagnostico completo del sistema
+check:
+	python scripts/check_all.py
+
+# Aplicar migraciones a Supabase
+migrate:
+	supabase db push
+
+# Verificar migraciones (sin aplicar)
+migrate-dry:
+	supabase db push --dry-run
 
 # Setup interactivo completo (primera vez)
 setup:
@@ -50,6 +70,26 @@ logs:
 # Generar brief manual (para testing sin esperar las 07:30)
 brief:
 	python -c "from backend.agents.supervisor import run_daily_brief; print(run_daily_brief('demo-store-001'))"
+
+# Avanza N días en la simulación (para la demo en vivo)
+# Uso: make advance N=2  (por defecto N=1)
+advance:
+	python -m backend.data.advance_demo --days $(or $(N),1)
+
+# Vuelve al estado inicial del día de hoy
+demo-reset:
+	python -m backend.data.advance_demo --reset
+
+# Arrancar app Flutter con credenciales desde .env
+# Requiere: flutter instalado, emulador Android o dispositivo conectado
+# Cambia API_URL por la IP local de tu máquina: ipconfig | findstr IPv4
+flutter-run:
+	@python -c "\
+import os; from dotenv import load_dotenv; load_dotenv();\
+url = os.getenv('SUPABASE_URL',''); key = os.getenv('SUPABASE_KEY','');\
+ip = os.getenv('API_HOST','127.0.0.1'); port = os.getenv('APP_PORT','8001');\
+print(f'flutter run --dart-define=SUPABASE_URL={url} --dart-define=SUPABASE_ANON_KEY={key} --dart-define=API_URL=http://{ip}:{port}/api/v1')\
+"
 
 # Estado de la tienda demo
 status:

@@ -4,7 +4,7 @@ Se ejecuta después del seed principal.
   python -m backend.data.demo_actions
 """
 from datetime import date, timedelta, datetime
-from backend.core.database import get_db
+from backend.core.database import get_admin_db as get_db
 
 STORE_ID = "demo-store-001"
 

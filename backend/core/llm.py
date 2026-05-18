@@ -525,28 +525,30 @@ def run_agentic_loop(
             _log_usage(response, f"agentic_loop[{iteration}]", prompt=prompt[:200], duration_ms=(time.monotonic() - t0) * 1000)
             return _extract_text(response), tool_trace
 
-        # Si Claude quiere usar herramientas, las ejecutamos
+        # Si Claude quiere usar herramientas, las ejecutamos (en paralelo con ThreadPoolExecutor)
         if response.stop_reason == "tool_use":
             messages.append({"role": "assistant", "content": response.content})
+            tool_use_blocks = [b for b in response.content if b.type == "tool_use"]
+
+            def _run_tool(block):
+                try:
+                    result = tool_executor(block.name, block.input)
+                except Exception as e:
+                    result = {"error": str(e)}
+                return block, result
+
+            import concurrent.futures
             tool_results = []
-
-            for block in response.content:
-                if block.type == "tool_use":
-                    tool_name = block.name
-                    tool_input = block.input
-
-                    try:
-                        result = tool_executor(tool_name, tool_input)
-                    except Exception as e:
-                        result = {"error": str(e)}
-
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(tool_use_blocks), 5)) as pool:
+                futures = [pool.submit(_run_tool, b) for b in tool_use_blocks]
+                for future in concurrent.futures.as_completed(futures):
+                    block, result = future.result()
                     serialized = json.dumps(result, ensure_ascii=False, default=str)
                     tool_trace.append({
-                        "tool": tool_name,
-                        "input": tool_input,
+                        "tool": block.name,
+                        "input": block.input,
                         "output_preview": serialized[:200],
                     })
-
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": block.id,

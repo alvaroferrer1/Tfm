@@ -22,12 +22,13 @@ import os
 import re
 import tempfile
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
 from telegram import (
+    BotCommand,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Update,
@@ -61,6 +62,14 @@ _history_file.parent.mkdir(exist_ok=True)
 # modes: "idle", "route_active", "completing_action", "donation_flow"
 _conv_state: dict[str, dict] = {}
 
+# Cache de IDs de conversación por chat_key → conversation_id en Supabase
+# Se rellena la primera vez que el usuario habla. Persiste mientras el proceso vive.
+_conv_id_cache: dict[str, str] = {}
+
+# Cache de sesiones activas por user_id → session_id
+# Una sesión agrupa mensajes de una misma "visita" al agente.
+_session_cache: dict[str, str] = {}
+
 
 # ── OpenAI / Whisper (opcional) ───────────────────────────────────────────────
 
@@ -83,37 +92,47 @@ def _get_openai():
 
 # ── System prompt ─────────────────────────────────────────────────────────────
 
-CHUWI_SYSTEM = """Eres Chuwi, el agente operativo de MermaOps para el Super Martinez.
-Hablas con empleados y encargados de supermercado en sus turnos de trabajo.
+CHUWI_SYSTEM = """Eres Chuwi, el agente operativo de MermaOps para el Super Martínez.
+Coordinado por Kuine (el sistema central de IA), eres la interfaz directa con el personal de tienda.
+
+ERES UN AGENTE REAL — no un bot de comandos:
+- Tienes herramientas con datos reales. Úsalas para responder con hechos, no con suposiciones.
+- Antes de responder algo sobre el estado de la tienda, consulta los datos reales.
+- Si alguien pregunta "¿cómo está la tienda?", llama get_store_overview SIEMPRE.
+- Si alguien pregunta "¿qué hago hoy?", llama get_pending_actions Y get_daily_route.
+- Si alguien menciona un barcode/código, llama analyze_product.
+- Si no tienes contexto suficiente, llama primero get_store_overview para orientarte.
+- Puedes llamar VARIAS herramientas en la misma respuesta — lo hacen en paralelo.
 
 PERSONALIDAD:
-- Directo, claro y práctico. Sin rodeos.
-- Nunca usas asteriscos ni markdown — texto limpio, como un WhatsApp profesional.
-- Cuando haces listas, usas guiones o números.
-- Mayúsculas para énfasis: CRÍTICO, REBAJAR, RETIRAR.
-- Respondes en el idioma del empleado (español por defecto).
+- Directo, claro y práctico. Sin rodeos. Como un mensaje de WhatsApp profesional.
+- Sin asteriscos ni markdown — texto limpio.
+- Guiones o números para listas. Mayúsculas para énfasis: CRÍTICO, REBAJAR, RETIRAR, URGENTE.
+- Español natural. Nunca robótico.
+- Cuando hay críticos sin resolver, lo dices claramente y das el pasillo exacto.
 
-CAPACIDADES REALES que tienes — úsalas cuando el contexto lo pida:
-- Ver el brief del día (resumen de apertura, acciones prioritarias)
-- Analizar un producto por su código de barras
-- ANALIZAR FOTOS de productos con IA visual — detecta frescura, daños, fechas visibles
-- Calcular la ruta óptima del día por pasillos
-- Ver acciones pendientes con su prioridad
-- Consultar merma de los últimos 7 días
-- Ver impacto ESG — CO2 evitado, agua ahorrada, puntuación sostenibilidad
-- Ver impacto social de donaciones del mes y deducción fiscal estimada
-- Ver predicciones de merma para los próximos 5-7 días con clima
-- Ver ficha de proveedores con su tasa de merma (solo encargados)
-- Ver sugerencias de pedido semanal (solo encargados)
-- Generar el brief manualmente en cualquier momento (solo encargados)
-- Responder preguntas generales sobre gestión de merma y caducidades
+HERRAMIENTAS DISPONIBLES (llama las que necesites, en paralelo si es posible):
+- get_store_overview: estado general, semáforo, valor en riesgo. SIEMPRE tu punto de partida.
+- get_pending_actions: lista priorizada de acciones. Llama si preguntan qué hacer.
+- get_daily_route: ruta óptima por pasillos. Llama si piden la ruta del día.
+- complete_action: marca una acción como hecha. Pide el ID si no lo tienes.
+- analyze_product: analiza por barcode. Llama si mencionan un código.
+- get_merma_stats: merma en euros y unidades. Llama si preguntan por pérdidas.
+- get_donation_impact: impacto social de donaciones. Llama si preguntan por donaciones.
+- register_donation: registra una donación nueva. Pregunta entidad y cantidad si faltan.
+- get_suppliers: ficha de proveedores (solo encargados). Para preguntas sobre proveedores.
+- get_esg_metrics: CO2, agua, deducción fiscal (solo encargados).
+- get_order_suggestions: pedido semanal (solo encargados).
+- get_risk_predictions: previsión de merma próximos 7 días con clima.
+- recall_store_memory: memoria episódica — qué pasó antes, patrones históricos.
+- advance_demo_time: solo para la demo/presentación.
 
-REGLAS:
-- Si el usuario pregunta qué puedes hacer, explica con ejemplos concretos.
-- Si el usuario manda una foto, analizarla visualmente SIN QUE LO PIDA — es tu comportamiento por defecto.
-- Si la información necesita acceder a la BD, indícalo y hazlo.
-- Si no sabes algo, dilo. No inventes datos.
-- Si el empleado no está registrado, explica cómo vincularse."""
+REGLAS CRÍTICAS:
+- Fotos: analizarlas con Claude Vision SIN que te lo pidan — es tu comportamiento automático.
+- Nunca inventes datos. Si no tienes, dilo y ofrece consultar.
+- Si hay CRÍTICOS, menciónalos primero aunque no te pregunten.
+- Si el empleado no está registrado, explica cómo vincularse con /start.
+- Kuine genera los briefs y análisis profundos. Tú eres la interfaz ágil con el personal."""
 
 
 # ── Historial — Supabase primero, JSON como fallback ─────────────────────────
@@ -459,6 +478,8 @@ _TOOL_LABELS: dict[str, str] = {
     "get_esg_metrics": "Calculando métricas ESG",
     "advance_demo_time": "Avanzando tiempo de simulación",
     "get_order_suggestions": "Calculando pedido semanal",
+    "get_risk_predictions": "Calculando predicciones de riesgo",
+    "recall_store_memory": "Consultando memoria episódica",
 }
 
 CHUWI_TOOLS = [
@@ -616,6 +637,44 @@ CHUWI_TOOLS = [
             "required": ["days"],
         },
     },
+    {
+        "name": "get_risk_predictions",
+        "description": (
+            "Predicciones de riesgo de merma para los próximos 5-7 días con previsión meteorológica. "
+            "Usa el Predictor Agent que analiza histórico + clima + día de semana. "
+            "Usar cuando pregunten qué va a pasar esta semana, previsión de merma, "
+            "qué productos habrá que vigilar pronto, o para planificación anticipada."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days": {"type": "integer", "default": 7, "description": "Horizonte de predicción en días"},
+            },
+        },
+    },
+    {
+        "name": "recall_store_memory",
+        "description": (
+            "Recupera patrones y aprendizajes guardados de la memoria episódica de la tienda. "
+            "Usar cuando el empleado pregunte por algo histórico: qué pasó la semana pasada, "
+            "qué proveedor falló antes, qué patrón hay en la merma de una categoría. "
+            "También útil para dar contexto histórico antes de responder sobre riesgos."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pattern_key": {
+                    "type": "string",
+                    "description": (
+                        "Clave del patrón a recuperar. Ejemplos: "
+                        "'merma_historica_semana', 'categoria_lacteos_tendencia', "
+                        "'proveedor_riesgo', 'horas_pico_venta'"
+                    ),
+                },
+            },
+            "required": ["pattern_key"],
+        },
+    },
 ]
 
 
@@ -740,7 +799,7 @@ def _execute_tool_sync(tool_name: str, tool_input: dict, user: Optional[dict]) -
                 "entity": entity_display,
                 "quantity": quantity,
                 "value_donated": 0.0,
-                "donated_at": datetime.utcnow().isoformat(),
+                "donated_at": datetime.now(timezone.utc).isoformat(),
                 "donated_by": u_name,
             }
             if batch_id:
@@ -774,6 +833,29 @@ def _execute_tool_sync(tool_name: str, tool_input: dict, user: Optional[dict]) -
             result = _adv(days, store_id=STORE_ID, generate_brief=True)
             return {"ok": True, "dias_avanzados": days, **result}
 
+        elif tool_name == "get_risk_predictions":
+            days = int(tool_input.get("days", 7))
+            try:
+                from backend.agents.predictor import predict_merma_risk
+                predictions = predict_merma_risk(STORE_ID, days=days)
+                return {
+                    "dias": days,
+                    "productos_en_riesgo": len(predictions),
+                    "predicciones": predictions[:10],
+                }
+            except Exception as e:
+                return {"error": f"Predictor no disponible: {e}"}
+
+        elif tool_name == "recall_store_memory":
+            pattern_key = tool_input.get("pattern_key", "")
+            from backend.core import memory as _mem_mod
+            value = _mem_mod.recall(STORE_ID, pattern_key)
+            return {
+                "pattern_key": pattern_key,
+                "found": value is not None,
+                "value": value or "Sin datos históricos para esta clave.",
+            }
+
         else:
             return {"error": f"Herramienta desconocida: {tool_name}"}
 
@@ -782,23 +864,152 @@ def _execute_tool_sync(tool_name: str, tool_input: dict, user: Optional[dict]) -
         return {"error": str(e)}
 
 
+_COMPLEX_KEYWORDS = (
+    "analiza", "compara", "por qué", "explica", "estrategia",
+    "informe", "resumen", "qué harías", "recomendación", "decisión",
+    "merma", "proveedor", "esg", "predicción", "semana", "mes",
+)
+
+MAX_AGENT_ITERATIONS = 6
+
+
+def _is_complex_query(text: str) -> bool:
+    t = text.lower()
+    return len(text) > 120 or any(kw in t for kw in _COMPLEX_KEYWORDS)
+
+
+# ── Fase 2: Clasificación de intención (sin LLM — zero tokens) ───────────────
+
+_INTENT_PATTERNS: list[tuple[str, list[str]]] = [
+    # Orden importa: más específico primero
+    ("registrar_donacion", [
+        "donar", "donación", "donacion", "banco de alimentos", "banco alimentos",
+        "food bank", "entidad benéfica", "ong",
+    ]),
+    ("registrar_merma", [
+        "registrar merma", "apuntar merma", "anotar merma", "hubo merma",
+        "se perdió", "se perdio", "tiré", "tire ",
+    ]),
+    ("pedir_ruta", [
+        "ruta", "iniciar ruta", "empezar ruta", "comenzar ruta",
+        "hacer la ruta", "dame la ruta", "modo ruta", "empiezo la ruta",
+    ]),
+    ("pedir_brief", [
+        "brief", "resumen del día", "resumen del dia", "informe del día",
+        "cómo estamos", "como estamos", "análisis de hoy", "analisis de hoy",
+        "generar brief", "situación de hoy", "situacion de hoy",
+    ]),
+    ("completar_accion", [
+        "completé", "complete ", "hice ", "listo", "terminé", "termine",
+        "ya está", "ya esta", "lo hice", "ya lo hice", "done", "hecho",
+        "realizé", "realize",
+    ]),
+    ("crear_accion", [
+        "crear acción", "crear accion", "nueva acción", "nueva accion",
+        "añadir acción", "crea una accion", "agregar acción",
+    ]),
+    ("consulta_estado", [
+        "cuánto", "cuantos", "cuántos", "cuanta", "qué caduca", "que caduca",
+        "qué hay", "que hay", "estado", "críticos", "criticos", "urgentes",
+        "pendientes", "cuántas acciones", "cuantas acciones", "cuántos lotes",
+        "productos caducados", "qué vence", "que vence",
+    ]),
+    ("configuracion", [
+        "configurar", "cambiar ajuste", "ajustar", "ayuda", "help",
+        "comandos", "commands", "qué puedes hacer", "que puedes hacer",
+        "opciones", "menú", "menu",
+    ]),
+]
+
+
+def _classify_intent(text: str) -> str:
+    """
+    Clasificador de intención basado en keywords. Sin LLM — 0 tokens.
+    Orden de evaluación: más específico primero. Fallback: pregunta_libre.
+    """
+    t = text.lower().strip()
+    for intent, keywords in _INTENT_PATTERNS:
+        if any(kw in t for kw in keywords):
+            return intent
+    return "pregunta_libre"
+
+
+def _build_intent_context(intent: str, store_id: str) -> str:
+    """
+    Genera contexto adicional según intención detectada.
+    Se inyecta en el system prompt para ayudar al agente a responder más rápido.
+    Falla silenciosamente si Supabase no está disponible.
+    """
+    try:
+        if intent == "consulta_estado":
+            pending = database.get_pending_actions(store_id)
+            critical = [a for a in pending if a.get("priority_score", 0) >= 85]
+            high = [a for a in pending if 65 <= a.get("priority_score", 0) < 85]
+            return (
+                f"\n[CONTEXTO AUTOMÁTICO — consulta_estado]\n"
+                f"Acciones pendientes: {len(pending)} total, "
+                f"{len(critical)} críticas (score≥85), {len(high)} altas (score≥65)\n"
+            )
+        elif intent == "pedir_brief":
+            brief = database.get_latest_brief(store_id)
+            if brief:
+                return (
+                    f"\n[CONTEXTO AUTOMÁTICO — pedir_brief]\n"
+                    f"Último brief: {brief.get('date','?')}, "
+                    f"valor en riesgo: {brief.get('value_at_risk', 0):.2f}€, "
+                    f"acciones: {brief.get('actions_count', 0)}\n"
+                )
+        elif intent in ("completar_accion", "pedir_ruta"):
+            pending = database.get_pending_actions(store_id)
+            top = pending[:3] if pending else []
+            lines = "\n".join(
+                f"  - {(a.get('batches') or {}).get('products', {}).get('name','?')} "
+                f"[score={a.get('priority_score',0)}]"
+                for a in top
+            )
+            return (
+                f"\n[CONTEXTO AUTOMÁTICO — {intent}]\n"
+                f"Acciones pendientes: {len(pending)}\n"
+                f"Top prioridad:\n{lines}\n"
+            )
+        elif intent == "registrar_donacion":
+            stats = database.get_donation_stats(store_id, days=30)
+            return (
+                f"\n[CONTEXTO AUTOMÁTICO — registrar_donacion]\n"
+                f"Donaciones este mes: {stats['total_donations']}, "
+                f"total: {stats['total_quantity']} uds, "
+                f"valor: {stats['total_value_donated']:.2f}€\n"
+            )
+    except Exception:
+        pass
+    return ""
+
+
 async def _run_agent_loop(
     bot,
     placeholder,
     chat_history: list,
     user_text: str,
     user: Optional[dict],
-) -> str:
+    intent_tag: str = "pregunta_libre",
+    intent_context: str = "",
+) -> tuple[str, list[str]]:
     """
-    Chuwi como agente REAL: Claude con herramientas decide qué consultar y cómo responder.
-    No hay routing de keywords — Claude razona, llama herramientas, y responde con streaming.
+    Chuwi como agente REAL con multi-turn tool use.
 
-    Flujo:
-    1. Streaming desde el inicio — texto aparece progresivamente
-    2. Si Claude llama una herramienta: mostramos "⏳ Consultando..." mientras ejecutamos
-    3. Con los resultados de herramientas, Claude genera la respuesta final (también streaming)
+    Loop agéntico (hasta MAX_AGENT_ITERATIONS):
+      1. Claude razona con herramientas disponibles (streaming progresivo)
+      2. Si llama herramientas → ejecutamos → devolvemos resultados → siguiente ronda
+      3. Si responde con texto (end_turn) → fin del loop
+      4. Extended thinking para preguntas complejas
+
+    No hay if/else por keywords. Claude decide qué hacer y cuándo terminar.
+    Devuelve (respuesta_texto, lista_de_tools_usadas).
+    intent_context: datos de contexto pre-cargados según la intención (sin coste de LLM).
     """
     system_extra = _build_agent_system(user)
+    if intent_context:
+        system_extra = system_extra + intent_context
     messages = _compact_history(list(chat_history))
     messages.append({"role": "user", "content": user_text})
 
@@ -807,8 +1018,11 @@ async def _run_agent_loop(
     buffer = ""
     last_edit_len = 0
     last_edit_time = time.monotonic()
-    EDIT_EVERY = 80
-    MIN_INTERVAL = 1.2
+    EDIT_EVERY = 35      # Actualiza cada 35 chars (antes 80) — más fluido
+    MIN_INTERVAL = 0.5   # Mínimo 0.5s entre edits (antes 1.2s)
+    iteration = 0
+    use_thinking = _is_complex_query(user_text)
+    all_tools_used: list[str] = []  # acumula nombres de tools ejecutadas en todo el loop
 
     async def _progressive_edit(text: str, cursor: bool = True) -> None:
         nonlocal last_edit_len, last_edit_time
@@ -823,102 +1037,108 @@ async def _run_agent_loop(
             except Exception:
                 pass
 
-    # ── Primera llamada: streaming con herramientas disponibles ──
-    pending_tools: list[dict] = []
-    current_tool: Optional[dict] = None
-    final_content: list = []
-
     try:
-        async with client.messages.stream(
-            model=llm.MODEL,
-            max_tokens=2048,
-            system=llm._cached_system(system_extra),
-            tools=CHUWI_TOOLS,
-            tool_choice={"type": "auto"},
-            messages=messages,
-        ) as stream:
-            async for event in stream:
-                etype = getattr(event, "type", "")
+        while iteration < MAX_AGENT_ITERATIONS:
+            iteration += 1
+            pending_tools: list[dict] = []
+            current_tool: Optional[dict] = None
+            final_content: list = []
+            round_buffer = ""
 
-                if etype == "content_block_start":
-                    block = getattr(event, "content_block", None)
-                    btype = getattr(block, "type", "")
-                    if btype == "tool_use":
-                        label = _TOOL_LABELS.get(block.name, block.name)
-                        current_tool = {"id": block.id, "name": block.name, "input": ""}
-                        try:
-                            await placeholder.edit_text(f"⏳ {label}...")
-                        except Exception:
-                            pass
+            stream_kwargs: dict = {
+                "model": llm.MODEL,
+                "max_tokens": 2048,
+                "system": llm._cached_system(system_extra),
+                "tools": CHUWI_TOOLS,
+                "tool_choice": {"type": "auto"},
+                "messages": messages,
+            }
+            if use_thinking and iteration == 1:
+                stream_kwargs["thinking"] = {"type": "adaptive"}
+                stream_kwargs["max_tokens"] = 4096
 
-                elif etype == "content_block_delta":
-                    delta = getattr(event, "delta", None)
-                    dtype = getattr(delta, "type", "")
-                    if dtype == "text_delta":
-                        buffer += delta.text
-                        await _progressive_edit(buffer)
-                    elif dtype == "input_json_delta" and current_tool:
-                        current_tool["input"] += getattr(delta, "partial_json", "")
+            async with client.messages.stream(**stream_kwargs) as stream:
+                async for event in stream:
+                    etype = getattr(event, "type", "")
 
-                elif etype == "content_block_stop":
-                    if current_tool:
-                        pending_tools.append(current_tool)
-                        current_tool = None
+                    if etype == "content_block_start":
+                        block = getattr(event, "content_block", None)
+                        btype = getattr(block, "type", "")
+                        if btype == "tool_use":
+                            label = _TOOL_LABELS.get(block.name, block.name)
+                            current_tool = {"id": block.id, "name": block.name, "input": ""}
+                            try:
+                                suffix = f" (paso {iteration})" if iteration > 1 else ""
+                                await placeholder.edit_text(f"⏳ {label}{suffix}...")
+                            except Exception:
+                                pass
+                        elif btype == "thinking":
+                            try:
+                                await placeholder.edit_text("🤔 Analizando en profundidad...")
+                            except Exception:
+                                pass
 
-            final_msg = await stream.get_final_message()
-            final_content = list(final_msg.content)
-            stop_reason = final_msg.stop_reason
+                    elif etype == "content_block_delta":
+                        delta = getattr(event, "delta", None)
+                        dtype = getattr(delta, "type", "")
+                        if dtype == "text_delta":
+                            round_buffer += delta.text
+                            buffer = round_buffer
+                            await _progressive_edit(buffer)
+                        elif dtype == "input_json_delta" and current_tool:
+                            current_tool["input"] += getattr(delta, "partial_json", "")
 
-        # ── Si Claude llamó herramientas: ejecutar y obtener respuesta final ──
-        if stop_reason == "tool_use" and pending_tools:
-            tool_results = []
-            for tc in pending_tools:
+                    elif etype == "content_block_stop":
+                        if current_tool:
+                            pending_tools.append(current_tool)
+                            current_tool = None
+
+                final_msg = await stream.get_final_message()
+                final_content = list(final_msg.content)
+                stop_reason = final_msg.stop_reason
+
+            if stop_reason != "tool_use" or not pending_tools:
+                break
+
+            # Ejecutar todas las tools en PARALELO — 90% mejora de velocidad
+            async def _exec_one(tc: dict) -> dict:
                 try:
-                    tool_input = json.loads(tc["input"]) if tc["input"].strip() else {}
+                    t_input = json.loads(tc["input"]) if tc["input"].strip() else {}
                 except Exception:
-                    tool_input = {}
-                result = await ev_loop.run_in_executor(
-                    None, _execute_tool_sync, tc["name"], tool_input, user
+                    t_input = {}
+                res = await ev_loop.run_in_executor(
+                    None, _execute_tool_sync, tc["name"], t_input, user
                 )
-                tool_results.append({
+                return {
                     "type": "tool_result",
                     "tool_use_id": tc["id"],
-                    "content": json.dumps(result, ensure_ascii=False, default=str),
-                })
+                    "content": json.dumps(res, ensure_ascii=False, default=str),
+                }
+
+            tool_results = list(await asyncio.gather(*[_exec_one(tc) for tc in pending_tools]))
+            all_tools_used.extend(tc["name"] for tc in pending_tools)
 
             messages.append({"role": "assistant", "content": final_content})
             messages.append({"role": "user", "content": tool_results})
 
-            # Stream la respuesta final con los datos de las herramientas
             buffer = ""
             last_edit_len = 0
             last_edit_time = time.monotonic()
 
-            async with client.messages.stream(
-                model=llm.MODEL,
-                max_tokens=1024,
-                system=llm._cached_system(system_extra),
-                messages=messages,
-            ) as stream2:
-                async for chunk in stream2.text_stream:
-                    buffer += chunk
-                    await _progressive_edit(buffer)
+        logger.info(f"[chuwi] agent loop: {iteration} iteraciones, {len(buffer)} chars, tools={all_tools_used}")
 
     except Exception as e:
-        logger.error(f"[chuwi] agent loop error: {e}")
+        logger.error(f"[chuwi] agent loop error (iter {iteration}): {e}")
         if not buffer:
             try:
                 buffer = _agent_respond(chat_history, user_text, user)
             except Exception as e2:
                 buffer = f"Error: {e2}"
 
-    return buffer or "Sin respuesta."
+    return buffer or "Sin respuesta.", all_tools_used
 
 
-# ── Detección de intenciones (solo para estado de ruta/donación, NO para routing) ──
-
-_ROUTE_START_WORDS = [
-    "iniciar ruta", "empezar ruta", "comenzar ruta", "hacer la ruta",
+# ── Detección de palabras clave para estado de ruta/donación (NO para routing general) ──
 
 _COMPLETION_WORDS = [
     "listo", "hecho", "terminé", "termine", "completé", "complete",
@@ -932,14 +1152,6 @@ _ROUTE_START_WORDS = [
     "voy a hacer la ruta", "dame la ruta", "empiezo la ruta",
     "seguir la ruta", "modo ruta",
 ]
-
-
-def _detect_intent(text: str) -> Optional[str]:
-    text_lower = text.lower()
-    for intent, keywords in _INTENT_KEYWORDS.items():
-        if any(kw in text_lower for kw in keywords):
-            return intent
-    return None
 
 
 def _is_completion_message(text: str) -> bool:
@@ -1534,7 +1746,7 @@ async def _action_tour(update_or_query, context, user: Optional[dict], is_callba
         "- Análisis de riesgo con razonamiento interno (extended thinking de Claude)\n"
         "- Agente conversacional disponible 24h en Telegram\n\n"
         "TECNOLOGÍA:\n"
-        "- 11 agentes especializados coordinados por un Supervisor\n"
+        "- 11 agentes especializados coordinados por Kuine\n"
         "- Claude (Anthropic) con extended thinking para productos críticos\n"
         "- Consenso de 3 agentes en paralelo para casos extremos\n"
         "- Memoria episódica: recuerda qué pasó la semana anterior\n"
@@ -1556,7 +1768,7 @@ async def _action_tour_agentes(update_or_query, context, user: Optional[dict], i
     ])
     text = (
         "LOS 11 AGENTES DE MERMAOPS:\n\n"
-        "1. SUPERVISOR — el cerebro. Loop agéntico con 25 herramientas. "
+        "1. KUINE — el cerebro. Loop agéntico con 25 herramientas. "
         "Decide qué investigar, en qué orden y cuándo escalar.\n\n"
         "2. EVALUATOR — análisis de riesgo profundo. Usa extended thinking "
         "(Claude razona internamente antes de responder). Para casos extremos "
@@ -1580,7 +1792,7 @@ async def _action_tour_agentes(update_or_query, context, user: Optional[dict], i
         "11. CONSENSUS — votación de mayoría entre 3 perspectivas "
         "independientes para productos con score >= 90 y > 30€ en riesgo.\n\n"
         "FLUJO TÍPICO:\n"
-        "Supervisor → Evaluator (con Validator) → Price/Stock/Route "
+        "Kuine → Evaluator (con Validator) → Price/Stock/Route "
         "→ Reporter → Notifier → Telegram/App"
     )
     if is_callback:
@@ -1752,7 +1964,7 @@ async def _confirm_scan_action(barcode: str, action_type: str, user: Optional[di
                         "entity": entity_map.get(action_type, "Otro"),
                         "quantity": qty,
                         "value_donated": round(qty * price, 2),
-                        "donated_at": _dt.utcnow().isoformat(),
+                        "donated_at": _dt.now(_dt.now().astimezone().tzinfo).isoformat(),
                         "donated_by": u_label,
                     })
 
@@ -2025,20 +2237,48 @@ _ACTION_MAP = {
 
 # ── Handlers ──────────────────────────────────────────────────────────────────
 
+def _auto_save_chat_id(chat_id: int) -> None:
+    """Guarda el chat_id en Supabase y en el campo telegram_chat_id de la tienda."""
+    try:
+        # 1. Guardar en agent_memory para que el notifier lo encuentre
+        _mem.remember(STORE_ID, "telegram_admin_chat_id", str(chat_id))
+        # 2. Actualizar el campo telegram_chat_id en la tabla stores
+        database.get_db().table("stores").update(
+            {"telegram_chat_id": str(chat_id)}
+        ).eq("id", STORE_ID).execute()
+        logger.info(f"[chuwi] chat_id {chat_id} guardado para tienda {STORE_ID}")
+    except Exception as e:
+        logger.debug(f"[chuwi] auto_save_chat_id: {e}")
+
+
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = _get_user(update.effective_user.id)
+    tg_id = update.effective_user.id
     tg_name = update.effective_user.first_name or "empleado"
 
+    # Siempre guardar el chat_id de quien haga /start — resuelve el problema del TELEGRAM_CHAT_ID vacío
+    _auto_save_chat_id(update.effective_chat.id)
+
+    user = _get_user(tg_id)
+
     if not user:
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🏪 Ver estado de la tienda", callback_data="cmd:estado")],
+            [InlineKeyboardButton("📖 ¿Qué es MermaOps?", callback_data="cmd:tour")],
+            [InlineKeyboardButton("🤖 Ver todos los agentes", callback_data="cmd:agentes_info")],
+        ])
         await update.message.reply_text(
-            f"Hola {tg_name}, soy Chuwi el agente de MermaOps.\n\n"
-            "Para usarme necesitas vincular tu cuenta:\n\n"
-            "1. Abre la app MermaOps y haz login\n"
-            "2. Ve a tu perfil → sección Telegram\n"
-            "3. Pega tu ID de Telegram (el de abajo) y pulsa Vincular\n\n"
-            f"Tu ID de Telegram es: <code>{update.effective_user.id}</code>\n\n"
-            "Una vez vinculado, escribe /start de nuevo para empezar.",
+            f"👋 Hola <b>{tg_name}</b>, soy <b>Chuwi</b>, el agente operativo del <b>Super Martínez</b>.\n\n"
+            "Trabajo con <b>Kuine</b> (la IA orquestadora) para gestionar el inventario, "
+            "detectar productos en riesgo y coordinar las acciones del equipo.\n\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "🔗 <b>Para vincular tu cuenta:</b>\n"
+            "1. Abre la app MermaOps → Perfil → Telegram\n"
+            "2. Pega este ID y pulsa Vincular:\n\n"
+            f"<code>{tg_id}</code>\n\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "Mientras tanto puedes explorar sin vincular 👇",
             parse_mode=ParseMode.HTML,
+            reply_markup=kb,
         )
         return
 
@@ -2093,6 +2333,26 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         finally:
             done.set()
             await typing_task
+
+        # Log Chuwi↔Kuine: brief generado por Kuine a petición de usuario vía Chuwi
+        try:
+            chat_key = str(query.message.chat_id)
+            u_id = str(query.from_user.id)
+            conv_id = _conv_id_cache.get(chat_key) or database.get_active_conversation(STORE_ID, u_id)
+            if not conv_id:
+                conv_id = database.create_agent_conversation(STORE_ID, u_id)
+                _conv_id_cache[chat_key] = conv_id
+            database.log_agent_message(
+                conversation_id=conv_id, store_id=STORE_ID, role="system",
+                content="[coordinación] Chuwi solicitó brief diario a Kuine (supervisor.run_daily_brief)",
+                agent_source="kuine",
+            )
+            database.log_agent_message(
+                conversation_id=conv_id, store_id=STORE_ID, role="assistant",
+                content=result[:2000], tools_used=["run_daily_brief"], agent_source="kuine",
+            )
+        except Exception:
+            pass
 
         keyboard = _smart_keyboard(result, _is_manager(user))
         await _safe_edit(query.message, result, reply_markup=keyboard)
@@ -2249,7 +2509,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 "entity": entity_display,
                 "quantity": qty,
                 "value_donated": 0.0,
-                "donated_at": datetime.utcnow().isoformat(),
+                "donated_at": datetime.now(timezone.utc).isoformat(),
                 "donated_by": u_name,
             })
             product_name = ""
@@ -2479,6 +2739,101 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         return
 
+    # ── Demo callbacks (avanzar días / reset) ──
+    if data.startswith("demo:"):
+        await _handle_demo_callback(query, context, data)
+        return
+
+    # ── Estado: refresh del semáforo de tienda ──
+    if data == "cmd:estado":
+        try:
+            loop = asyncio.get_running_loop()
+            pending = await loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
+            batches = await loop.run_in_executor(
+                None, database.get_batches_expiring_soon, STORE_ID, 7
+            )
+            brief = await loop.run_in_executor(None, database.get_latest_brief, STORE_ID)
+            critical = [a for a in pending if a.get("priority_score", 0) >= 85]
+            alto = [a for a in pending if 65 <= a.get("priority_score", 0) < 85]
+            total_value = sum(
+                b.get("quantity", 0) * (b.get("products") or {}).get("price", 0)
+                for b in batches
+            )
+            semaforo = (
+                "🔴 ALERTA" if len(critical) >= 3
+                else "🟡 ATENCIÓN" if (len(critical) >= 1 or len(alto) >= 3)
+                else "🟢 NORMAL"
+            )
+            text = (
+                f"📊 <b>SUPER MARTÍNEZ — Estado actual</b>\n"
+                f"Semáforo: {semaforo}\n\n"
+                f"Acciones pendientes: {len(pending)}\n"
+                f"  🔴 CRÍTICAS: {len(critical)}\n"
+                f"  🟡 ALTAS: {len(alto)}\n"
+                f"  🟢 Resto: {len(pending) - len(critical) - len(alto)}\n\n"
+                f"Lotes próximos a caducar (7d): {len(batches)}\n"
+                f"Valor en riesgo: {total_value:.2f} €\n"
+            )
+            if brief:
+                text += f"\nÚltimo brief: {brief.get('date', '?')}"
+            if critical:
+                text += "\n\n━━ CRÍTICOS AHORA ━━"
+                for a in critical[:3]:
+                    b = (a.get("batches") or {})
+                    p = (b.get("products") or {}) if b else {}
+                    text += f"\n• {p.get('name', 'Producto')} | Pasillo {p.get('pasillo', '?')} | {(a.get('action_type') or '?').upper()}"
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📋 Ver todas las acciones", callback_data="cmd:acciones")],
+                [InlineKeyboardButton("🗺 Iniciar ruta del día", callback_data="cmd:iniciar_ruta")],
+                [InlineKeyboardButton("🔄 Actualizar", callback_data="cmd:estado")],
+            ])
+            await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+        except Exception as e:
+            await query.edit_message_text(f"Error consultando estado: {e}", reply_markup=_back_keyboard())
+        return
+
+    # ── Críticos: lista inline ──
+    if data == "cmd:criticos":
+        try:
+            loop = asyncio.get_running_loop()
+            pending = await loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
+            critical = [a for a in pending if a.get("priority_score", 0) >= 85]
+            if not critical:
+                await query.edit_message_text(
+                    "✅ Sin productos críticos en este momento.\nUsa /estado para el panorama completo.",
+                    reply_markup=_back_keyboard()
+                )
+                return
+            lines = [f"🔴 <b>{len(critical)} PRODUCTO(S) CRÍTICO(S)</b>\n"]
+            for i, a in enumerate(critical[:8], 1):
+                b = (a.get("batches") or {})
+                p = (b.get("products") or {}) if b else {}
+                action_type = (a.get("action_type") or "revisar").upper()
+                score = a.get("priority_score", 0)
+                notes = (a.get("notes") or "")[:80]
+                lines.append(
+                    f"{i}. <b>{p.get('name', 'Producto')}</b>\n"
+                    f"   Pasillo {p.get('pasillo', '?')} | Score {score}/100 | {action_type}\n"
+                    f"   {notes}"
+                )
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🗺 Iniciar ruta de críticos", callback_data="cmd:iniciar_ruta")],
+                [InlineKeyboardButton("⬅️ Menú", callback_data="cmd:menu")],
+            ])
+            await query.edit_message_text("\n\n".join(lines), parse_mode=ParseMode.HTML, reply_markup=kb)
+        except Exception as e:
+            await query.edit_message_text(f"Error: {e}", reply_markup=_back_keyboard())
+        return
+
+    # ── Agentes: info completa inline ──
+    if data == "cmd:agentes_info":
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📊 Estado tienda ahora", callback_data="cmd:estado")],
+            [InlineKeyboardButton("⬅️ Menú", callback_data="cmd:menu")],
+        ])
+        await query.edit_message_text(_AGENTES_TEXT, parse_mode=ParseMode.HTML, reply_markup=kb)
+        return
+
     # ── Acciones del menú estándar ──
     if data.startswith("cmd:"):
         action_key = data[4:]
@@ -2642,11 +2997,133 @@ async def _agent_stream(
     return buffer or "Sin respuesta."
 
 
+async def _do_unlink_telegram(update: Update, user: Optional[dict]) -> None:
+    """Desvincula el telegram_user_id del usuario en Supabase."""
+    if not user:
+        await update.message.reply_text("No tienes cuenta vinculada. Escribe /start.")
+        return
+    user_id = user.get("id", "")
+    tg_name = update.effective_user.first_name or "usuario"
+    try:
+        database.get_db().table("users").update(
+            {"telegram_user_id": None}
+        ).eq("id", user_id).execute()
+        await update.message.reply_text(
+            f"✅ Cuenta desvinculada, {tg_name}.\n\n"
+            "Tu Telegram ya no está conectado a MermaOps.\n"
+            "Para volver a vincular abre la app → Perfil → Telegram.",
+        )
+        logger.info(f"[chuwi] Usuario {user_id} desvinculado de Telegram")
+    except Exception as e:
+        await update.message.reply_text(f"Error al desvincular: {e}")
+
+
+async def _cmd_logout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Desvincula el Telegram del usuario autenticado."""
+    user = _get_user(update.effective_user.id)
+    await _do_unlink_telegram(update, user)
+
+
+def _upsert_telegram_user(
+    telegram_user_id: str,
+    telegram_username: Optional[str],
+    telegram_chat_id: str,
+    linked_user: Optional[dict],
+) -> None:
+    """Registra o actualiza al usuario de Telegram en la tabla telegram_users."""
+    try:
+        from datetime import datetime
+        now = datetime.utcnow().isoformat()
+        data: dict = {
+            "telegram_user_id": telegram_user_id,
+            "telegram_username": telegram_username,
+            "telegram_chat_id": telegram_chat_id,
+            "last_seen_at": now,
+        }
+        if linked_user:
+            data["user_id"] = linked_user.get("id")
+            data["store_id"] = linked_user.get("store_id") or STORE_ID
+            data["status"] = "linked"
+            data["linked_at"] = now
+        else:
+            data["status"] = "pending"
+        database.get_db().table("telegram_users").upsert(
+            data, on_conflict="telegram_user_id"
+        ).execute()
+    except Exception:
+        pass  # no bloquear el flujo por error de tracking
+
+
+def _persist_conversation_message(
+    chat_key: str,
+    store_id: str,
+    telegram_user_id: str,
+    user_text: str,
+    response: str,
+    tools_used: list[str],
+    intent_tag: str = "pregunta_libre",
+) -> None:
+    """
+    Persiste el turno de conversación en Supabase:
+    - Crea o recupera la conversation_id del cache
+    - Inserta mensaje de usuario y respuesta de Chuwi en agent_messages
+    - Fallback silencioso si Supabase falla
+    """
+    try:
+        conv_id = _conv_id_cache.get(chat_key)
+        if not conv_id:
+            conv_id = database.get_active_conversation(store_id, telegram_user_id)
+        if not conv_id:
+            conv_id = database.create_agent_conversation(store_id, telegram_user_id)
+        _conv_id_cache[chat_key] = conv_id
+
+        database.log_agent_message(
+            conversation_id=conv_id,
+            store_id=store_id,
+            role="user",
+            content=user_text,
+            intent_tag=intent_tag,
+            agent_source="telegram",
+        )
+        database.log_agent_message(
+            conversation_id=conv_id,
+            store_id=store_id,
+            role="assistant",
+            content=response,
+            tools_used=tools_used,
+            intent_tag=intent_tag,
+            agent_source="chuwi",
+        )
+        # Log explícito de coordinación Chuwi → Kuine cuando se delega análisis
+        if "analyze_product" in tools_used:
+            database.log_agent_message(
+                conversation_id=conv_id,
+                store_id=store_id,
+                role="system",
+                content="[coordinación] Chuwi delegó análisis de producto a Kuine (supervisor.run_scan)",
+                agent_source="kuine",
+            )
+        if tools_used:
+            logger.info(f"[chuwi] persisted conv {conv_id[:8]}, tools={tools_used}")
+    except Exception as exc:
+        logger.warning(f"[chuwi] persist_conversation fallback (Supabase no disponible): {exc}")
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Maneja cualquier mensaje de texto — el núcleo conversacional del agente."""
-    user = _get_user(update.effective_user.id)
+    tg_user = update.effective_user
+    user = _get_user(tg_user.id)
+
+    # Registrar/actualizar en telegram_users (tracking de todos los usuarios)
+    _upsert_telegram_user(
+        telegram_user_id=str(tg_user.id),
+        telegram_username=tg_user.username,
+        telegram_chat_id=str(update.effective_chat.id),
+        linked_user=user,
+    )
+
     if not user:
-        tg_id = update.effective_user.id
+        tg_id = tg_user.id
         await update.message.reply_text(
             f"Para usar MermaOps necesitas vincular tu cuenta.\n\n"
             f"Tu ID de Telegram es: <code>{tg_id}</code>\n"
@@ -2658,7 +3135,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     chat_id = update.effective_chat.id
     chat_key = str(chat_id)
-    user_id = str(update.effective_user.id)
+    user_id = str(tg_user.id)
     user_text = update.message.text.strip()
 
     if not user_text:
@@ -2709,6 +3186,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
 
+    # ── Desconectar / logout de Telegram ──
+    _desconectar_triggers = {
+        "desconectar telegram", "desconectar", "logout", "cerrar sesion",
+        "cerrar sesión", "desvincular", "desvincular telegram", "salir",
+    }
+    if user_text.lower().strip() in _desconectar_triggers:
+        await _do_unlink_telegram(update, user)
+        return
+
     # ── Inicio de modo ruta desde texto ──
     if _is_route_start(user_text):
         await _start_route_mode(update, context, user)
@@ -2723,19 +3209,56 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await _process_barcode(update, context, user, barcode, chat_id)
         return
 
+    # ── Fase 2: Clasificación de intención (0 tokens, 0ms) ──
+    intent_tag = _classify_intent(user_text)
+    intent_context = _build_intent_context(intent_tag, STORE_ID)
+    logger.info(f"[chuwi] intent={intent_tag} user={user_id[:8] if user_id else '?'}")
+
+    # ── Sesión activa (agent_sessions) — crear si no existe ──
+    session_id = _session_cache.get(user_id)
+    if not session_id:
+        try:
+            session_id = database.create_agent_session(STORE_ID, user_id)
+            _session_cache[user_id] = session_id
+        except Exception:
+            session_id = None
+
     # ── Agente real: Claude decide qué herramientas usar y cómo responder ──
-    # No hay if/else por keywords. Claude razona con contexto y tools.
     chat_history = _get_chat_history(chat_key)
     placeholder = await update.message.reply_text("⌛")
     await context.bot.send_chat_action(chat_id=chat_id, action="typing")
 
-    response = await _run_agent_loop(
-        context.bot, placeholder, chat_history, user_text, user
+    response, tools_used = await _run_agent_loop(
+        context.bot, placeholder, chat_history, user_text, user,
+        intent_tag=intent_tag, intent_context=intent_context,
     )
 
     chat_history.append({"role": "user", "content": user_text})
     chat_history.append({"role": "assistant", "content": response})
     _persist_chat_history(chat_key, _compact_history(chat_history))
+
+    # ── Actualizar stats de sesión ──
+    if session_id:
+        kuine_used = 1 if "analyze_product" in tools_used else 0
+        try:
+            database.increment_session_stats(
+                session_id,
+                tools_called=len(tools_used),
+                kuine_calls=kuine_used,
+            )
+        except Exception:
+            pass
+
+    # ── Persistencia en Supabase: agent_conversations + agent_messages ──
+    _persist_conversation_message(
+        chat_key=chat_key,
+        store_id=STORE_ID,
+        telegram_user_id=user_id,
+        user_text=user_text,
+        response=response,
+        tools_used=tools_used,
+        intent_tag=intent_tag,
+    )
 
     keyboard = _smart_keyboard(response, _is_manager(user))
     await _safe_edit(placeholder, response, reply_markup=keyboard)
@@ -2851,23 +3374,18 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Transcribe nota de voz con Whisper y la procesa como mensaje de texto."""
-    user = _get_user(update.effective_user.id)
+    """Transcribe nota de voz con Google Speech Recognition y la procesa con el agente."""
+    tg_user = update.effective_user
+    user_id = str(tg_user.id)
+    user = _get_user(tg_user.id)
+
     if not user:
         await update.message.reply_text(
-            "Primero debes vincular tu cuenta. Escribe /start."
+            f"Primero debes vincular tu cuenta.\n\nEscribe /start — te mostraré tu ID ({tg_user.id})."
         )
         return
 
-    openai_client = _get_openai()
-    if not openai_client:
-        await update.message.reply_text(
-            "El reconocimiento de voz no está disponible. "
-            "Escribe tu pregunta en texto."
-        )
-        return
-
-    placeholder = await update.message.reply_text("Escuchando tu nota de voz...")
+    placeholder = await update.message.reply_text("🎙️ Escuchando tu nota de voz...")
 
     try:
         voice = update.message.voice or update.message.audio
@@ -2879,59 +3397,515 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         loop = asyncio.get_running_loop()
 
         def transcribe() -> str:
-            with open(tmp_path, "rb") as f:
-                result = openai_client.audio.transcriptions.create(
-                    model="whisper-1", file=f, language="es"
-                )
-            return result.text.strip()
+            import speech_recognition as sr
+            wav_path = tmp_path.replace(".ogg", ".wav")
+            try:
+                from pydub import AudioSegment
+                AudioSegment.from_ogg(tmp_path).export(wav_path, format="wav")
+                audio_path = wav_path
+            except Exception:
+                audio_path = tmp_path
 
-        transcription = await loop.run_in_executor(None, transcribe)
-        Path(tmp_path).unlink(missing_ok=True)
+            recognizer = sr.Recognizer()
+            recognizer.energy_threshold = 300
+            recognizer.dynamic_energy_threshold = True
+            with sr.AudioFile(audio_path) as source:
+                audio_data = recognizer.record(source)
+            try:
+                Path(wav_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+            return recognizer.recognize_google(audio_data, language="es-ES")
+
+        try:
+            transcription = await loop.run_in_executor(None, transcribe)
+        except Exception as e:
+            Path(tmp_path).unlink(missing_ok=True)
+            await placeholder.edit_text(
+                f"No he podido entender el audio ({e.__class__.__name__}).\n\nEscríbeme tu pregunta."
+            )
+            return
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
 
         if not transcription:
-            await placeholder.edit_text("No he podido entender el audio. Inténtalo de nuevo.")
+            await placeholder.edit_text("No he entendido el audio. Inténtalo de nuevo.")
             return
 
-        await placeholder.edit_text(f"Escuché: {transcription}\n\nAnalizando...")
+        await placeholder.edit_text(f"🎙️ Escuché: <i>{html.escape(transcription)}</i>\n\n⏳",
+                                     parse_mode=ParseMode.HTML)
 
         chat_id = update.effective_chat.id
         chat_key = str(chat_id)
         chat_history = _get_chat_history(chat_key)
+        intent_tag = _classify_intent(transcription)
+        intent_context = _build_intent_context(intent_tag, STORE_ID)
 
-        done = asyncio.Event()
-        task = asyncio.create_task(_typing_loop(context.bot, chat_id, done))
-        try:
-            response = await loop.run_in_executor(
-                None, _agent_respond, chat_history, transcription, user
-            )
-        except Exception as e:
-            response = f"Error: {e}"
-        finally:
-            done.set()
-            await task
+        response, tools_used = await _run_agent_loop(
+            context.bot, placeholder, chat_history,
+            f"[Nota de voz]: {transcription}",
+            user, intent_tag=intent_tag, intent_context=intent_context,
+        )
 
         chat_history.append({"role": "user", "content": f"[Voz] {transcription}"})
         chat_history.append({"role": "assistant", "content": response})
         _persist_chat_history(chat_key, _compact_history(chat_history))
+        await _persist_conversation_message(chat_key, user_id, f"[Voz] {transcription}",
+                                            response, tools_used, intent_tag)
+
+        session_id = _session_cache.get(user_id)
+        if session_id:
+            kuine_used = 1 if "analyze_product" in tools_used else 0
+            try:
+                database.increment_session_stats(session_id, len(tools_used), kuine_used)
+            except Exception:
+                pass
 
         keyboard = _smart_keyboard(response, _is_manager(user))
         await placeholder.edit_text(
-            _md_to_html(f"Escuché: {transcription}\n\n{response}"),
+            _md_to_html(f"🎙️ Escuché: {transcription}\n\n{response}"),
             parse_mode=ParseMode.HTML,
             reply_markup=keyboard,
         )
 
     except Exception as e:
+        logger.error(f"[chuwi] voice error: {e}")
         await placeholder.edit_text(f"Error procesando el audio: {e}")
 
 
+# ── Nuevos comandos — información del sistema y demo ─────────────────────────
+
+_AGENTES_TEXT = """🤖 <b>LOS 11 AGENTES DE MERMAOPS</b>
+
+<b>KUINE</b> — Orquestador (Claude Opus 4.7)
+El cerebro del sistema. Investiga la tienda con 25 herramientas, razona con adaptive thinking y coordina todo. Funciona solo: 7 cron jobs (07:30, 12:00, 20:00…).
+<i>Demo: /brief genera el análisis completo ahora mismo.</i>
+
+<b>EVALUADOR</b> — Riesgo por producto (Claude Sonnet 4.6)
+Score 0-100 por lote. Para score ≥65: extended thinking con normativa y margen mínimo. Para score ≥90 y >30€: consenso de 3 instancias en paralelo.
+<i>Demo: /criticos muestra los productos con score más alto.</i>
+
+<b>VALIDADOR</b> — Adversarial
+El único agente que puede REVERTIR decisiones. Detecta: precio &lt; coste, CRÍTICO sin acción, FEFO violations. 23 ataques adversariales probados → 100% neutralizados.
+
+<b>CONSENSO</b> — Votación paralela
+3 evaluadores en paralelo para casos extremos (score ≥90 AND valor ≥30€). Árbitro con Claude Opus en empate.
+
+<b>PREDICTOR</b> — Anticipación 7 días
+Combina historial de merma + Open-Meteo (clima) + día de semana. Predice qué va a caducar ANTES de que sea urgente.
+<i>Demo: /prediccion</i>
+
+<b>VISIÓN</b> — Análisis visual (Claude Vision)
+Analiza fotos de productos. Detecta estado, daños, fecha visible. Sin barcode. Manda una foto aquí y funciona solo.
+
+<b>ESG</b> — Impacto ambiental
+CO2 evitado, agua ahorrada, deducción fiscal Ley 49/2002 (35%). Cada donación genera un registro contable.
+<i>Demo: /esg</i>
+
+<b>REPORTERO</b> — Briefs e informes
+Brief apertura (07:30), revisión mediodía (12:00), cierre (20:00). Informe semanal con ROI. Informe mensual para el dueño.
+
+<b>NOTIFICADOR</b> — Telegram inteligente
+Mensajes con botones de acción directa. Donaciones con un toque. Alertas automáticas si crítico lleva >4h sin resolver.
+
+<b>SCANNER</b> — OpenFoodFacts
+Enriquece productos con nombre, imagen y categoría desde la base de datos global de alimentos.
+
+<b>RUTAS</b> — Optimizador de pasillos
+Ruta más eficiente por urgencia + ubicación física. Modo ruta guía al empleado acción por acción.
+<i>Demo: /ruta</i>"""
+
+
+async def _cmd_agentes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Explica cada agente con nombre, modelo, función y cómo demostrar que funciona."""
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 Estado tienda ahora", callback_data="cmd:estado")],
+        [InlineKeyboardButton("⬅️ Menú", callback_data="cmd:menu")],
+    ])
+    await update.message.reply_text(
+        _AGENTES_TEXT,
+        parse_mode=ParseMode.HTML,
+        reply_markup=kb,
+    )
+
+
+async def _cmd_kuine(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Estado de Kuine: último brief, próxima ejecución, herramientas disponibles."""
+    user = _get_user(update.effective_user.id)
+    await update.message.reply_text("Consultando estado de Kuine...")
+    try:
+        loop = asyncio.get_running_loop()
+        brief = await loop.run_in_executor(None, database.get_latest_brief, STORE_ID)
+        pending = await loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
+        critical = [a for a in pending if a.get("priority_score", 0) >= 85]
+        alto = [a for a in pending if 65 <= a.get("priority_score", 0) < 85]
+
+        last_brief_date = brief.get("date", "nunca") if brief else "sin brief hoy"
+        last_summary = (brief.get("summary") or "")[:200] if brief else ""
+
+        text = (
+            f"🧠 <b>KUINE — Estado del orquestador</b>\n\n"
+            f"Modelo: Claude Opus 4.7 (adaptive thinking)\n"
+            f"Herramientas disponibles: 25\n"
+            f"Iteraciones máximas por ciclo: 20\n"
+            f"Cron jobs activos: 7\n\n"
+            f"━━━ Último análisis ━━━\n"
+            f"Fecha: {last_brief_date}\n"
+            f"Acciones generadas: {len(pending)} ({len(critical)} CRÍTICAS, {len(alto)} ALTAS)\n"
+        )
+        if last_summary:
+            text += f"\nResumen:\n<i>{last_summary}...</i>\n"
+
+        text += (
+            f"\n━━━ Próximas ejecuciones ━━━\n"
+            f"• 07:30 — Brief apertura\n"
+            f"• 12:00 — Revisión mediodía\n"
+            f"• 20:00 — Cierre del día\n"
+            f"• Cada 30min — Monitor proactivo\n"
+            f"• Cada 2h — Escalación de críticos\n\n"
+            f"Escribe /brief para forzar análisis ahora."
+        )
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 Generar brief ahora", callback_data="confirm:runbrief")],
+            [InlineKeyboardButton("📋 Ver acciones", callback_data="cmd:acciones")],
+        ])
+        await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+    except Exception as e:
+        await update.message.reply_text(f"Error consultando Kuine: {e}")
+
+
+async def _cmd_demo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Controla la simulación temporal de la demo: /demo 2, /demo reset, /demo estado."""
+    user = _get_user(update.effective_user.id)
+    args = context.args or []
+    cmd = args[0].lower() if args else "ayuda"
+
+    if cmd == "reset":
+        await update.message.reply_text("♻️ Reiniciando estado del Super Martínez...")
+        try:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, lambda: __import__(
+                "backend.data.advance_demo", fromlist=["reset"]
+            ).reset(STORE_ID))
+            await update.message.reply_text(
+                "✅ Estado reiniciado al día de hoy.\n"
+                "Usa /demo 2 para avanzar días y ver cómo Kuine reacciona."
+            )
+        except Exception as e:
+            await update.message.reply_text(f"Error: {e}")
+        return
+
+    try:
+        days = float(cmd)
+    except ValueError:
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⏩ Avanzar 1 día", callback_data="demo:advance:1")],
+            [InlineKeyboardButton("⏩⏩ Avanzar 3 días", callback_data="demo:advance:3")],
+            [InlineKeyboardButton("♻️ Reset al estado inicial", callback_data="demo:reset")],
+        ])
+        await update.message.reply_text(
+            "🎬 <b>MODO DEMO — Control temporal</b>\n\n"
+            "Simula el paso del tiempo en la tienda. Kuine reacciona automáticamente.\n\n"
+            "Comandos:\n"
+            "• <code>/demo 1</code> — avanza 1 día\n"
+            "• <code>/demo 3</code> — avanza 3 días (aparecen CRÍTICOS)\n"
+            "• <code>/demo reset</code> — vuelve al estado inicial\n\n"
+            "O usa los botones:",
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb,
+        )
+        return
+
+    if days < 0.5 or days > 14:
+        await update.message.reply_text("Usa un número entre 0.5 y 14 días.")
+        return
+
+    msg = await update.message.reply_text(
+        f"⏩ Simulando {days:.0f} día(s) en la tienda...\n"
+        "Kuine actualizará caducidades, creará acciones y enviará mensajes."
+    )
+    done = asyncio.Event()
+    task = asyncio.create_task(_typing_loop(context.bot, update.effective_chat.id, done))
+    try:
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: __import__(
+                "backend.data.advance_demo", fromlist=["advance"]
+            ).advance(days, store_id=STORE_ID)
+        )
+        done.set()
+        await task
+        await msg.edit_text(
+            f"✅ <b>Simulación completada: +{days:.0f} días</b>\n\n"
+            f"• Lotes actualizados: {result.get('batches_updated', 0)}\n"
+            f"• Acciones nuevas creadas: {result.get('actions_created', 0)}\n"
+            f"• Acciones completadas (simuladas): {result.get('actions_completed', 0)}\n"
+            f"• Unidades vendidas (simuladas): {result.get('stock_reduced', 0)}\n"
+            f"• Mensajes Telegram enviados: {result.get('telegram_messages_sent', 0)}\n\n"
+            "Usa /estado para ver el nuevo estado de la tienda.",
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception as e:
+        done.set()
+        await task
+        await msg.edit_text(f"Error en la simulación: {e}")
+
+
+async def _cmd_yo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Muestra el perfil del usuario: ID Telegram, vinculación con app, rol."""
+    tg_id = update.effective_user.id
+    tg_name = update.effective_user.first_name or "Usuario"
+    user = _get_user(tg_id)
+
+    if not user:
+        await update.message.reply_text(
+            f"👤 <b>Tu perfil</b>\n\n"
+            f"Nombre: {tg_name}\n"
+            f"ID Telegram: <code>{tg_id}</code>\n"
+            f"Estado: ❌ No vinculado con la app\n\n"
+            "Para vincular:\n"
+            "1. Abre la app → Perfil → Telegram\n"
+            f"2. Pega tu ID: <code>{tg_id}</code>\n"
+            "3. Pulsa Vincular\n\n"
+            "Una vez vinculado tendrás acceso a todas las funciones.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    role_emoji = {"admin": "👑", "manager": "🔑", "staff": "👷"}.get(user.get("role", ""), "👷")
+    await update.message.reply_text(
+        f"👤 <b>Tu perfil</b>\n\n"
+        f"Nombre: {tg_name}\n"
+        f"Email: {user.get('email', '?')}\n"
+        f"Rol: {role_emoji} {user.get('role', '?').capitalize()}\n"
+        f"ID Telegram: <code>{tg_id}</code>\n"
+        f"Estado: ✅ Vinculado con la app\n"
+        f"Tienda: {STORE_ID}\n\n"
+        "Comandos disponibles: /ayuda\n"
+        "Para desvincular escribe: <code>desconectar telegram</code>",
+        parse_mode=ParseMode.HTML,
+    )
+
+
+async def _cmd_estado(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Estado de la tienda en tiempo real — funciona sin estar vinculado."""
+    msg = await update.message.reply_text("🔍 Consultando estado de la tienda...")
+    try:
+        loop = asyncio.get_running_loop()
+        pending = await loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
+        batches = await loop.run_in_executor(
+            None, database.get_batches_expiring_soon, STORE_ID, 7
+        )
+        brief = await loop.run_in_executor(None, database.get_latest_brief, STORE_ID)
+
+        critical = [a for a in pending if a.get("priority_score", 0) >= 85]
+        alto = [a for a in pending if 65 <= a.get("priority_score", 0) < 85]
+        total_value = sum(
+            b.get("quantity", 0) * (b.get("products") or {}).get("price", 0)
+            for b in batches
+        )
+
+        if len(critical) >= 3:
+            semaforo = "🔴 ALERTA"
+        elif len(critical) >= 1 or len(alto) >= 3:
+            semaforo = "🟡 ATENCIÓN"
+        else:
+            semaforo = "🟢 NORMAL"
+
+        text = (
+            f"📊 <b>SUPER MARTÍNEZ — Estado actual</b>\n"
+            f"Semáforo: {semaforo}\n\n"
+            f"Acciones pendientes: {len(pending)}\n"
+            f"  🔴 CRÍTICAS: {len(critical)}\n"
+            f"  🟡 ALTAS: {len(alto)}\n"
+            f"  🟢 Resto: {len(pending) - len(critical) - len(alto)}\n\n"
+            f"Lotes próximos a caducar (7d): {len(batches)}\n"
+            f"Valor en riesgo: {total_value:.2f} €\n"
+        )
+        if brief:
+            text += f"\nÚltimo brief: {brief.get('date', '?')}"
+
+        if critical:
+            text += "\n\n━━ CRÍTICOS AHORA ━━"
+            for a in critical[:3]:
+                b = (a.get("batches") or {})
+                p = (b.get("products") or {}) if b else {}
+                text += f"\n• {p.get('name', 'Producto')} | Pasillo {p.get('pasillo', '?')} | {a.get('action_type', '?').upper()}"
+
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📋 Ver todas las acciones", callback_data="cmd:acciones")],
+            [InlineKeyboardButton("🗺 Iniciar ruta del día", callback_data="cmd:iniciar_ruta")],
+            [InlineKeyboardButton("🔄 Actualizar", callback_data="cmd:estado")],
+        ])
+        await msg.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+    except Exception as e:
+        await msg.edit_text(f"Error consultando estado: {e}")
+
+
+async def _cmd_criticos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Lista de productos críticos (score ≥85) con pasillo y acción exacta."""
+    msg = await update.message.reply_text("🔴 Buscando productos críticos...")
+    try:
+        loop = asyncio.get_running_loop()
+        pending = await loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
+        critical = [a for a in pending if a.get("priority_score", 0) >= 85]
+
+        if not critical:
+            await msg.edit_text(
+                "✅ Sin productos críticos en este momento.\n"
+                "Usa /estado para ver el panorama completo."
+            )
+            return
+
+        lines = [f"🔴 <b>{len(critical)} PRODUCTO(S) CRÍTICO(S)</b>\n"]
+        for i, a in enumerate(critical[:8], 1):
+            b = (a.get("batches") or {})
+            p = (b.get("products") or {}) if b else {}
+            action_type = (a.get("action_type") or "revisar").upper()
+            score = a.get("priority_score", 0)
+            notes = (a.get("notes") or "")[:80]
+            lines.append(
+                f"{i}. <b>{p.get('name', 'Producto')}</b>\n"
+                f"   Pasillo {p.get('pasillo', '?')} | Score {score}/100 | {action_type}\n"
+                f"   {notes}"
+            )
+
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🗺 Iniciar ruta de críticos", callback_data="cmd:iniciar_ruta")],
+            [InlineKeyboardButton("⬅️ Menú", callback_data="cmd:menu")],
+        ])
+        await msg.edit_text("\n\n".join(lines), parse_mode=ParseMode.HTML, reply_markup=kb)
+    except Exception as e:
+        await msg.edit_text(f"Error: {e}")
+
+
+async def _cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Lista completa de comandos con descripción."""
+    user = _get_user(update.effective_user.id)
+    manager = _is_manager(user)
+    base = (
+        "📚 <b>COMANDOS DE CHUWI</b>\n\n"
+        "<b>— Información general —</b>\n"
+        "/start — Bienvenida y vinculación de cuenta\n"
+        "/yo — Tu perfil y estado de vinculación\n"
+        "/estado — Estado de la tienda en tiempo real 🚦\n"
+        "/agentes — Qué hace cada agente de IA\n"
+        "/kuine — Estado de Kuine (el orquestador)\n"
+        "/ayuda — Este mensaje\n\n"
+        "<b>— Operaciones diarias —</b>\n"
+        "/acciones — Lista de acciones pendientes\n"
+        "/criticos — Solo productos con score ≥85\n"
+        "/ruta — Iniciar ruta guiada por pasillos\n"
+        "/scan [código] — Analizar producto por barcode\n"
+        "/brief — Ver el brief de apertura de hoy\n\n"
+        "<b>— Estadísticas —</b>\n"
+        "/merma — Merma en euros (últimos 7 días)\n"
+        "/donaciones — Impacto social de donaciones\n"
+        "/prediccion — Previsión de merma 7 días + clima\n"
+        "/stats — Estadísticas del semáforo general\n"
+    )
+    manager_cmds = (
+        "\n<b>— Solo encargados —</b>\n"
+        "/proveedores — Ficha de proveedores con merma\n"
+        "/esg — Métricas ESG (CO2, agua, deducción fiscal)\n"
+        "/citar [consulta] — Citar normativa alimentaria\n"
+        "/demo [días|reset] — Simular paso del tiempo\n"
+        "/kuine — Estado del orquestador\n"
+    )
+    tip = (
+        "\n💡 <b>Tip:</b> También puedes escribir en lenguaje natural.\n"
+        "Ej: \"¿qué hago con las fresas del pasillo 5?\"\n"
+        "O enviar una foto de cualquier producto para analizarlo."
+    )
+    text = base + (manager_cmds if manager else "") + tip
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+
+
+# ── Callbacks nuevos para los botones de demo y estado ───────────────────────
+
+async def _handle_demo_callback(
+    query, context: ContextTypes.DEFAULT_TYPE, data: str
+) -> None:
+    """Gestiona demo:advance:N y demo:reset desde botones."""
+    parts = data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+
+    if action == "reset":
+        await query.edit_message_text("♻️ Reiniciando estado...")
+        try:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, lambda: __import__(
+                "backend.data.advance_demo", fromlist=["reset"]
+            ).reset(STORE_ID))
+            await query.edit_message_text(
+                "✅ Estado reiniciado.\nUsa /estado para ver el nuevo panorama.",
+            )
+        except Exception as e:
+            await query.edit_message_text(f"Error: {e}")
+        return
+
+    if action == "advance":
+        days = float(parts[2]) if len(parts) > 2 else 1.0
+        await query.edit_message_text(f"⏩ Simulando {days:.0f} día(s)...")
+        done = asyncio.Event()
+        task = asyncio.create_task(_typing_loop(context.bot, query.message.chat_id, done))
+        try:
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: __import__(
+                    "backend.data.advance_demo", fromlist=["advance"]
+                ).advance(days, store_id=STORE_ID)
+            )
+            done.set()
+            await task
+            await query.edit_message_text(
+                f"✅ <b>+{days:.0f} días simulados</b>\n\n"
+                f"Lotes: {result.get('batches_updated', 0)} | "
+                f"Acciones: {result.get('actions_created', 0)} nuevas | "
+                f"Mensajes: {result.get('telegram_messages_sent', 0)}\n\n"
+                "Usa /estado o /criticos para ver el impacto.",
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception as e:
+            done.set()
+            await task
+            await query.edit_message_text(f"Error: {e}")
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
+
+async def _post_init(application) -> None:
+    """Registra los comandos en BotFather para autocompletado en Telegram."""
+    await application.bot.set_my_commands([
+        BotCommand("start", "Bienvenida y vinculación de cuenta"),
+        BotCommand("estado", "Estado de la tienda en tiempo real 🚦"),
+        BotCommand("acciones", "Lista de acciones pendientes"),
+        BotCommand("criticos", "Solo productos críticos 🔴"),
+        BotCommand("ruta", "Iniciar ruta guiada por pasillos"),
+        BotCommand("brief", "Brief de apertura de hoy"),
+        BotCommand("scan", "Analizar producto por barcode"),
+        BotCommand("agentes", "Qué hace cada agente de IA"),
+        BotCommand("kuine", "Estado del orquestador Kuine"),
+        BotCommand("demo", "Simular paso del tiempo (encargado)"),
+        BotCommand("yo", "Tu perfil y estado de vinculación"),
+        BotCommand("ayuda", "Lista completa de comandos"),
+        BotCommand("merma", "Merma en euros últimos 7 días"),
+        BotCommand("donaciones", "Impacto social de donaciones"),
+        BotCommand("prediccion", "Previsión de merma + clima"),
+        BotCommand("esg", "Métricas ESG (CO2, agua, fiscal)"),
+        BotCommand("proveedores", "Ficha de proveedores con merma"),
+        BotCommand("menu", "Menú interactivo completo"),
+        BotCommand("logout", "Desvincular cuenta de Telegram"),
+    ])
+
 
 def run() -> None:
     if not TOKEN:
         raise RuntimeError("TELEGRAM_BOT_TOKEN no está definido en .env")
 
-    app = ApplicationBuilder().token(TOKEN).build()
+    app = ApplicationBuilder().token(TOKEN).post_init(_post_init).build()
 
     app.add_handler(CommandHandler("start", handle_start))
     app.add_handler(CommandHandler("menu", handle_menu))
@@ -3021,6 +3995,16 @@ def run() -> None:
         await _action_citar(update, ctx, user, is_callback=False, cmd_args=args)
 
     app.add_handler(CommandHandler("citar", handle_citar))
+
+    # Comandos nuevos
+    app.add_handler(CommandHandler("agentes", _cmd_agentes))
+    app.add_handler(CommandHandler("kuine", _cmd_kuine))
+    app.add_handler(CommandHandler("demo", _cmd_demo))
+    app.add_handler(CommandHandler("yo", _cmd_yo))
+    app.add_handler(CommandHandler("estado", _cmd_estado))
+    app.add_handler(CommandHandler("criticos", _cmd_criticos))
+    app.add_handler(CommandHandler("ayuda", _cmd_ayuda))
+    app.add_handler(CommandHandler("logout", _cmd_logout))
 
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))

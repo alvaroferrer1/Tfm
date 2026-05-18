@@ -1,4 +1,3 @@
-import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -10,6 +9,7 @@ import '../features/actions/actions_screen.dart';
 import '../features/map/map_screen.dart';
 import '../features/reports/reports_screen.dart';
 import '../features/profile/profile_screen.dart';
+import '../features/agents/agents_screen.dart';
 import 'shell_scaffold.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
@@ -58,6 +58,10 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(
             path: '/profile',
             builder: (context, state) => const ProfileScreen(),
+          ),
+          GoRoute(
+            path: '/agents',
+            builder: (context, state) => const AgentsScreen(),
           ),
         ],
       ),

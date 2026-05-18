@@ -16,7 +16,7 @@ import 'supabase_client.dart';
 // Si no se pasa, usa localhost (solo válido en emulador Android, no en dispositivo real).
 const _baseUrl = String.fromEnvironment(
   'API_URL',
-  defaultValue: 'http://10.0.2.2:8000/api/v1', // 10.0.2.2 = localhost desde emulador Android
+  defaultValue: 'http://10.0.2.2:8001/api/v1', // 10.0.2.2 = localhost desde emulador Android
 );
 
 class ApiService {
@@ -76,7 +76,7 @@ class ApiService {
     String notes = '',
     String photoUrl = '',
   }) async {
-    await http.post(
+    final resp = await http.post(
       Uri.parse('$_baseUrl/actions/complete'),
       headers: _headers,
       body: jsonEncode({
@@ -86,6 +86,9 @@ class ApiService {
         'photo_url': photoUrl,
       }),
     ).timeout(const Duration(seconds: 15));
+    if (resp.statusCode >= 400) {
+      throw Exception('Error completando acción: ${resp.statusCode} ${resp.body}');
+    }
   }
 
   Future<List<Map<String, dynamic>>> getSupplierStats() async {
@@ -217,6 +220,58 @@ class ApiService {
         'category': category,
       }),
     ).timeout(const Duration(seconds: 45));
+    return _parse(resp);
+  }
+
+  // ── Fase 5: Agent activity endpoints ────────────────────────────────────────
+
+  Future<Map<String, dynamic>> getAgentStatus() async {
+    final resp = await http.get(
+      Uri.parse('$_baseUrl/agent/status'),
+      headers: _headers,
+    ).timeout(const Duration(seconds: 10));
+    return _parse(resp);
+  }
+
+  Future<Map<String, dynamic>> getAgentActivity() async {
+    final resp = await http.get(
+      Uri.parse('$_baseUrl/agent/activity'),
+      headers: _headers,
+    ).timeout(const Duration(seconds: 10));
+    return _parse(resp);
+  }
+
+  Future<List<Map<String, dynamic>>> getAgentConversations({int limit = 20}) async {
+    final resp = await http.get(
+      Uri.parse('$_baseUrl/agent/conversations?limit=$limit'),
+      headers: _headers,
+    ).timeout(const Duration(seconds: 10));
+    final data = _parse(resp);
+    return List<Map<String, dynamic>>.from(data['conversations'] ?? []);
+  }
+
+  Future<List<Map<String, dynamic>>> getAgentRuns({int limit = 20}) async {
+    final resp = await http.get(
+      Uri.parse('$_baseUrl/agent/runs?limit=$limit'),
+      headers: _headers,
+    ).timeout(const Duration(seconds: 10));
+    final data = _parse(resp);
+    return List<Map<String, dynamic>>.from(data['runs'] ?? []);
+  }
+
+  Future<Map<String, dynamic>> getSupervisorDecisions({int limit = 50}) async {
+    final resp = await http.get(
+      Uri.parse('$_baseUrl/agent/decisions?limit=$limit'),
+      headers: _headers,
+    ).timeout(const Duration(seconds: 10));
+    return _parse(resp);
+  }
+
+  Future<Map<String, dynamic>> getTelegramStatus() async {
+    final resp = await http.get(
+      Uri.parse('$_baseUrl/telegram/status'),
+      headers: _headers,
+    ).timeout(const Duration(seconds: 10));
     return _parse(resp);
   }
 

@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 const _emeraldGreen = Color(0xFF059669);
 const _emeraldLight = Color(0xFF10B981);
 const _amber = Color(0xFFF59E0B);
-const _amberDark = Color(0xFFD97706);
 const _critical = Color(0xFFEF4444);
 const _surface = Color(0xFFF9FAFB);
 const _surfaceDark = Color(0xFF111827);

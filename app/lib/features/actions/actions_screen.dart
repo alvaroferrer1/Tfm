@@ -232,7 +232,7 @@ class _ActionsScreenState extends ConsumerState<ActionsScreen>
       builder: (_) => StatefulBuilder(
         builder: (ctx, setModalState) => Padding(
           padding: EdgeInsets.fromLTRB(
-            16, 16, 16, MediaQuery.of(context).viewInsets.bottom + 16,
+            16, 16, 16, MediaQuery.of(ctx).viewInsets.bottom + 16,
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -363,7 +363,7 @@ class _ActionsScreenState extends ConsumerState<ActionsScreen>
       builder: (_) => StatefulBuilder(
         builder: (ctx, setModalState) => Padding(
           padding: EdgeInsets.fromLTRB(
-            16, 16, 16, MediaQuery.of(context).viewInsets.bottom + 16,
+            16, 16, 16, MediaQuery.of(ctx).viewInsets.bottom + 16,
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1003,6 +1003,13 @@ class _ActionCard extends StatelessWidget {
                   ),
               ],
             ),
+            if (quantity > 0) ...[
+              const SizedBox(height: 4),
+              Text(
+                'Stock: $quantity uds',
+                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              ),
+            ],
             if (notes.isNotEmpty) ...[
               const SizedBox(height: 6),
               Text(

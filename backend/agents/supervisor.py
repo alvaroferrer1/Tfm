@@ -14,6 +14,9 @@ from datetime import date, datetime
 from backend.core import llm, database, memory as mem, knowledge
 from backend.agents import evaluator, price, stock, route, reporter, notifier, validator
 
+# Persiste el run_id del último brief por tienda para que el executor pueda asociar decisiones
+_LAST_BRIEF_RUN_ID: dict[str, str] = {}
+
 
 # ── Definición de herramientas para el loop agéntico ────────────────────────
 
@@ -420,6 +423,28 @@ def _make_executor(store_id: str):
                     if existing_action.get("batch_id") == action_data["batch_id"]:
                         return {"created": False, "reason": "Ya existe acción pendiente para este lote."}
                 created = database.create_action(action_data)
+                # Traza de decisión de Kuine (Fase 3)
+                try:
+                    decision_type_map = {
+                        "discount": "rebajar",
+                        "donate": "donar",
+                        "remove": "retirar",
+                        "review": "revisar",
+                        "restock": "reponer",
+                    }
+                    dtype = decision_type_map.get(action_data.get("action_type", ""), "revisar")
+                    database.log_supervisor_decision({
+                        "store_id": store_id,
+                        "agent_run_id": _LAST_BRIEF_RUN_ID.get(store_id) or None,
+                        "product_id": tool_input.get("product_id"),
+                        "batch_id": action_data.get("batch_id"),
+                        "decision_type": dtype,
+                        "score": action_data.get("priority_score", 0),
+                        "reason": action_data.get("notes", ""),
+                        "validated": False,
+                    })
+                except Exception:
+                    pass
                 # DM proactivo a empleados si la acción es crítica
                 if action_data.get("priority_score", 0) >= 85:
                     try:
@@ -506,7 +531,7 @@ def _make_executor(store_id: str):
 
 def run_scan(store_id: str, barcode: str, user_id: str) -> str:
     """
-    Flujo completo de escaneo: el Supervisor investiga con herramientas
+    Flujo completo de escaneo: Kuine investiga con herramientas
     y genera una respuesta operativa para el empleado.
     """
     product = database.get_product_by_barcode(store_id, barcode)
@@ -597,9 +622,11 @@ VALIDACION: {validation['status']}
 
 def run_daily_brief(store_id: str) -> str:
     """
-    Brief de apertura de tienda. El Supervisor usa el loop agéntico completo:
+    Brief de apertura de tienda. Kuine usa el loop agéntico completo:
     investiga activamente, evalúa cada producto, crea acciones en BD y genera el brief.
     """
+    import time as _time
+    _t0 = _time.monotonic()
     today = date.today()
     weekday = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"][today.weekday()]
     memory_ctx = mem.build_memory_context(store_id)
@@ -673,12 +700,19 @@ Al finalizar, genera el brief completo para el encargado."""
         "actions_count": len(pending),
     })
 
-    # Log del run con traza de herramientas
-    database.log_agent_run({
+    # Log del run con traza completa de herramientas (Fase 3)
+    duration_ms = int((_time.monotonic() - _t0) * 1000)
+    tool_names = [t.get("name") if isinstance(t, dict) else str(t) for t in tool_trace]
+    _run_id = database.log_agent_run({
         "store_id": store_id,
-        "agent_type": "supervisor_daily_brief",
-        "result": json.dumps({"tools_used": len(tool_trace), "trace": tool_trace[:5]}, default=str),
+        "agent_type": "kuine_daily_brief",
+        "tools_used": tool_names,
+        "tools_count": len(tool_names),
+        "duration_ms": duration_ms,
+        "trigger_source": "scheduler",
+        "result": json.dumps({"tools_count": len(tool_names), "trace": tool_names}, default=str),
     })
+    _LAST_BRIEF_RUN_ID[store_id] = _run_id or ""
 
     notifier.send_telegram(store_id, response)
     return response
@@ -723,7 +757,7 @@ def run_intraday_check(store_id: str) -> str:
 
 def run_closing(store_id: str) -> str:
     """
-    Cierre del día: el Supervisor revisa qué quedó sin resolver,
+    Cierre del día: Kuine revisa qué quedó sin resolver,
     registra la merma real y guarda patrones para el futuro.
     """
     pending = database.get_pending_actions(store_id)
@@ -761,7 +795,11 @@ def run_weekly_report(store_id: str) -> str:
     })
     database.log_agent_run({
         "store_id": store_id,
-        "agent_type": "supervisor_weekly_report",
+        "agent_type": "kuine_weekly_report",
+        "trigger_source": "scheduler",
+        "tools_used": [],
+        "tools_count": 0,
+        "duration_ms": 0,
         "result": f"Informe semanal generado para semana {week_start}",
     })
     notifier.send_telegram(store_id, report)
@@ -788,21 +826,38 @@ def run_monthly_report(store_id: str) -> str:
 
 def run_free_query(store_id: str, query: str, chat_history: list) -> str:
     """
-    Responde preguntas libres del encargado usando el loop agéntico.
-    Claude puede consultar datos en tiempo real para responder con precisión.
+    Responde preguntas libres del encargado usando el loop agéntico completo.
+    Kuine puede consultar datos en tiempo real — no responde de memoria.
     """
     pending = database.get_pending_actions(store_id)
     brief = database.get_latest_brief(store_id)
+    memory_ctx = mem.build_memory_context(store_id)
 
-    context_prefix = (
-        f"Tienda: Super Martinez ({store_id})\n"
-        f"Fecha: {date.today().isoformat()}\n"
-        f"Acciones pendientes: {len(pending)} "
-        f"({sum(1 for a in pending if a.get('priority_score', 0) >= 85)} críticas)\n"
-        f"Último brief: {brief.get('summary', 'Sin brief')[:300] if brief else 'Sin brief hoy'}\n\n"
-        f"Pregunta del empleado: {query}"
+    system_query = (
+        "Eres Kuine, el agente orquestador de MermaOps. "
+        "El encargado del Super Martínez te pregunta algo. "
+        "Usa tus herramientas para consultar datos reales antes de responder. "
+        "NO inventes datos — si no sabes algo, dilo y busca la información. "
+        "Sé directo y operativo. Máximo 5 líneas en la respuesta final. Sin asteriscos."
     )
 
-    messages = list(chat_history)
-    messages.append({"role": "user", "content": context_prefix})
-    return llm.call_with_history(messages)
+    prompt = (
+        f"Tienda: Super Martínez ({store_id})\n"
+        f"Fecha: {date.today().isoformat()}\n"
+        f"Acciones pendientes ahora: {len(pending)} "
+        f"({sum(1 for a in pending if a.get('priority_score', 0) >= 85)} críticas)\n"
+        f"Último brief: {brief.get('summary', 'Sin brief hoy')[:200] if brief else 'Sin brief hoy'}\n"
+        f"Memoria histórica: {memory_ctx[:300] if memory_ctx else 'Sin historial'}\n\n"
+        f"Pregunta del encargado: {query}\n\n"
+        "Consulta los datos que necesites con tus herramientas y responde con precisión."
+    )
+
+    response, _ = llm.run_agentic_loop(
+        prompt=prompt,
+        tools=SUPERVISOR_TOOLS,
+        tool_executor=_make_executor(store_id),
+        system_extra=system_query,
+        max_tokens=1024,
+        max_iterations=6,
+    )
+    return response

@@ -4,13 +4,13 @@ Ejecutar una vez después de aplicar el schema en Supabase:
   python -m backend.data.seed
 """
 from datetime import date, timedelta
-from backend.core.database import get_db
+from backend.core.database import get_admin_db
 
 STORE_ID = "demo-store-001"
 
 
 def run():
-    db = get_db()
+    db = get_admin_db()
 
     # ── Productos ────────────────────────────────────────────────────────────
     products = [

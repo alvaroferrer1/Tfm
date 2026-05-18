@@ -50,11 +50,20 @@ async def lifespan(app: FastAPI):
 
 
 def _start_chuwi() -> None:
+    import asyncio
+    # Python 3.10+ requiere event loop explícito en threads no-principal
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     try:
         from backend.core.chuwi import run
         run()
     except Exception as e:
         logger.error(f"[chuwi] Error fatal: {e}", exc_info=True)
+    finally:
+        try:
+            loop.close()
+        except Exception:
+            pass
 
 
 app = FastAPI(
@@ -101,7 +110,7 @@ def health():
 
 
 if __name__ == "__main__":
-    port = int(os.getenv("APP_PORT", "8000"))
+    port = int(os.getenv("APP_PORT", "8001"))
     uvicorn.run(
         "backend.main:app",
         host="0.0.0.0",

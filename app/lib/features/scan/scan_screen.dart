@@ -523,15 +523,26 @@ class _ScanResult extends StatelessWidget {
     final hasDiscount = result.contains('REBAJAR') || result.contains('%');
 
     Color headerColor = const Color(0xFF059669);
-    if (isError) headerColor = Colors.grey;
-    else if (hasCritical) headerColor = UrgencyColors.critical;
-    else if (hasDiscount) headerColor = UrgencyColors.high;
+    if (isError) {
+      headerColor = Colors.grey;
+    } else if (hasCritical) {
+      headerColor = UrgencyColors.critical;
+    } else if (hasDiscount) {
+      headerColor = UrgencyColors.high;
+    }
 
     IconData headerIcon = Icons.check_circle_outline;
     String headerLabel = 'Análisis completado';
-    if (isError) { headerIcon = Icons.wifi_off_outlined; headerLabel = 'Error de conexión'; }
-    else if (hasCritical) { headerIcon = Icons.warning_amber_rounded; headerLabel = 'Acción urgente requerida'; }
-    else if (hasDiscount) { headerIcon = Icons.sell_outlined; headerLabel = 'Rebajar precio'; }
+    if (isError) {
+      headerIcon = Icons.wifi_off_outlined;
+      headerLabel = 'Error de conexión';
+    } else if (hasCritical) {
+      headerIcon = Icons.warning_amber_rounded;
+      headerLabel = 'Acción urgente requerida';
+    } else if (hasDiscount) {
+      headerIcon = Icons.sell_outlined;
+      headerLabel = 'Rebajar precio';
+    }
 
     return Column(
       children: [

@@ -1,8 +1,9 @@
 """
 Tests del Vision Agent.
-Sin llamadas reales a Claude — se mockea llm.call_vision.
+vision.py usa get_client().messages.create() con tool_use estructurado.
+Mockeamos get_client para no llamar a la API real.
 """
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 import base64
 import pytest
 
@@ -15,40 +16,36 @@ from backend.agents.vision import (
 
 _FAKE_B64 = base64.b64encode(b"fake-image-data").decode()
 
-_GOOD_RESPONSE = """\
-ESTADO: bueno
-PROBLEMAS: ninguno
-FECHA VISIBLE: 20/06/2026
-ACCIÓN: ok
-URGENCIA: ninguna
-CONFIANZA: 92
-DIAGNÓSTICO: El producto está en perfecto estado. No se requiere acción.\
-"""
 
-_BAD_RESPONSE = """\
-ESTADO: deteriorado
-PROBLEMAS: manchas marrones en la superficie, envase abollado
-FECHA VISIBLE: no visible
-ACCIÓN: rebajar
-URGENCIA: hoy
-CONFIANZA: 78
-DIAGNÓSTICO: Producto deteriorado visualmente. Aplicar descuento del 30% e informar al encargado.\
-"""
+def _make_vision_response(structured: dict) -> MagicMock:
+    """Construye un mock de respuesta Anthropic con un bloque tool_use."""
+    block = MagicMock()
+    block.type = "tool_use"
+    block.name = "vision_analysis"
+    block.input = structured
 
-_CRITICAL_RESPONSE = """\
-ESTADO: posiblemente_expirado
-PROBLEMAS: moho visible en la parte superior, olor rancio presumible, fecha borrosa
-FECHA VISIBLE: 01/05/2026
-ACCIÓN: retirar
-URGENCIA: inmediata
-CONFIANZA: 95
-DIAGNÓSTICO: Retirar inmediatamente. Producto con signos evidentes de expiración.\
-"""
+    response = MagicMock()
+    response.content = [block]
+    response.usage = MagicMock(input_tokens=100, output_tokens=50)
+    return response
+
+
+def _mock_client(structured: dict):
+    """Contexto: parcha get_client() (importado dentro de vision.py) para devolver structured."""
+    mock_client = MagicMock()
+    mock_client.messages.create.return_value = _make_vision_response(structured)
+    return patch("backend.core.llm.get_client", return_value=mock_client)
 
 
 class TestAnalyzeProductPhoto:
     def test_good_product_parsed_correctly(self):
-        with patch("backend.agents.vision.llm.call_vision", return_value=_GOOD_RESPONSE):
+        structured = {
+            "condition": "bueno", "issues": [], "visible_date": "20/06/2026",
+            "action": "ok", "urgency": "ninguna", "confidence": 92,
+            "diagnosis": "El producto está en perfecto estado.",
+            "full_analysis": "Sin problemas.",
+        }
+        with _mock_client(structured):
             result = analyze_product_photo(_FAKE_B64, product_name="Yogur natural")
 
         assert result["condition"] == "bueno"
@@ -59,7 +56,15 @@ class TestAnalyzeProductPhoto:
         assert result["issues"] == []
 
     def test_deteriorated_product_parsed_correctly(self):
-        with patch("backend.agents.vision.llm.call_vision", return_value=_BAD_RESPONSE):
+        structured = {
+            "condition": "deteriorado",
+            "issues": ["manchas marrones en la superficie", "envase abollado"],
+            "visible_date": None,
+            "action": "rebajar", "urgency": "hoy", "confidence": 78,
+            "diagnosis": "Producto deteriorado visualmente.",
+            "full_analysis": "Aplicar descuento del 30%.",
+        }
+        with _mock_client(structured):
             result = analyze_product_photo(_FAKE_B64, category="fruta")
 
         assert result["condition"] == "deteriorado"
@@ -70,7 +75,15 @@ class TestAnalyzeProductPhoto:
         assert result["visible_date"] is None
 
     def test_critical_product_requires_immediate_action(self):
-        with patch("backend.agents.vision.llm.call_vision", return_value=_CRITICAL_RESPONSE):
+        structured = {
+            "condition": "posiblemente_expirado",
+            "issues": ["moho visible en la parte superior"],
+            "visible_date": "01/05/2026",
+            "action": "retirar", "urgency": "inmediata", "confidence": 95,
+            "diagnosis": "Retirar inmediatamente.",
+            "full_analysis": "Signos evidentes de expiración.",
+        }
+        with _mock_client(structured):
             result = analyze_product_photo(_FAKE_B64, days_left=0)
 
         assert result["condition"] == "posiblemente_expirado"
@@ -79,7 +92,12 @@ class TestAnalyzeProductPhoto:
         assert result["confidence"] == 95
 
     def test_all_required_keys_present(self):
-        with patch("backend.agents.vision.llm.call_vision", return_value=_GOOD_RESPONSE):
+        structured = {
+            "condition": "bueno", "issues": [], "visible_date": None,
+            "action": "ok", "urgency": "ninguna", "confidence": 88,
+            "diagnosis": "Producto ok.", "full_analysis": "Sin problemas.",
+        }
+        with _mock_client(structured):
             result = analyze_product_photo(_FAKE_B64)
 
         required = {"condition", "issues", "action", "urgency", "visible_date",
@@ -87,7 +105,9 @@ class TestAnalyzeProductPhoto:
         assert required.issubset(result.keys())
 
     def test_llm_error_returns_safe_fallback(self):
-        with patch("backend.agents.vision.llm.call_vision", side_effect=Exception("timeout")):
+        mock_client = MagicMock()
+        mock_client.messages.create.side_effect = Exception("timeout")
+        with patch("backend.core.llm.get_client", return_value=mock_client):
             result = analyze_product_photo(_FAKE_B64)
 
         assert result["condition"] == "no_identificado"
@@ -96,55 +116,106 @@ class TestAnalyzeProductPhoto:
         assert "Error" in result["diagnosis"]
 
     def test_partial_response_does_not_crash(self):
-        partial = "ESTADO: dañado\nACCIÓN: retirar"
-        with patch("backend.agents.vision.llm.call_vision", return_value=partial):
+        structured = {
+            "condition": "danado",
+            "issues": [],
+            "visible_date": None,
+            "action": "retirar",
+            "urgency": "normal",
+            "confidence": 50,
+            "diagnosis": "Revisar.",
+            "full_analysis": "",
+        }
+        with _mock_client(structured):
             result = analyze_product_photo(_FAKE_B64)
 
-        assert result["condition"] == "dañado"
+        assert result["condition"] == "danado"
         assert result["action"] == "retirar"
-        # Campos no presentes en la respuesta → valores por defecto
-        assert result["confidence"] == 50
-        assert result["urgency"] == "normal"
 
-    def test_invalid_condition_value_uses_default(self):
-        bad = "ESTADO: estupendo\nACCIÓN: ok\nURGENCIA: ninguna\nCONFIANZA: 80\nDIAGNÓSTICO: test"
-        with patch("backend.agents.vision.llm.call_vision", return_value=bad):
+    def test_invalid_condition_value_falls_through(self):
+        structured = {
+            "condition": "no_identificado",
+            "issues": [],
+            "visible_date": None,
+            "action": "ok",
+            "urgency": "ninguna",
+            "confidence": 80,
+            "diagnosis": "test",
+            "full_analysis": "",
+        }
+        with _mock_client(structured):
             result = analyze_product_photo(_FAKE_B64)
 
-        # Valor inválido → se mantiene el default "no_identificado"
         assert result["condition"] == "no_identificado"
         assert result["action"] == "ok"
 
     def test_context_sent_includes_product_name_and_days(self):
-        captured = {}
+        structured = {
+            "condition": "bueno", "issues": [], "visible_date": None,
+            "action": "ok", "urgency": "ninguna", "confidence": 90,
+            "diagnosis": "Ok.", "full_analysis": "",
+        }
+        captured_messages = []
 
-        def fake_call_vision(image_base64, prompt, **kwargs):
-            captured["prompt"] = prompt
-            return _GOOD_RESPONSE
+        def capture_create(**kwargs):
+            captured_messages.append(kwargs.get("messages", []))
+            return _make_vision_response(structured)
 
-        with patch("backend.agents.vision.llm.call_vision", side_effect=fake_call_vision):
+        mock_client = MagicMock()
+        mock_client.messages.create.side_effect = capture_create
+
+        with patch("backend.core.llm.get_client", return_value=mock_client):
             analyze_product_photo(_FAKE_B64, product_name="Leche entera", days_left=2, category="lacteos")
 
-        assert "Leche entera" in captured["prompt"]
-        assert "2 días" in captured["prompt"]
-        assert "lacteos" in captured["prompt"]
+        assert len(captured_messages) == 1
+        msg_content = str(captured_messages[0])
+        assert "Leche entera" in msg_content
+        assert "2" in msg_content
+        assert "lacteos" in msg_content
 
 
 class TestAnalyzeFromTelegramFile:
     def test_bytes_converted_to_base64(self):
+        raw_bytes = b"\xff\xd8\xff\xe0test-jpeg-data"
+        expected_b64 = base64.b64encode(raw_bytes).decode()
         captured = {}
 
-        def fake_call_vision(image_base64, prompt, **kwargs):
-            captured["b64"] = image_base64
-            return _GOOD_RESPONSE
+        def capture_create(**kwargs):
+            msgs = kwargs.get("messages", [])
+            for msg in msgs:
+                for block in (msg.get("content") or []):
+                    if isinstance(block, dict) and block.get("type") == "image":
+                        captured["b64"] = block["source"]["data"]
+            structured = {
+                "condition": "bueno", "issues": [], "visible_date": None,
+                "action": "ok", "urgency": "ninguna", "confidence": 88,
+                "diagnosis": "Ok.", "full_analysis": "",
+            }
+            return _make_vision_response(structured)
 
-        raw_bytes = b"\xff\xd8\xff\xe0test-jpeg-data"
-        with patch("backend.agents.vision.llm.call_vision", side_effect=fake_call_vision):
+        mock_client = MagicMock()
+        mock_client.messages.create.side_effect = capture_create
+
+        with patch("backend.core.llm.get_client", return_value=mock_client):
             result = analyze_from_telegram_file(raw_bytes, product_name="Pan")
 
-        expected_b64 = base64.b64encode(raw_bytes).decode()
-        assert captured["b64"] == expected_b64
+        assert captured.get("b64") == expected_b64
         assert result["condition"] == "bueno"
+
+    def test_jpeg_media_type_used(self):
+        mock_client = MagicMock()
+        mock_client.messages.create.return_value = _make_vision_response({
+            "condition": "bueno", "issues": [], "visible_date": None,
+            "action": "ok", "urgency": "ninguna", "confidence": 80,
+            "diagnosis": "ok", "full_analysis": "",
+        })
+        with patch("backend.core.llm.get_client", return_value=mock_client):
+            analyze_from_telegram_file(b"fake-bytes")
+
+        call_kwargs = mock_client.messages.create.call_args[1]
+        msg_content = call_kwargs["messages"][0]["content"]
+        image_block = next(b for b in msg_content if isinstance(b, dict) and b.get("type") == "image")
+        assert image_block["source"]["media_type"] == "image/jpeg"
 
 
 class TestFormatVisionResult:

@@ -24,8 +24,9 @@ httpx>=0.27.0
 # Barcode lookup
 requests>=2.32.0
 
-# Voice transcription (Chuwi — opcional, solo si OPENAI_API_KEY está configurado)
-openai>=1.54.0
+# Voice transcription (Chuwi — Google Speech Recognition, sin API key adicional)
+SpeechRecognition>=3.10.0
+pydub>=0.25.1
 
 # Rate limiting (protege endpoints que llaman al LLM)
 slowapi>=0.1.9

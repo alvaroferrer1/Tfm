@@ -480,3 +480,184 @@ def get_merma_stats(days: int = 30):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Agent activity endpoints (Fase 1+2+6) ────────────────────────────────────
+
+@router.get("/agent/conversations")
+def get_agent_conversations(limit: int = 20, _auth: dict = Depends(verify_token)):
+    """Lista de conversaciones recientes de Chuwi con el encargado."""
+    try:
+        result = (
+            database.get_db().table("agent_conversations")
+            .select("*")
+            .eq("store_id", STORE_ID)
+            .order("last_message_at", desc=True)
+            .limit(min(limit, 100))
+            .execute()
+        )
+        return {"conversations": result.data or []}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/agent/conversations/{conversation_id}/messages")
+def get_conversation_messages(conversation_id: str, _auth: dict = Depends(verify_token)):
+    """Mensajes de una conversación específica con tools_used e intent_tag."""
+    try:
+        messages = database.get_conversation_messages(conversation_id, limit=100)
+        return {"conversation_id": conversation_id, "messages": messages}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/agent/sessions")
+def get_agent_sessions(limit: int = 20, _auth: dict = Depends(verify_token)):
+    """Sesiones del agente con contadores de tools y llamadas a Kuine."""
+    try:
+        result = (
+            database.get_db().table("agent_sessions")
+            .select("*")
+            .eq("store_id", STORE_ID)
+            .order("session_start", desc=True)
+            .limit(min(limit, 100))
+            .execute()
+        )
+        return {"sessions": result.data or []}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/agent/activity")
+def get_agent_activity(_auth: dict = Depends(verify_token)):
+    """Resumen de actividad del agente: conversaciones, intents, tools más usadas."""
+    try:
+        db = database.get_db()
+        # Últimas 24h de mensajes
+        from datetime import datetime, timedelta
+        cutoff = (datetime.utcnow() - timedelta(hours=24)).isoformat()
+        msgs = (
+            db.table("agent_messages")
+            .select("role, intent_tag, tools_used, agent_source, created_at")
+            .eq("store_id", STORE_ID)
+            .gte("created_at", cutoff)
+            .execute()
+        ).data or []
+
+        # Agregar stats
+        by_intent: dict = {}
+        all_tools: list = []
+        for m in msgs:
+            tag = m.get("intent_tag") or "sin_tag"
+            by_intent[tag] = by_intent.get(tag, 0) + 1
+            tools = m.get("tools_used") or []
+            all_tools.extend(tools)
+        tool_counts: dict = {}
+        for t in all_tools:
+            tool_counts[t] = tool_counts.get(t, 0) + 1
+
+        return {
+            "period_hours": 24,
+            "total_messages": len(msgs),
+            "by_intent": by_intent,
+            "top_tools": sorted(tool_counts.items(), key=lambda x: -x[1])[:10],
+            "kuine_calls": sum(1 for m in msgs if m.get("agent_source") == "kuine"),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/agent/status")
+def get_agent_status():
+    """Estado de todos los agentes del sistema."""
+    from backend.agents import evaluator, validator, price, stock, reporter, notifier
+    return {
+        "agents": [
+            {"name": "Kuine", "type": "orchestrator", "model": "claude-opus-4-7",
+             "status": "active", "description": "Orquestador principal, 25 tools, hasta 20 iteraciones"},
+            {"name": "Chuwi", "type": "conversational", "model": "claude-sonnet-4-6",
+             "status": "active", "description": "Agente Telegram, streaming, 6 iteraciones, intent classification"},
+            {"name": "Evaluador", "type": "evaluator", "model": "claude-sonnet-4-6",
+             "status": "active", "description": "Score 0-100 por lote, extended thinking >=65"},
+            {"name": "Validador", "type": "validator", "model": "claude-sonnet-4-6",
+             "status": "active", "description": "23 ataques adversariales, 100% neutralizados"},
+            {"name": "Consenso", "type": "consensus", "model": "claude-sonnet-4-6",
+             "status": "active", "description": "3 instancias paralelas para score >=90"},
+            {"name": "Predictor", "type": "predictor", "model": "claude-haiku-4-5",
+             "status": "active", "description": "Open-Meteo + historial, 7 días"},
+            {"name": "Visión", "type": "vision", "model": "claude-3-5-sonnet",
+             "status": "active", "description": "Análisis visual de productos"},
+            {"name": "Precio", "type": "pricing", "model": "claude-haiku-4-5",
+             "status": "active", "description": "Cálculo de descuentos óptimos"},
+            {"name": "Stock", "type": "inventory", "model": "claude-haiku-4-5",
+             "status": "active", "description": "Decisiones de reposición FEFO"},
+            {"name": "Notificador", "type": "notifier", "model": "claude-sonnet-4-6",
+             "status": "active", "description": "Alertas proactivas por Telegram"},
+            {"name": "Reportero", "type": "reporter", "model": "claude-sonnet-4-6",
+             "status": "active", "description": "Briefs diarios y resúmenes semanales"},
+        ]
+    }
+
+
+@router.get("/telegram/status")
+def get_telegram_status():
+    """Estado del canal Telegram AI Agent."""
+    import os
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    has_token = bool(token)
+    bot_name = "ChuwiMermaOpsBot"
+    return {
+        "channel": "Telegram AI Agent",
+        "bot_username": f"@{bot_name}",
+        "token_configured": has_token,
+        "mode": "polling" if os.getenv("APP_ENV", "development") == "development" else "webhook",
+        "features": [
+            "intent_classification",
+            "streaming_responses",
+            "tool_use",
+            "kuine_delegation",
+            "conversation_persistence",
+            "voice_transcription",
+            "photo_analysis",
+        ],
+        "note": "Telegram actúa como canal de transporte. La lógica es un agente operativo con memoria y trazabilidad.",
+    }
+
+
+# ── Fase 3: runs y decisiones de Kuine ──────────────────────────────────────
+
+@router.get("/agent/runs")
+def get_agent_runs(store_id: str = None, agent_type: str = None, limit: int = 20):
+    """Historial de runs del supervisor Kuine con traza completa de tools."""
+    from backend.core import database
+    sid = store_id or os.getenv("STORE_ID", "demo-store-001")
+    try:
+        runs = database.get_agent_runs(sid, agent_type=agent_type, limit=limit)
+        return {
+            "store_id": sid,
+            "count": len(runs),
+            "runs": runs,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/agent/decisions")
+def get_supervisor_decisions(store_id: str = None, limit: int = 50):
+    """Decisiones explícitas de Kuine: rebajar/donar/retirar/revisar/reponer."""
+    from backend.core import database
+    sid = store_id or os.getenv("STORE_ID", "demo-store-001")
+    try:
+        decisions = database.get_supervisor_decisions(sid, limit=limit)
+        summary: dict[str, int] = {}
+        for d in decisions:
+            dtype = d.get("decision_type", "unknown")
+            summary[dtype] = summary.get(dtype, 0) + 1
+        return {
+            "store_id": sid,
+            "count": len(decisions),
+            "summary": summary,
+            "decisions": decisions,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
