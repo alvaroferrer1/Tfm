@@ -1,0 +1,42 @@
+# MermaOps — Dependencies
+
+# AI
+anthropic>=0.40.0
+
+# Backend API
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+
+# Database
+supabase>=2.10.0
+
+# Telegram Bot
+python-telegram-bot>=21.0
+
+# Scheduler (cron jobs de agentes)
+apscheduler>=3.10.0
+
+# Utils
+python-dotenv>=1.0.0
+pydantic>=2.10.0
+httpx>=0.27.0
+
+# Barcode lookup
+requests>=2.32.0
+
+# Voice transcription (Chuwi — opcional, solo si OPENAI_API_KEY está configurado)
+openai>=1.54.0
+
+# Rate limiting (protege endpoints que llaman al LLM)
+slowapi>=0.1.9
+
+# Data / seed
+faker>=33.0.0
+
+# Observability — traza de llamadas LLM (opcional, requiere LANGFUSE_PUBLIC_KEY)
+# AnthropicInstrumentor auto-instrumenta todas las llamadas vía OpenTelemetry
+langfuse>=3.0.0
+opentelemetry-instrumentation-anthropic>=0.40.0
+
+# Export CSV/metrics
+tabulate>=0.9.0

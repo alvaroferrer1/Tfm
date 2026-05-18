@@ -1,0 +1,74 @@
+# MermaOps — .gitignore
+
+# ── Secrets ─────────────────────────────────────────────────────────────────
+.env
+*.env.local
+*.env.production
+
+# ── Python ──────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+.tmp/
+*.log
+
+# ── pytest ──────────────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# ── Flutter / Dart ──────────────────────────────────────────────────────────
+app/.dart_tool/
+app/.flutter-plugins
+app/.flutter-plugins-dependencies
+app/build/
+app/.packages
+app/pubspec.lock
+app/**/*.g.dart
+app/**/*.freezed.dart
+app/android/local.properties
+app/android/.gradle/
+app/android/app/debug/
+app/android/app/release/
+app/android/app/profile/
+app/android/key.jks
+app/ios/.symlinks/
+app/ios/Pods/
+app/ios/Flutter/Flutter.framework
+app/ios/Flutter/Flutter.podspec
+app/ios/Runner/GeneratedPluginRegistrant.*
+
+# ── IDEs ────────────────────────────────────────────────────────────────────
+.idea/
+.vscode/settings.json
+*.iml
+*.iws
+.DS_Store
+Thumbs.db
+
+# ── Large / unnecessary files ────────────────────────────────────────────────
+*.zip
+*.tar.gz
+*.png
+*.jpg
+*.jpeg
+*.gif
+eval_results.json
+
+# ── Reference code del máster (no pertenece al TFM) ──────────────────────────
+_jeffry_extracted/
+_main_extracted/
+master-ia-evolve-main/
+
+# ── Claude Code IDE ──────────────────────────────────────────────────────────
+.claude/
