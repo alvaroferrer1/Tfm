@@ -2262,21 +2262,24 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     if not user:
         kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                "📱 Vincular en la App MermaOps",
+                url="mermaops://app/profile",
+            )],
             [InlineKeyboardButton("🏪 Ver estado de la tienda", callback_data="cmd:estado")],
-            [InlineKeyboardButton("📖 ¿Qué es MermaOps?", callback_data="cmd:tour")],
             [InlineKeyboardButton("🤖 Ver todos los agentes", callback_data="cmd:agentes_info")],
         ])
         await update.message.reply_text(
-            f"👋 Hola <b>{tg_name}</b>, soy <b>Chuwi</b>, el agente operativo del <b>Super Martínez</b>.\n\n"
-            "Trabajo con <b>Kuine</b> (la IA orquestadora) para gestionar el inventario, "
-            "detectar productos en riesgo y coordinar las acciones del equipo.\n\n"
+            f"👋 Hola <b>{tg_name}</b>, soy <b>Chuwi</b>, el agente de <b>MermaOps</b>.\n\n"
+            "Para que pueda reconocerte y responderte con datos de tu tienda, "
+            "necesitas vincular tu cuenta.\n\n"
             "━━━━━━━━━━━━━━━━━━\n"
-            "🔗 <b>Para vincular tu cuenta:</b>\n"
-            "1. Abre la app MermaOps → Perfil → Telegram\n"
-            "2. Pega este ID y pulsa Vincular:\n\n"
+            "🔗 <b>Tu ID de Telegram:</b>\n\n"
             f"<code>{tg_id}</code>\n\n"
+            "<b>Opción A</b> — Pulsa el botón de abajo para abrir la app directamente en la pantalla de vinculación.\n\n"
+            "<b>Opción B</b> — Copia el ID de arriba, abre MermaOps → Perfil → pégalo y pulsa Vincular.\n"
             "━━━━━━━━━━━━━━━━━━\n"
-            "Mientras tanto puedes explorar sin vincular 👇",
+            "Mientras tanto puedes explorar 👇",
             parse_mode=ParseMode.HTML,
             reply_markup=kb,
         )
