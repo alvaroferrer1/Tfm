@@ -677,6 +677,23 @@ def get_monthly_pdf(_auth: dict = Depends(verify_token)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/reports/presentation/pdf")
+def get_presentation_pdf(_auth: dict = Depends(verify_token)):
+    """Descarga el PDF de la presentacion del TFM (10 diapositivas)."""
+    from fastapi.responses import Response
+    try:
+        from backend.core.slides_generator import generate_presentation
+        pdf_bytes = generate_presentation()
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": 'attachment; filename="MermaOps_Presentacion_TFM.pdf"'},
+        )
+    except Exception as e:
+        logger.error(f"presentation pdf error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/stats/merma")
 def get_merma_stats(days: int = 30):
     """Estadísticas de merma para el gráfico de la app."""
