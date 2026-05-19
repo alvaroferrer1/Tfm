@@ -1,5 +1,7 @@
 # MermaOps
 
+![MermaOps Hero](MermaOps_Hero.png)
+
 **Sistema multi-agente de inteligencia artificial para la reducción de merma alimentaria en supermercados**
 
 TFM — Máster en IA Generativa e Innovación — Evolve Business School 2026 — Álvaro Ferrer Margarit
