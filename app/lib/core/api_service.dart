@@ -5,18 +5,14 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'supabase_client.dart';
 
 // API_URL se pasa en tiempo de build:
-//   flutter run --dart-define=API_URL=http://192.168.1.X:8000/api/v1
-//   flutter build apk --dart-define=API_URL=http://192.168.1.X:8000/api/v1
+//   flutter run -d chrome --dart-define=API_URL=http://localhost:8001/api/v1
+//   flutter run -d android --dart-define=API_URL=http://10.0.2.2:8001/api/v1  (emulador)
+//   flutter run -d android --dart-define=API_URL=http://192.168.1.X:8001/api/v1 (dispositivo real)
 //
-// Para la demo: usa la IP local del ordenador donde corre el backend.
-// Comandos rápidos:
-//   Windows: ipconfig | findstr IPv4
-//   Mac/Linux: ifconfig | grep "inet "
-//
-// Si no se pasa, usa localhost (solo válido en emulador Android, no en dispositivo real).
+// El default es localhost — válido para demo web en Chrome en el mismo ordenador.
 const _baseUrl = String.fromEnvironment(
   'API_URL',
-  defaultValue: 'http://10.0.2.2:8001/api/v1', // 10.0.2.2 = localhost desde emulador Android
+  defaultValue: 'http://localhost:8001/api/v1',
 );
 
 class ApiService {
@@ -273,6 +269,47 @@ class ApiService {
       headers: _headers,
     ).timeout(const Duration(seconds: 10));
     return _parse(resp);
+  }
+
+  Future<void> notifyAppLogin() async {
+    try {
+      await http.post(
+        Uri.parse('$_baseUrl/user/app-login-notify'),
+        headers: _headers,
+      ).timeout(const Duration(seconds: 10));
+    } catch (_) {
+      // Non-critical — ignore failures silently
+    }
+  }
+
+  /// Descarga el PDF del brief de hoy y devuelve los bytes.
+  Future<List<int>> downloadBriefPdf({String date = ''}) async {
+    final uri = Uri.parse('$_baseUrl/reports/brief/pdf${date.isNotEmpty ? '?date=$date' : ''}');
+    final resp = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 30));
+    if (resp.statusCode >= 200 && resp.statusCode < 300) {
+      return resp.bodyBytes;
+    }
+    throw Exception('Error descargando brief PDF: ${resp.statusCode}');
+  }
+
+  /// Descarga el PDF del informe semanal y devuelve los bytes.
+  Future<List<int>> downloadWeeklyPdf({String weekStart = ''}) async {
+    final uri = Uri.parse('$_baseUrl/reports/weekly/pdf${weekStart.isNotEmpty ? '?week_start=$weekStart' : ''}');
+    final resp = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 60));
+    if (resp.statusCode >= 200 && resp.statusCode < 300) {
+      return resp.bodyBytes;
+    }
+    throw Exception('Error descargando informe semanal PDF: ${resp.statusCode}');
+  }
+
+  /// Descarga el PDF del informe mensual y devuelve los bytes.
+  Future<List<int>> downloadMonthlyPdf() async {
+    final uri = Uri.parse('$_baseUrl/reports/monthly/pdf');
+    final resp = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 90));
+    if (resp.statusCode >= 200 && resp.statusCode < 300) {
+      return resp.bodyBytes;
+    }
+    throw Exception('Error descargando informe mensual PDF: ${resp.statusCode}');
   }
 
   Map<String, dynamic> _parse(http.Response resp) {

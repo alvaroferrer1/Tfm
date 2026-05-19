@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -28,7 +29,7 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _initCamera();
+    if (!kIsWeb) _initCamera();
   }
 
   void _initCamera() {
@@ -136,12 +137,43 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
     setState(() => _torchOn = !_torchOn);
   }
 
+  Future<void> _analyzeBarcode(String barcode) async {
+    if (barcode.isEmpty || ref.read(_scanLoadingProvider)) return;
+    ref.read(_lastBarcodeProvider.notifier).state = barcode;
+    ref.read(_scanLoadingProvider.notifier).state = true;
+    ref.read(_scanResultProvider.notifier).state = null;
+    try {
+      final response = await api.scan(barcode);
+      ref.read(_scanResultProvider.notifier).state =
+          response['result'] as String? ?? 'Sin respuesta del servidor.';
+    } catch (e) {
+      ref.read(_scanResultProvider.notifier).state = 'Error al analizar: $e';
+    } finally {
+      ref.read(_scanLoadingProvider.notifier).state = false;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final result = ref.watch(_scanResultProvider);
     final loading = ref.watch(_scanLoadingProvider);
     final lastBarcode = ref.watch(_lastBarcodeProvider);
     final cameraError = ref.watch(_cameraErrorProvider);
+
+    if (kIsWeb) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Escanear producto')),
+        body: _WebBarcodeEntry(
+          onAnalyze: _analyzeBarcode,
+          result: result,
+          loading: loading,
+          onReset: () {
+            ref.read(_scanResultProvider.notifier).state = null;
+            ref.read(_lastBarcodeProvider.notifier).state = null;
+          },
+        ),
+      );
+    }
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -198,6 +230,131 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
                             : const SizedBox.shrink(),
               ),
             ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Web manual barcode entry ──────────────────────────────────────────────────
+
+class _WebBarcodeEntry extends StatefulWidget {
+  final Future<void> Function(String) onAnalyze;
+  final String? result;
+  final bool loading;
+  final VoidCallback onReset;
+
+  const _WebBarcodeEntry({
+    required this.onAnalyze,
+    required this.result,
+    required this.loading,
+    required this.onReset,
+  });
+
+  @override
+  State<_WebBarcodeEntry> createState() => _WebBarcodeEntryState();
+}
+
+class _WebBarcodeEntryState extends State<_WebBarcodeEntry> {
+  final _ctrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final barcode = _ctrl.text.trim();
+    if (barcode.isEmpty) return;
+    widget.onAnalyze(barcode);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Info banner
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF0FDF4),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFF6EE7B7)),
+            ),
+            child: const Row(
+              children: [
+                Icon(Icons.info_outline, color: Color(0xFF059669), size: 20),
+                SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Demo web: introduce el código de barras manualmente. '
+                    'La cámara está disponible en la app móvil.',
+                    style: TextStyle(fontSize: 13, color: Color(0xFF065F46)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          // Barcode input
+          TextField(
+            controller: _ctrl,
+            keyboardType: TextInputType.number,
+            onSubmitted: (_) => _submit(),
+            decoration: InputDecoration(
+              labelText: 'Código de barras EAN',
+              hintText: 'Ej: 8410001000001',
+              prefixIcon: const Icon(Icons.qr_code),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+              suffixIcon: IconButton(
+                icon: const Icon(Icons.clear, size: 18),
+                onPressed: () {
+                  _ctrl.clear();
+                  widget.onReset();
+                },
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          SizedBox(
+            height: 50,
+            child: ElevatedButton.icon(
+              onPressed: widget.loading ? null : _submit,
+              icon: widget.loading
+                  ? const SizedBox(
+                      width: 18, height: 18,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white),
+                    )
+                  : const Icon(Icons.search, size: 20),
+              label: Text(widget.loading ? 'Analizando con Chuwi...' : 'Analizar producto'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF059669),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
+              ),
+            ),
+          ),
+
+          if (widget.result != null) ...[
+            const SizedBox(height: 24),
+            Expanded(
+              child: _ScanResult(
+                result: widget.result!,
+                onScanAgain: () {
+                  _ctrl.clear();
+                  widget.onReset();
+                },
+              ),
+            ),
+          ],
         ],
       ),
     );

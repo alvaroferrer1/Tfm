@@ -48,10 +48,19 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     bgColor: Color(0xFFF0F9FF),
   )];
 
-  Future<void> _finish() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('onboarding_done', true);
-    if (mounted) context.go('/login');
+  void _finish() {
+    debugPrint('[onboarding] _finish() called — mounted=$mounted');
+    SharedPreferences.getInstance()
+        .then((prefs) => prefs.setBool('onboarding_done', true));
+    if (mounted) {
+      debugPrint('[onboarding] calling context.go(/login)');
+      try {
+        context.go('/login');
+        debugPrint('[onboarding] context.go(/login) done');
+      } catch (e, st) {
+        debugPrint('[onboarding] ERROR: $e\n$st');
+      }
+    }
   }
 
   @override

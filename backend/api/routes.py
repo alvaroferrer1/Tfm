@@ -281,11 +281,16 @@ class LinkTelegramRequest(BaseModel):
 
 
 @router.post("/user/link-telegram")
-def link_telegram(body: LinkTelegramRequest, auth: dict = Depends(verify_token)):
+def link_telegram(
+    body: LinkTelegramRequest,
+    background_tasks: BackgroundTasks,
+    auth: dict = Depends(verify_token),
+):
     """
     Vincula el ID de Telegram del usuario autenticado con su cuenta en la app.
     El usuario copia su Telegram ID (que Chuwi le muestra al escribir /start)
-    y lo pega en la app. Este endpoint lo guarda en la tabla users.
+    y lo pega en la app. Este endpoint lo guarda en la tabla users y envía
+    un mensaje de bienvenida de Chuwi por Telegram.
     """
     if not body.telegram_user_id or not body.telegram_user_id.strip().isdigit():
         raise HTTPException(status_code=400, detail="telegram_user_id debe ser numérico")
@@ -293,14 +298,59 @@ def link_telegram(body: LinkTelegramRequest, auth: dict = Depends(verify_token))
     if not user_id or auth.get("dev_mode"):
         raise HTTPException(status_code=401, detail="Autenticación real requerida")
     try:
-        get_db = database.get_db
-        get_db().table("users").update({
-            "telegram_user_id": body.telegram_user_id.strip()
-        }).eq("id", user_id).execute()
+        db = database.get_db()
+        # Upsert para asegurar que el usuario existe en public.users
+        db.table("users").upsert({
+            "id": user_id,
+            "email": auth.get("email", ""),
+            "store_id": STORE_ID,
+            "role": "staff",
+            "telegram_user_id": body.telegram_user_id.strip(),
+        }).execute()
+
+        # Recuperar datos actualizados para el mensaje de bienvenida
+        user_row = db.table("users").select("email, role").eq("id", user_id).maybe_single().execute()
+        user_data = user_row.data or {}
+
+        background_tasks.add_task(
+            _send_telegram_welcome,
+            body.telegram_user_id.strip(),
+            user_data.get("email", ""),
+            user_data.get("role", "staff"),
+        )
         return {"ok": True, "telegram_user_id": body.telegram_user_id.strip()}
     except Exception as e:
         logger.error(f"link_telegram error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _send_telegram_welcome(telegram_id: str, email: str, role: str) -> None:
+    """Envía mensaje de bienvenida desde Chuwi al vincular la app."""
+    import asyncio
+    try:
+        from telegram import Bot
+        token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+        if not token or not telegram_id:
+            return
+        role_label = {"manager": "encargado", "admin": "administrador"}.get(role, "empleado")
+        name = email.split("@")[0] if email else "empleado"
+        msg = (
+            f"✅ *¡Cuenta vinculada con éxito!*\n\n"
+            f"Hola {name}, soy Chuwi. Tu cuenta de MermaOps está ahora conectada a Telegram.\n\n"
+            f"Rol asignado: *{role_label}*\n\n"
+            f"Ya puedes hablarme en lenguaje natural. Prueba con:\n"
+            f"• «¿Qué hay crítico hoy?»\n"
+            f"• «¿Cuánta merma llevamos esta semana?»\n"
+            f"• Envíame una foto de un producto\n\n"
+            f"También te avisaré automáticamente cuando algo cambie en la tienda. 🏪"
+        )
+        asyncio.run(Bot(token).send_message(
+            chat_id=int(telegram_id),
+            text=msg,
+            parse_mode="Markdown",
+        ))
+    except Exception as e:
+        logger.warning(f"_send_telegram_welcome error (no crítico): {e}")
 
 
 @router.delete("/user/link-telegram")
@@ -320,19 +370,83 @@ def unlink_telegram(auth: dict = Depends(verify_token)):
 
 @router.get("/user/me")
 def get_current_user(auth: dict = Depends(verify_token)):
-    """Devuelve el perfil del usuario autenticado incluyendo si tiene Telegram vinculado."""
+    """Devuelve el perfil del usuario autenticado incluyendo si tiene Telegram vinculado.
+    Si el usuario existe en auth pero no en public.users, lo crea automáticamente."""
     user_id = auth.get("sub")
     if not user_id or auth.get("dev_mode"):
         return {"id": "dev", "role": "admin", "telegram_linked": False}
     try:
-        result = database.get_db().table("users").select(
+        db = database.get_db()
+        result = db.table("users").select(
             "id, email, role, store_id, telegram_user_id"
-        ).eq("id", user_id).single().execute()
-        user = result.data or {}
+        ).eq("id", user_id).maybe_single().execute()
+        user = result.data if result.data else {}
+
+        if not user:
+            # Primer acceso: crear fila en public.users desde los claims del JWT
+            email = auth.get("email", "")
+            user = {
+                "id": user_id,
+                "email": email,
+                "role": "staff",
+                "store_id": STORE_ID,
+                "telegram_user_id": None,
+            }
+            try:
+                db.table("users").insert(user).execute()
+                logger.info(f"[auth] Usuario creado en public.users: {user_id} ({email})")
+            except Exception as ins_err:
+                logger.warning(f"[auth] No se pudo crear usuario (puede ya existir): {ins_err}")
+
         user["telegram_linked"] = bool(user.get("telegram_user_id"))
         return user
     except Exception as e:
+        logger.error(f"get_current_user error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/user/app-login-notify")
+def app_login_notify(background_tasks: BackgroundTasks, auth: dict = Depends(verify_token)):
+    """Notifica por Telegram cuando el usuario entra desde la app (fire-and-forget)."""
+    user_id = auth.get("sub")
+    email = auth.get("email", "")
+    if not user_id or auth.get("dev_mode"):
+        return {"ok": True, "notified": False}
+    try:
+        db = database.get_db()
+        result = db.table("users").select("telegram_user_id, role").eq("id", user_id).maybe_single().execute()
+        user = result.data if result.data else {}
+        telegram_id = user.get("telegram_user_id", "")
+        role = user.get("role", "staff")
+        if telegram_id:
+            background_tasks.add_task(_send_telegram_login_notify, telegram_id, email, role)
+            return {"ok": True, "notified": True}
+        return {"ok": True, "notified": False}
+    except Exception as e:
+        logger.warning(f"app_login_notify error (no crítico): {e}")
+        return {"ok": True, "notified": False}
+
+
+def _send_telegram_login_notify(telegram_id: str, email: str, role: str) -> None:
+    import asyncio
+    try:
+        from telegram import Bot
+        token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+        if not token or not telegram_id:
+            return
+        name = email.split("@")[0] if email else "empleado"
+        msg = (
+            f"📱 *{name} ha iniciado sesión en la app*\n\n"
+            f"Sesión activa en MermaOps. El sistema está monitorizando la tienda. "
+            f"Escríbeme si necesitas algo. 🌱"
+        )
+        asyncio.run(Bot(token).send_message(
+            chat_id=int(telegram_id),
+            text=msg,
+            parse_mode="Markdown",
+        ))
+    except Exception as e:
+        logger.warning(f"_send_telegram_login_notify error (no crítico): {e}")
 
 
 # ── ESG / Impacto ambiental ───────────────────────────────────────────────────
@@ -461,6 +575,105 @@ def reset_demo(_auth: dict = Depends(verify_token)):
         return {"ok": True, "message": "Estado reiniciado al día de hoy."}
     except Exception as e:
         logger.error(f"demo_reset error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── PDF endpoints ─────────────────────────────────────────────────────────────
+
+@router.get("/reports/brief/pdf")
+def get_brief_pdf(date: str = "", _auth: dict = Depends(verify_token)):
+    """Descarga el brief de hoy (o de la fecha indicada) como PDF."""
+    from fastapi.responses import Response
+    try:
+        brief = database.get_latest_brief(STORE_ID)
+        if not brief:
+            raise HTTPException(status_code=404, detail="Sin brief disponible")
+        pending = database.get_pending_actions(STORE_ID)
+        critical_actions = [a for a in pending if (a.get("priority_score") or 0) >= 85]
+        high_actions = [a for a in pending if 65 <= (a.get("priority_score") or 0) < 85]
+        value_at_risk = brief.get("value_at_risk", 0.0) or 0.0
+        from backend.core.pdf_generator import generate_brief_pdf
+        pdf_bytes = generate_brief_pdf(
+            brief_text=brief.get("summary", ""),
+            brief_date=brief.get("date", ""),
+            critical_count=len(critical_actions),
+            high_count=len(high_actions),
+            value_at_risk=float(value_at_risk),
+            actions_count=brief.get("actions_count", len(pending)),
+            critical_actions=critical_actions,
+            high_actions=high_actions,
+        )
+        fecha = brief.get("date", "hoy")
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="brief_{fecha}.pdf"'},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"brief pdf error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/reports/weekly/pdf")
+def get_weekly_pdf(week_start: str = "", _auth: dict = Depends(verify_token)):
+    """Genera y descarga el informe semanal como PDF."""
+    from fastapi.responses import Response
+    try:
+        from backend.core.pdf_generator import generate_weekly_pdf
+        from backend.agents.reporter import generate_weekly_report
+        report_text = generate_weekly_report(STORE_ID)
+        merma_week = database.get_merma_history(STORE_ID, days=7)
+        merma_eur = sum(float(l.get("value_lost", 0)) for l in merma_week)
+        merma_qty = sum(int(l.get("quantity_lost", 0)) for l in merma_week)
+        donations = database.get_donation_stats(STORE_ID, days=7)
+        pdf_bytes = generate_weekly_pdf(
+            report_text=report_text,
+            week_start=week_start,
+            merma_eur=merma_eur,
+            merma_qty=merma_qty,
+            donated_qty=donations.get("total_quantity", 0),
+            donated_value=float(donations.get("total_value_donated", 0)),
+        )
+        from datetime import date as _dt
+        fecha = _dt.today().isoformat()
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="informe_semanal_{fecha}.pdf"'},
+        )
+    except Exception as e:
+        logger.error(f"weekly pdf error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/reports/monthly/pdf")
+def get_monthly_pdf(_auth: dict = Depends(verify_token)):
+    """Genera y descarga el informe mensual como PDF."""
+    from fastapi.responses import Response
+    try:
+        from backend.core.pdf_generator import generate_monthly_pdf
+        from backend.agents.reporter import generate_monthly_report
+        report_text = generate_monthly_report(STORE_ID)
+        merma = database.get_merma_history(STORE_ID, days=30)
+        merma_eur = sum(float(l.get("value_lost", 0)) for l in merma)
+        donations = database.get_donation_stats(STORE_ID, days=30)
+        from datetime import date as _dt
+        month_label = _dt.today().strftime("%B %Y")
+        pdf_bytes = generate_monthly_pdf(
+            report_text=report_text,
+            month=month_label,
+            merma_eur=merma_eur,
+            donated_value=float(donations.get("total_value_donated", 0)),
+        )
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="informe_mensual_{_dt.today().strftime("%Y-%m")}.pdf"'},
+        )
+    except Exception as e:
+        logger.error(f"monthly pdf error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

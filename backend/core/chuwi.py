@@ -44,6 +44,7 @@ from telegram.ext import (
 )
 
 from backend.core import llm, database, memory as _mem
+from backend.core import telegram_formatter as _fmt
 from backend.agents import supervisor
 
 load_dotenv()
@@ -345,6 +346,10 @@ def _main_menu_keyboard(is_manager: bool) -> InlineKeyboardMarkup:
         rows.append([
             InlineKeyboardButton("⚙️ Generar brief ahora", callback_data="cmd:runbrief"),
             InlineKeyboardButton("📖 Normativa citada", callback_data="cmd:citar"),
+        ])
+        rows.append([
+            InlineKeyboardButton("📄 Brief en PDF", callback_data="cmd:brief_pdf"),
+            InlineKeyboardButton("📊 Informe semanal PDF", callback_data="cmd:semana_pdf"),
         ])
     rows.append([
         InlineKeyboardButton("❓ ¿Qué puedo preguntarte?", callback_data="cmd:ayuda"),
@@ -1339,7 +1344,7 @@ async def _action_brief(update_or_query, context, user: Optional[dict], is_callb
     keyboard = _back_keyboard()
     if not brief:
         text = (
-            "No hay brief para hoy todavía.\n\n"
+            "📋 <b>Sin brief para hoy todavía.</b>\n\n"
             "Se genera automáticamente a las 07:30, o puedes generarlo ahora "
             "si eres encargado."
         )
@@ -1350,49 +1355,50 @@ async def _action_brief(update_or_query, context, user: Optional[dict], is_callb
             ]])
     else:
         summary = brief.get("summary", "")
-        text = f"BRIEF DEL {brief.get('date', 'hoy').upper()}:\n\n{summary}"
-        keyboard = _smart_keyboard(summary, _is_manager(user))
+        pending = database.get_pending_actions(STORE_ID)
+        critical_count = sum(1 for a in pending if (a.get("priority_score") or 0) >= 85)
+        high_count = sum(1 for a in pending if 65 <= (a.get("priority_score") or 0) < 85)
+        value_at_risk = brief.get("value_at_risk", 0.0) or 0.0
+        text = _fmt.format_brief(
+            summary=summary,
+            brief_date=brief.get("date", ""),
+            value_at_risk=float(value_at_risk),
+            actions_count=brief.get("actions_count", len(pending)),
+            critical_count=critical_count,
+            high_count=high_count,
+        )
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("⚡ Ver acciones", callback_data="cmd:acciones"),
+                InlineKeyboardButton("🗺 Ruta del día", callback_data="cmd:ruta"),
+            ],
+            [
+                InlineKeyboardButton("📄 Descargar PDF", callback_data="cmd:brief_pdf"),
+                InlineKeyboardButton("↩ Menú", callback_data="cmd:menu"),
+            ],
+        ])
 
     if is_callback:
         await update_or_query.edit_message_text(
-            _md_to_html(text), parse_mode=ParseMode.HTML, reply_markup=keyboard
+            text, parse_mode=ParseMode.HTML, reply_markup=keyboard
         )
     else:
-        await _send(update_or_query, text, reply_markup=keyboard)
+        chat_id = update_or_query.effective_chat.id if hasattr(update_or_query, "effective_chat") else update_or_query.message.chat_id
+        chunks = [text[i:i+4096] for i in range(0, len(text), 4096)]
+        for i, chunk in enumerate(chunks):
+            await update_or_query.message.reply_text(
+                chunk,
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard if i == len(chunks) - 1 else None,
+            )
 
 
 async def _action_acciones(update_or_query, context, user: Optional[dict], is_callback=False):
     pending = database.get_pending_actions(STORE_ID)
-
+    text = _fmt.format_actions(pending)
     if not pending:
-        text = "Sin acciones pendientes. Todo en orden."
         keyboard = _back_keyboard()
     else:
-        critical = [a for a in pending if a.get("priority_score", 0) >= 85]
-        other = [a for a in pending if a.get("priority_score", 0) < 85]
-        lines = [f"ACCIONES PENDIENTES — {len(pending)} total:"]
-
-        if critical:
-            lines.append(f"\nCRITICAS ({len(critical)}):")
-            for a in critical[:5]:
-                batch = a.get("batches") or {}
-                product = (batch.get("products") or {}) if batch else {}
-                name = product.get("name", "Producto")
-                pasillo = product.get("pasillo", "?")
-                notes = (a.get("notes") or "")[:60]
-                lines.append(f"  !!! {name} | Pasillo {pasillo} | {notes}")
-        if other:
-            lines.append(f"\nOTRAS ({len(other)}):")
-            for a in other[:5]:
-                batch = a.get("batches") or {}
-                product = (batch.get("products") or {}) if batch else {}
-                name = product.get("name", "Producto")
-                action_type = a.get("action_type", "")
-                lines.append(f"  - {name} | {action_type.upper()}")
-        if len(pending) > 10:
-            lines.append(f"\n... y {len(pending) - 10} más. Ver lista completa en la app.")
-
-        text = "\n".join(lines)
         keyboard = InlineKeyboardMarkup([
             [
                 InlineKeyboardButton("🗺 Iniciar ruta", callback_data="cmd:iniciar_ruta"),
@@ -1453,47 +1459,44 @@ async def _action_stats(update_or_query, context, user: Optional[dict], is_callb
         batches = database.get_batches_expiring_soon(STORE_ID, days=7)
         merma_7d = database.get_merma_history(STORE_ID, days=7)
         donations = database.get_donation_stats(STORE_ID, days=30)
+        brief = database.get_latest_brief(STORE_ID)
 
-        critical = sum(1 for a in pending if a.get("priority_score", 0) >= 85)
-        high = sum(1 for a in pending if 65 <= a.get("priority_score", 0) < 85)
+        critical = sum(1 for a in pending if (a.get("priority_score") or 0) >= 85)
+        high = sum(1 for a in pending if 65 <= (a.get("priority_score") or 0) < 85)
         value_at_risk = sum(
-            b.get("quantity", 0) * (b.get("products") or {}).get("price", 0)
+            (b.get("quantity") or 0) * ((b.get("products") or {}).get("price") or 0)
             for b in batches
         )
         merma_value = sum(float(l.get("value_lost", 0)) for l in merma_7d)
         donated_qty = donations.get("total_quantity", 0)
         donated_value = donations.get("total_value_donated", 0.0)
+        semaforo = "ROJO" if critical >= 5 else ("AMARILLO" if critical >= 2 else "VERDE")
 
-        # Indicadores semáforo
-        def _semaforo(critical_count):
-            if critical_count >= 5:
-                return "ROJO"
-            if critical_count >= 2:
-                return "AMARILLO"
-            return "VERDE"
-
-        estado = _semaforo(critical)
-        lines = [
-            f"DASHBOARD — Super Martínez | {estado}",
-            "",
-            f"Acciones pendientes: {len(pending)}",
-            f"  CRÍTICAS (score ≥ 85):  {critical}",
-            f"  ALTAS (65-84):          {high}",
-            "",
-            f"Lotes caducando en 7d:  {len(batches)}",
-            f"Valor en riesgo:        {value_at_risk:.2f} euros",
-            "",
-            f"Merma últimos 7 días:   {merma_value:.2f} euros",
-            f"Donaciones este mes:    {donated_qty} uds ({donated_value:.2f} euros)",
-        ]
-        text = "\n".join(lines)
+        text = _fmt.format_stats(
+            pending_total=len(pending),
+            critical=critical,
+            high=high,
+            batches_expiring=len(batches),
+            value_at_risk=round(value_at_risk, 2),
+            merma_7d_eur=round(merma_value, 2),
+            donated_qty=donated_qty,
+            donated_value=float(donated_value),
+            brief_date=brief.get("date", "") if brief else "",
+            semaforo=semaforo,
+        )
     except Exception as e:
-        text = f"Error al obtener KPIs: {e}"
+        text = f"❌ Error al obtener KPIs: {e}"
 
-    keyboard = _smart_keyboard(text, _is_manager(user))
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("⚡ Acciones", callback_data="cmd:acciones"),
+            InlineKeyboardButton("🔴 Críticos", callback_data="cmd:criticos"),
+        ],
+        [InlineKeyboardButton("↩ Menú", callback_data="cmd:menu")],
+    ])
     if is_callback:
         await update_or_query.edit_message_text(
-            _md_to_html(text), parse_mode=ParseMode.HTML, reply_markup=keyboard
+            text, parse_mode=ParseMode.HTML, reply_markup=keyboard
         )
     else:
         await _send(update_or_query, text, reply_markup=keyboard)
@@ -1502,36 +1505,13 @@ async def _action_stats(update_or_query, context, user: Optional[dict], is_callb
 async def _action_merma(update_or_query, context, user: Optional[dict], is_callback=False):
     try:
         logs = database.get_merma_history(STORE_ID, days=7)
-        if not logs:
-            text = "Sin merma registrada en los últimos 7 días."
-        else:
-            total_value = sum(float(l.get("value_lost", 0)) for l in logs)
-            total_qty = sum(int(l.get("quantity_lost", 0)) for l in logs)
-            lines = [
-                "MERMA — últimos 7 días:",
-                "",
-                f"  {total_qty} unidades perdidas",
-                f"  {total_value:.2f} euros de valor",
-                "",
-            ]
-            for log in logs[:5]:
-                batch = log.get("batches") or {}
-                product = (batch.get("products") or {}) if batch else {}
-                name = product.get("name", log.get("reason", "Sin motivo")[:30])
-                lines.append(
-                    f"  - {log.get('date', '?')} | {name[:40]} | {log.get('quantity_lost', 0)} uds"
-                )
-            if len(logs) > 5:
-                lines.append(f"  ... y {len(logs) - 5} entradas más en la app.")
-            text = "\n".join(lines)
+        text = _fmt.format_merma(logs, days=7)
     except Exception as e:
-        text = f"Error al obtener merma: {e}"
+        text = f"❌ Error al obtener merma: {e}"
 
-    keyboard = _smart_keyboard(text, _is_manager(user))
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("↩ Menú", callback_data="cmd:menu")]])
     if is_callback:
-        await update_or_query.edit_message_text(
-            _md_to_html(text), parse_mode=ParseMode.HTML, reply_markup=keyboard
-        )
+        await update_or_query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
     else:
         await _send(update_or_query, text, reply_markup=keyboard)
 
@@ -1539,33 +1519,16 @@ async def _action_merma(update_or_query, context, user: Optional[dict], is_callb
 async def _action_donaciones(update_or_query, context, user: Optional[dict], is_callback=False):
     try:
         stats = database.get_donation_stats(STORE_ID, days=30)
-        if stats["total_donations"] == 0:
-            text = (
-                "Sin donaciones registradas este mes.\n"
-                "Cuando registres una donación desde la app, aparecerá aquí."
-            )
-        else:
-            lines = [
-                "IMPACTO SOCIAL — este mes:",
-                "",
-                f"  {stats['total_donations']} donaciones realizadas",
-                f"  {stats['total_quantity']} unidades donadas",
-                f"  {stats['total_value_donated']:.2f} euros de valor entregado",
-                "",
-                "Por entidad:",
-            ]
-            for entity, qty in sorted(stats["by_entity"].items(), key=lambda x: -x[1]):
-                lines.append(f"  - {entity}: {qty} uds")
-            lines += ["", "Cada unidad donada es merma evitada y ayuda a quien lo necesita."]
-            text = "\n".join(lines)
+        text = _fmt.format_donaciones(stats)
     except Exception as e:
-        text = f"Error al obtener donaciones: {e}"
+        text = f"❌ Error al obtener donaciones: {e}"
 
-    keyboard = _back_keyboard()
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🤝 Registrar donación", callback_data="cmd:donar_flow")],
+        [InlineKeyboardButton("↩ Menú", callback_data="cmd:menu")],
+    ])
     if is_callback:
-        await update_or_query.edit_message_text(
-            _md_to_html(text), parse_mode=ParseMode.HTML, reply_markup=keyboard
-        )
+        await update_or_query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
     else:
         await _send(update_or_query, text, reply_markup=keyboard)
 
@@ -1582,28 +1545,12 @@ async def _action_proveedores(update_or_query, context, user: Optional[dict], is
 
     try:
         stats = database.get_supplier_stats(STORE_ID)
-        if not stats:
-            text = "Sin datos de proveedores todavía."
-        else:
-            lines = ["FICHA DE PROVEEDORES (merma promedio):", ""]
-            for s in stats:
-                icon = "!!!" if s["risk"] == "ALTO" else "!" if s["risk"] == "MEDIO" else "-"
-                lines.append(
-                    f"  {icon} {s['name']}"
-                    f" | {s['avg_merma_pct']}% merma"
-                    f" | {s['product_count']} productos"
-                    f" | Riesgo {s['risk']}"
-                )
-                if s["risk"] == "ALTO":
-                    lines.append("    -> Revisar condiciones de entrega con este proveedor")
-            text = "\n".join(lines)
+        text = _fmt.format_proveedores(stats)
     except Exception as e:
-        text = f"Error al obtener proveedores: {e}"
+        text = f"❌ Error al obtener proveedores: {e}"
 
     if is_callback:
-        await update_or_query.edit_message_text(
-            _md_to_html(text), parse_mode=ParseMode.HTML, reply_markup=keyboard
-        )
+        await update_or_query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
     else:
         await _send(update_or_query, text, reply_markup=keyboard)
 
@@ -1611,7 +1558,7 @@ async def _action_proveedores(update_or_query, context, user: Optional[dict], is
 async def _action_pedido(update_or_query, context, user: Optional[dict], is_callback=False):
     keyboard = _back_keyboard()
     if not _is_manager(user):
-        text = "La sugerencia de pedido es solo para encargados."
+        text = "🔒 La sugerencia de pedido es solo para encargados."
         if is_callback:
             await update_or_query.edit_message_text(text, reply_markup=keyboard)
         else:
@@ -1620,34 +1567,12 @@ async def _action_pedido(update_or_query, context, user: Optional[dict], is_call
 
     try:
         suggestions = database.get_order_suggestions(STORE_ID)
-        if not suggestions:
-            text = (
-                "Sin sugerencias de pedido todavía.\n"
-                "Se generan con al menos 7 días de historial de merma."
-            )
-        else:
-            total_value = sum(s.get("estimated_value", 0) for s in suggestions)
-            lines = [
-                f"PEDIDO SEMANAL SUGERIDO ({len(suggestions)} productos):",
-                f"Valor estimado total: {total_value:.2f} euros",
-                "",
-            ]
-            for s in suggestions[:10]:
-                lines.append(
-                    f"  - {s['product_name']} | {s['order_qty']} uds"
-                    f" | almacén: {s['current_warehouse_stock']} | {s['estimated_value']:.2f} euros"
-                )
-            if len(suggestions) > 10:
-                lines.append(f"  ... y {len(suggestions) - 10} más en la app.")
-            lines += ["", "Basado en merma histórica de los últimos 30 días."]
-            text = "\n".join(lines)
+        text = _fmt.format_pedido(suggestions)
     except Exception as e:
-        text = f"Error al calcular pedido: {e}"
+        text = f"❌ Error al calcular pedido: {e}"
 
     if is_callback:
-        await update_or_query.edit_message_text(
-            _md_to_html(text), parse_mode=ParseMode.HTML, reply_markup=keyboard
-        )
+        await update_or_query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
     else:
         await _send(update_or_query, text, reply_markup=keyboard)
 
@@ -2251,35 +2176,46 @@ def _auto_save_chat_id(chat_id: int) -> None:
         logger.debug(f"[chuwi] auto_save_chat_id: {e}")
 
 
+_AVATAR_PATH = Path(__file__).parent.parent.parent / "backend" / "static" / "chuwi_avatar.png"
+
+
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     tg_id = update.effective_user.id
     tg_name = update.effective_user.first_name or "empleado"
 
-    # Siempre guardar el chat_id de quien haga /start — resuelve el problema del TELEGRAM_CHAT_ID vacío
+    # Siempre guardar el chat_id de quien haga /start
     _auto_save_chat_id(update.effective_chat.id)
 
     user = _get_user(tg_id)
 
+    # Enviar avatar si existe
+    try:
+        if _AVATAR_PATH.exists():
+            with open(_AVATAR_PATH, "rb") as f:
+                await context.bot.send_photo(
+                    chat_id=update.effective_chat.id,
+                    photo=f,
+                    caption="<b>Chuwi</b> · Agente operativo de MermaOps",
+                    parse_mode=ParseMode.HTML,
+                )
+    except Exception:
+        pass
+
     if not user:
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton(
-                "📱 Vincular en la App MermaOps",
-                url="mermaops://app/profile",
-            )],
+            [InlineKeyboardButton("📱 Abrir App MermaOps", url="https://t.me/ChuwiMermaOpsBot")],
             [InlineKeyboardButton("🏪 Ver estado de la tienda", callback_data="cmd:estado")],
             [InlineKeyboardButton("🤖 Ver todos los agentes", callback_data="cmd:agentes_info")],
         ])
         await update.message.reply_text(
             f"👋 Hola <b>{tg_name}</b>, soy <b>Chuwi</b>, el agente de <b>MermaOps</b>.\n\n"
-            "Para que pueda reconocerte y responderte con datos de tu tienda, "
-            "necesitas vincular tu cuenta.\n\n"
-            "━━━━━━━━━━━━━━━━━━\n"
-            "🔗 <b>Tu ID de Telegram:</b>\n\n"
+            "Para responder con datos de tu tienda, necesitas vincular tu cuenta.\n\n"
+            "┌────────────────────────┐\n"
+            "│  🔢  <b>Tu ID de Telegram</b>  │\n"
+            "└────────────────────────┘\n\n"
             f"<code>{tg_id}</code>\n\n"
-            "<b>Opción A</b> — Pulsa el botón de abajo para abrir la app directamente en la pantalla de vinculación.\n\n"
-            "<b>Opción B</b> — Copia el ID de arriba, abre MermaOps → Perfil → pégalo y pulsa Vincular.\n"
-            "━━━━━━━━━━━━━━━━━━\n"
-            "Mientras tanto puedes explorar 👇",
+            "👆 Cópialo, abre la app MermaOps\n"
+            "→ <b>Perfil</b> → pega el número → pulsa <b>Vincular</b>.",
             parse_mode=ParseMode.HTML,
             reply_markup=kb,
         )
@@ -2756,39 +2692,21 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 None, database.get_batches_expiring_soon, STORE_ID, 7
             )
             brief = await loop.run_in_executor(None, database.get_latest_brief, STORE_ID)
-            critical = [a for a in pending if a.get("priority_score", 0) >= 85]
-            alto = [a for a in pending if 65 <= a.get("priority_score", 0) < 85]
-            total_value = sum(
-                b.get("quantity", 0) * (b.get("products") or {}).get("price", 0)
+            value_at_risk = sum(
+                (b.get("quantity") or 0) * ((b.get("products") or {}).get("price") or 0)
                 for b in batches
             )
-            semaforo = (
-                "🔴 ALERTA" if len(critical) >= 3
-                else "🟡 ATENCIÓN" if (len(critical) >= 1 or len(alto) >= 3)
-                else "🟢 NORMAL"
-            )
-            text = (
-                f"📊 <b>SUPER MARTÍNEZ — Estado actual</b>\n"
-                f"Semáforo: {semaforo}\n\n"
-                f"Acciones pendientes: {len(pending)}\n"
-                f"  🔴 CRÍTICAS: {len(critical)}\n"
-                f"  🟡 ALTAS: {len(alto)}\n"
-                f"  🟢 Resto: {len(pending) - len(critical) - len(alto)}\n\n"
-                f"Lotes próximos a caducar (7d): {len(batches)}\n"
-                f"Valor en riesgo: {total_value:.2f} €\n"
-            )
-            if brief:
-                text += f"\nÚltimo brief: {brief.get('date', '?')}"
-            if critical:
-                text += "\n\n━━ CRÍTICOS AHORA ━━"
-                for a in critical[:3]:
-                    b = (a.get("batches") or {})
-                    p = (b.get("products") or {}) if b else {}
-                    text += f"\n• {p.get('name', 'Producto')} | Pasillo {p.get('pasillo', '?')} | {(a.get('action_type') or '?').upper()}"
+            text = _fmt.format_estado(pending, batches, brief, round(value_at_risk, 2))
             kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("📋 Ver todas las acciones", callback_data="cmd:acciones")],
-                [InlineKeyboardButton("🗺 Iniciar ruta del día", callback_data="cmd:iniciar_ruta")],
-                [InlineKeyboardButton("🔄 Actualizar", callback_data="cmd:estado")],
+                [
+                    InlineKeyboardButton("⚡ Acciones", callback_data="cmd:acciones"),
+                    InlineKeyboardButton("🔴 Críticos", callback_data="cmd:criticos"),
+                ],
+                [
+                    InlineKeyboardButton("🗺 Iniciar ruta", callback_data="cmd:iniciar_ruta"),
+                    InlineKeyboardButton("🔄 Actualizar", callback_data="cmd:estado"),
+                ],
+                [InlineKeyboardButton("↩ Menú", callback_data="cmd:menu")],
             ])
             await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
         except Exception as e:
@@ -2835,6 +2753,67 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             [InlineKeyboardButton("⬅️ Menú", callback_data="cmd:menu")],
         ])
         await query.edit_message_text(_AGENTES_TEXT, parse_mode=ParseMode.HTML, reply_markup=kb)
+        return
+
+    # ── PDF informe semanal ──
+    if data == "cmd:semana_pdf":
+        if not _is_manager(user):
+            await query.edit_message_text("🔒 El informe semanal PDF es solo para encargados.", reply_markup=_back_keyboard())
+            return
+        await query.edit_message_text("📊 Generando informe semanal (30-60s)...")
+        done = asyncio.Event()
+        typing_task = asyncio.create_task(_typing_loop(context.bot, query.message.chat_id, done))
+        try:
+            loop = asyncio.get_running_loop()
+            pdf_bytes = await loop.run_in_executor(None, _generate_weekly_pdf_bytes)
+            done.set()
+            await typing_task
+            if pdf_bytes:
+                import io as _io
+                fecha = date.today().isoformat()
+                await context.bot.send_document(
+                    chat_id=query.message.chat_id,
+                    document=_io.BytesIO(pdf_bytes),
+                    filename=f"informe_semanal_{fecha}.pdf",
+                    caption=f"📊 <b>Informe Semanal</b> — Super Martínez · Kuine",
+                    parse_mode=ParseMode.HTML,
+                )
+                await query.edit_message_text("✅ Informe semanal enviado.")
+            else:
+                await query.edit_message_text("Error generando el informe semanal.")
+        except Exception as e:
+            done.set()
+            await typing_task
+            await query.edit_message_text(f"Error: {e}")
+        return
+
+    # ── PDF del brief ──
+    if data == "cmd:brief_pdf":
+        await query.edit_message_text("📄 Generando PDF del brief...")
+        done = asyncio.Event()
+        typing_task = asyncio.create_task(_typing_loop(context.bot, query.message.chat_id, done))
+        try:
+            loop = asyncio.get_running_loop()
+            pdf_bytes = await loop.run_in_executor(None, _generate_brief_pdf_bytes)
+            done.set()
+            await typing_task
+            if pdf_bytes:
+                import io as _io
+                fecha = date.today().isoformat()
+                await context.bot.send_document(
+                    chat_id=query.message.chat_id,
+                    document=_io.BytesIO(pdf_bytes),
+                    filename=f"brief_{fecha}.pdf",
+                    caption=f"📋 <b>Brief {fecha}</b> — Super Martínez\nGenerado por Kuine · MermaOps",
+                    parse_mode=ParseMode.HTML,
+                )
+                await query.edit_message_text("✅ PDF enviado.")
+            else:
+                await query.edit_message_text("No hay brief disponible para generar PDF.")
+        except Exception as e:
+            done.set()
+            await typing_task
+            await query.edit_message_text(f"Error generando PDF: {e}")
         return
 
     # ── Acciones del menú estándar ──
@@ -3127,11 +3106,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if not user:
         tg_id = tg_user.id
+        await context.bot.send_chat_action(
+            chat_id=update.effective_chat.id, action="typing"
+        )
         await update.message.reply_text(
-            f"Para usar MermaOps necesitas vincular tu cuenta.\n\n"
-            f"Tu ID de Telegram es: <code>{tg_id}</code>\n"
-            "Pásaselo al encargado para que lo vincule en la app.\n\n"
-            "Escribe /start para más información.",
+            f"👋 Hola, soy <b>Chuwi</b>, el agente de MermaOps.\n\n"
+            f"🔢 <b>Tu ID de Telegram:</b>\n<code>{tg_id}</code>\n\n"
+            "Para que pueda responderte con datos de tu tienda:\n"
+            "1️⃣ Abre la app MermaOps\n"
+            "2️⃣ Ve a <b>Perfil</b>\n"
+            "3️⃣ Pega el número de arriba → pulsa <b>Vincular</b>\n\n"
+            "Escribe /start para más opciones.",
             parse_mode=ParseMode.HTML,
         )
         return
@@ -3825,6 +3810,140 @@ async def _cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 
+# ── PDF helpers ──────────────────────────────────────────────────────────────
+
+def _generate_brief_pdf_bytes() -> bytes | None:
+    """Genera el PDF del brief de hoy. Llamar desde run_in_executor."""
+    try:
+        brief = database.get_latest_brief(STORE_ID)
+        if not brief:
+            return None
+        pending = database.get_pending_actions(STORE_ID)
+        critical_actions = [a for a in pending if (a.get("priority_score") or 0) >= 85]
+        high_actions = [a for a in pending if 65 <= (a.get("priority_score") or 0) < 85]
+        value_at_risk = brief.get("value_at_risk", 0.0) or 0.0
+        from backend.core.pdf_generator import generate_brief_pdf
+        return generate_brief_pdf(
+            brief_text=brief.get("summary", ""),
+            brief_date=brief.get("date", ""),
+            critical_count=len(critical_actions),
+            high_count=len(high_actions),
+            value_at_risk=float(value_at_risk),
+            actions_count=brief.get("actions_count", len(pending)),
+            critical_actions=critical_actions,
+            high_actions=high_actions,
+        )
+    except Exception as e:
+        logger.error(f"[chuwi] _generate_brief_pdf_bytes: {e}")
+        return None
+
+
+def _generate_weekly_pdf_bytes() -> bytes | None:
+    """Genera el PDF del informe semanal. Llamar desde run_in_executor."""
+    try:
+        from backend.core.pdf_generator import generate_weekly_pdf
+        from backend.agents.reporter import generate_weekly_report
+        report_text = generate_weekly_report(STORE_ID)
+        merma_week = database.get_merma_history(STORE_ID, days=7)
+        merma_eur = sum(float(l.get("value_lost", 0)) for l in merma_week)
+        merma_qty = sum(int(l.get("quantity_lost", 0)) for l in merma_week)
+        donations = database.get_donation_stats(STORE_ID, days=7)
+        return generate_weekly_pdf(
+            report_text=report_text,
+            merma_eur=merma_eur,
+            merma_qty=merma_qty,
+            donated_qty=donations.get("total_quantity", 0),
+            donated_value=float(donations.get("total_value_donated", 0)),
+        )
+    except Exception as e:
+        logger.error(f"[chuwi] _generate_weekly_pdf_bytes: {e}")
+        return None
+
+
+async def _cmd_informe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Genera y envía el PDF del brief de hoy."""
+    user = _get_user(update.effective_user.id)
+    if not user:
+        await update.message.reply_text("Primero vincula tu cuenta. Escribe /start.")
+        return
+    if not _is_manager(user):
+        await update.message.reply_text("🔒 El informe PDF es solo para encargados.")
+        return
+
+    placeholder = await update.message.reply_text("📄 Generando PDF del brief...")
+    done = asyncio.Event()
+    task = asyncio.create_task(_typing_loop(context.bot, update.effective_chat.id, done))
+    try:
+        loop = asyncio.get_running_loop()
+        pdf_bytes = await loop.run_in_executor(None, _generate_brief_pdf_bytes)
+        done.set()
+        await task
+        if pdf_bytes:
+            import io as _io
+            fecha = date.today().isoformat()
+            await update.message.reply_document(
+                document=_io.BytesIO(pdf_bytes),
+                filename=f"brief_{fecha}.pdf",
+                caption=(
+                    f"📋 <b>Brief {fecha}</b> — Super Martínez\n"
+                    "Generado por Kuine · MermaOps"
+                ),
+                parse_mode=ParseMode.HTML,
+            )
+            await placeholder.delete()
+        else:
+            await placeholder.edit_text(
+                "❌ No hay brief disponible para hoy.\n"
+                "Genéralo con /brief o espera a las 07:30."
+            )
+    except Exception as e:
+        done.set()
+        await task
+        await placeholder.edit_text(f"Error generando PDF: {e}")
+
+
+async def _cmd_semana(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Genera y envía el PDF del informe semanal."""
+    user = _get_user(update.effective_user.id)
+    if not user:
+        await update.message.reply_text("Primero vincula tu cuenta. Escribe /start.")
+        return
+    if not _is_manager(user):
+        await update.message.reply_text("🔒 El informe semanal PDF es solo para encargados.")
+        return
+
+    placeholder = await update.message.reply_text(
+        "📊 Generando informe semanal... esto puede tardar 30-60 segundos."
+    )
+    done = asyncio.Event()
+    task = asyncio.create_task(_typing_loop(context.bot, update.effective_chat.id, done))
+    try:
+        loop = asyncio.get_running_loop()
+        pdf_bytes = await loop.run_in_executor(None, _generate_weekly_pdf_bytes)
+        done.set()
+        await task
+        if pdf_bytes:
+            import io as _io
+            from datetime import date as _dt
+            fecha = _dt.today().isoformat()
+            await update.message.reply_document(
+                document=_io.BytesIO(pdf_bytes),
+                filename=f"informe_semanal_{fecha}.pdf",
+                caption=(
+                    f"📊 <b>Informe Semanal</b> — Super Martínez\n"
+                    f"Semana del {fecha} · Generado por Kuine · MermaOps"
+                ),
+                parse_mode=ParseMode.HTML,
+            )
+            await placeholder.delete()
+        else:
+            await placeholder.edit_text("❌ Error generando el informe semanal.")
+    except Exception as e:
+        done.set()
+        await task
+        await placeholder.edit_text(f"Error: {e}")
+
+
 # ── Callbacks nuevos para los botones de demo y estado ───────────────────────
 
 async def _handle_demo_callback(
@@ -3901,6 +4020,8 @@ async def _post_init(application) -> None:
         BotCommand("proveedores", "Ficha de proveedores con merma"),
         BotCommand("menu", "Menú interactivo completo"),
         BotCommand("logout", "Desvincular cuenta de Telegram"),
+        BotCommand("informe", "Descargar brief de hoy en PDF 📄"),
+        BotCommand("semana", "Descargar informe semanal en PDF 📊"),
     ])
 
 
@@ -4008,6 +4129,8 @@ def run() -> None:
     app.add_handler(CommandHandler("criticos", _cmd_criticos))
     app.add_handler(CommandHandler("ayuda", _cmd_ayuda))
     app.add_handler(CommandHandler("logout", _cmd_logout))
+    app.add_handler(CommandHandler("informe", _cmd_informe))
+    app.add_handler(CommandHandler("semana", _cmd_semana))
 
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))

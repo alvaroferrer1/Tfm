@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -304,11 +304,12 @@ class _ActionsScreenState extends ConsumerState<ActionsScreen>
                       if (photoFile != null)
                         ClipRRect(
                           borderRadius: BorderRadius.circular(6),
-                          child: Image.file(
-                            File(photoFile!.path),
-                            width: 40,
-                            height: 40,
-                            fit: BoxFit.cover,
+                          child: FutureBuilder<Uint8List>(
+                            future: photoFile!.readAsBytes(),
+                            builder: (_, snap) => snap.hasData
+                                ? Image.memory(snap.data!,
+                                    width: 40, height: 40, fit: BoxFit.cover)
+                                : const SizedBox(width: 40, height: 40),
                           ),
                         ),
                     ],

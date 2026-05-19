@@ -59,11 +59,17 @@ Thumbs.db
 # ── Large / unnecessary files ────────────────────────────────────────────────
 *.zip
 *.tar.gz
+*.mp4
+*.mkv
+*.avi
+*.mov
+*.pid
 *.png
 *.jpg
 *.jpeg
 *.gif
 eval_results.json
+!backend/static/chuwi_avatar.png
 
 # ── Reference code del máster (no pertenece al TFM) ──────────────────────────
 _jeffry_extracted/

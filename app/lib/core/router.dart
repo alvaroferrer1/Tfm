@@ -13,7 +13,7 @@ import '../features/agents/agents_screen.dart';
 import '../features/onboarding/onboarding_screen.dart';
 import 'shell_scaffold.dart';
 
-/// Se inicializa en main() leyendo SharedPreferences antes de runApp.
+/// Inicializado en main() desde SharedPreferences — solo controla la pantalla inicial.
 final onboardingDoneProvider = Provider<bool>((ref) => true);
 
 final routerProvider = Provider<GoRouter>((ref) {
@@ -24,17 +24,14 @@ final routerProvider = Provider<GoRouter>((ref) {
     redirect: (context, state) {
       final loc = state.matchedLocation;
 
-      // Onboarding: bloquear todas las rutas hasta completarlo
-      if (!onboardingDone && loc != '/onboarding') return '/onboarding';
+      // Onboarding: siempre accesible, nunca bloqueado
+      if (loc == '/onboarding') return null;
 
       final session = Supabase.instance.client.auth.currentSession;
       final isLoggedIn = session != null;
-      final isOnLogin = loc == '/login';
-      final isOnOnboarding = loc == '/onboarding';
 
-      if (isOnOnboarding) return null; // onboarding siempre accesible
-      if (!isLoggedIn && !isOnLogin) return '/login';
-      if (isLoggedIn && isOnLogin) return '/';
+      if (!isLoggedIn && loc != '/login') return '/login';
+      if (isLoggedIn && loc == '/login') return '/';
       return null;
     },
     routes: [
@@ -64,7 +61,6 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(
             path: '/map',
             builder: (context, state) => MapScreen(
-              // Deep link: mermaops://app/map?pasillo=A
               initialPasillo: state.uri.queryParameters['pasillo'],
             ),
           ),
@@ -74,7 +70,6 @@ final routerProvider = Provider<GoRouter>((ref) {
           ),
           GoRoute(
             path: '/profile',
-            // Deep link: mermaops://app/profile  (desde Telegram /start)
             builder: (context, state) => const ProfileScreen(),
           ),
           GoRoute(

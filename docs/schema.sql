@@ -247,6 +247,56 @@ CREATE OR REPLACE TRIGGER on_auth_user_created
 -- INSERT INTO storage.buckets (id, name, public) VALUES ('evidence', 'evidence', true)
 --   ON CONFLICT DO NOTHING;
 
+-- ── Agent conversations (Fase 1: persistencia real de conversaciones) ────────
+-- Cada sesión de chat entre un usuario y Chuwi.
+-- Una sesión = una ventana de conversación continua.
+CREATE TABLE agent_conversations (
+    id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    store_id        TEXT NOT NULL REFERENCES stores(id),
+    telegram_user_id TEXT,
+    started_at      TIMESTAMPTZ DEFAULT now(),
+    last_message_at TIMESTAMPTZ DEFAULT now(),
+    message_count   INT DEFAULT 0,
+    total_tokens    INT DEFAULT 0,
+    is_active       BOOLEAN DEFAULT true
+);
+
+CREATE INDEX agent_conversations_store ON agent_conversations(store_id, last_message_at DESC);
+CREATE INDEX agent_conversations_user  ON agent_conversations(telegram_user_id, last_message_at DESC);
+
+-- ── Agent messages (cada turno de conversación con metadatos) ─────────────
+CREATE TABLE agent_messages (
+    id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    conversation_id TEXT NOT NULL REFERENCES agent_conversations(id),
+    store_id        TEXT NOT NULL REFERENCES stores(id),
+    role            TEXT NOT NULL CHECK (role IN ('user','assistant','system')),
+    content         TEXT NOT NULL,
+    intent_tag      TEXT,
+    tools_used      JSONB DEFAULT '[]',
+    tokens_in       INT DEFAULT 0,
+    tokens_out      INT DEFAULT 0,
+    agent_source    TEXT DEFAULT 'chuwi',
+    created_at      TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX agent_messages_conv ON agent_messages(conversation_id, created_at);
+CREATE INDEX agent_messages_store ON agent_messages(store_id, created_at DESC);
+
+-- ── Agent sessions (tracking de sesiones para análisis) ───────────────────
+CREATE TABLE agent_sessions (
+    id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    store_id        TEXT NOT NULL REFERENCES stores(id),
+    telegram_user_id TEXT,
+    session_start   TIMESTAMPTZ DEFAULT now(),
+    session_end     TIMESTAMPTZ,
+    messages_count  INT DEFAULT 0,
+    tools_called    INT DEFAULT 0,
+    kuine_calls     INT DEFAULT 0,
+    resolved        BOOLEAN DEFAULT false
+);
+
+CREATE INDEX agent_sessions_store ON agent_sessions(store_id, session_start DESC);
+
 -- ── Demo store seed ────────────────────────────────────────────────────────
 INSERT INTO stores (id, name, telegram_chat_id) VALUES
 ('demo-store-001', 'Super Martinez', NULL);

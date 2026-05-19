@@ -1,10 +1,16 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../core/api_service.dart';
 import '../../core/supabase_client.dart';
 import '../../core/theme.dart';
+
+import 'dart:io' show File;
 
 final _dailyBriefsProvider = FutureProvider<List<Map<String, dynamic>>>((ref) async {
   final data = await supabase
@@ -181,10 +187,18 @@ class _DailyBriefsTab extends ConsumerWidget {
                 ),
                 children: [
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                     child: Text(
                       summary,
                       style: const TextStyle(fontSize: 13, height: 1.6),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    child: _PdfDownloadButton(
+                      label: '📄 Descargar PDF',
+                      filename: 'brief_$date.pdf',
+                      download: () => api.downloadBriefPdf(date: date),
                     ),
                   ),
                 ],
@@ -247,10 +261,18 @@ class _WeeklyReportsTab extends ConsumerWidget {
                 ),
                 children: [
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                     child: Text(
                       content,
                       style: const TextStyle(fontSize: 13, height: 1.6),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    child: _PdfDownloadButton(
+                      label: '📊 Descargar PDF semanal',
+                      filename: 'informe_semanal_$week.pdf',
+                      download: () => api.downloadWeeklyPdf(weekStart: week),
                     ),
                   ),
                 ],
@@ -367,10 +389,18 @@ class _MonthlyReportsTab extends ConsumerWidget {
                 ),
                 children: [
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                     child: Text(
                       content,
                       style: const TextStyle(fontSize: 13, height: 1.6),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    child: _PdfDownloadButton(
+                      label: '📈 Descargar PDF mensual',
+                      filename: 'informe_mensual_$month.pdf',
+                      download: () => api.downloadMonthlyPdf(),
                     ),
                   ),
                 ],
@@ -1447,6 +1477,75 @@ class _LegendDot extends StatelessWidget {
         const SizedBox(width: 4),
         Text(label, style: const TextStyle(fontSize: 10, color: Colors.grey)),
       ],
+    );
+  }
+}
+
+// ── PDF Download Button ────────────────────────────────────────────────────────
+
+class _PdfDownloadButton extends StatefulWidget {
+  final String label;
+  final Future<List<int>> Function() download;
+  final String filename;
+
+  const _PdfDownloadButton({
+    required this.label,
+    required this.download,
+    required this.filename,
+  });
+
+  @override
+  State<_PdfDownloadButton> createState() => _PdfDownloadButtonState();
+}
+
+class _PdfDownloadButtonState extends State<_PdfDownloadButton> {
+  bool _loading = false;
+
+  Future<void> _handleTap() async {
+    setState(() => _loading = true);
+    try {
+      final bytes = await widget.download();
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}/${widget.filename}');
+      await file.writeAsBytes(bytes);
+      await Share.shareXFiles(
+        [XFile(file.path, mimeType: 'application/pdf')],
+        subject: widget.label,
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error descargando PDF: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton.icon(
+      onPressed: _loading ? null : _handleTap,
+      icon: _loading
+          ? const SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.picture_as_pdf_outlined, size: 16),
+      label: Text(_loading ? 'Generando...' : widget.label,
+          style: const TextStyle(fontSize: 12)),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: const Color(0xFF059669),
+        side: const BorderSide(color: Color(0xFF059669)),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
     );
   }
 }
