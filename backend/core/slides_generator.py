@@ -220,74 +220,76 @@ class Deck(FPDF):
 
 def s01_portada(d: Deck):
     d.add_page()
-    d.fill(_BG)
-    d.dot_grid(0, 0, W, H, step=9, size=0.5, color=(15, 25, 45))
+    # Fondo degradado horizontal profundo
+    d.gradient_panel(0, 0, W, H, _BG, (4, 18, 38), steps=24, vertical=False)
 
-    # Panel izquierdo con degradado
-    d.gradient_panel(0, 0, 115, H, _G1, _BG, steps=18)
-    d.vbar(115, H, 2.5, color=_NEON)
+    # Grid de puntos muy sutil
+    d.dot_grid(0, 0, W, H, step=11, size=0.35, color=(12, 22, 42))
 
-    # Anillos decorativos centrados en panel izquierdo
-    d.ring(58, 105, 42, 0.6, (0, 80, 55))
-    d.ring(58, 105, 55, 0.3, (0, 60, 40))
-    d.ring(58, 105, 68, 0.2, (0, 45, 30))
+    # Linea neon superior
+    d.panel(0, 0, W, 3, _NEON)
 
-    # Logo / nombre
-    d.set_font("Helvetica", "B", 48)
+    # Anillos decorativos grandes centrados a la izquierda
+    for r, w_ring, alpha in [(90, 0.5, 30), (70, 0.7, 45), (50, 1.0, 60), (30, 1.5, 80)]:
+        d.ring(70, H // 2, r, w_ring, (0, alpha, int(alpha * 0.7)))
+
+    # Punto central neon
+    d.circle(70, H // 2, 5, _NEON)
+
+    # NOMBRE enorme — ocupa toda la anchura
+    d.set_font("Helvetica", "B", 80)
     d.set_text_color(*_WHITE)
-    d.set_xy(0, 28)
-    d.cell(115, 26, "MermaOps", align="C")
+    d.set_xy(0, 20)
+    d.cell(W, 42, "MermaOps", align="C")
 
-    # Punto verde bajo nombre
-    d.circle(58, 60, 1.8, _NEON)
+    # Tagline centrada
+    d.set_font("Helvetica", "", 16)
+    d.set_text_color(*_NEON)
+    d.set_xy(0, 68)
+    d.cell(W, 10, "La IA que hace que los supermercados desperdicien menos.", align="C")
 
-    d.set_font("Helvetica", "", 11)
-    d.set_text_color(*_G3)
-    d.set_xy(0, 64)
-    d.multi_cell(115, 6.5, "Sistema multi-agente de IA\npara reduccion de merma\nalimentaria", align="C")
+    # Linea separadora
+    d.hbar(85, 0.6, _G2, 60, 177)
 
-    # Tags tech
-    tags = ["Claude Opus 4.7", "FastAPI", "Flutter", "Supabase", "11 agentes"]
-    ty = 112
-    for tag in tags:
-        tw = d.badge(tag, 10, ty, bg=(2, 40, 28), fg=_NEON, size=8)
-        ty += 14
-
-    # ---- Derecha -----------------------------------------------------------
-    # Titulo del trabajo
-    d.label("Trabajo Fin de Master  |  Master en IA Generativa & Innovation", 128, 22, 160, 8)
-
-    d.set_font("Helvetica", "B", 30)
-    d.set_text_color(*_WHITE)
-    d.set_xy(128, 34)
-    d.multi_cell(162, 16, "Inteligencia Artificial\naplicada a la reduccion\nde merma en supermercados", align="L")
-
-    d.hbar(96, 1, _NEON, 128, 162)
-
-    d.sub("Presentado por:", 128, 102, 160, 9, _GREY)
-    d.set_font("Helvetica", "B", 16)
-    d.set_text_color(*_WHITE)
-    d.set_xy(128, 112)
-    d.cell(160, 9, "Alvaro Ferrer Muro")
-
-    d.sub(date.today().strftime("%B %Y"), 128, 124, 160, 10, _GREY)
-
-    # Powered by
-    d.label("Powered by Anthropic Claude API", 128, H - 22, 160, 7, _GREY2, False)
-    d.label("github.com/alvaroferrer1/Tfm", 128, H - 15, 160, 7, _GREY2, False)
-
-    # Metricas rapidas abajo-derecha
-    kpis = [("11", "Agentes"), ("323", "Tests"), ("100%", "Robustez")]
-    for i, (v, l) in enumerate(kpis):
-        bx = 207 + i * 30
-        d.set_font("Helvetica", "B", 18)
-        d.set_text_color(*_NEON)
-        d.set_xy(bx, 148)
-        d.cell(28, 10, _t(v), align="C")
-        d.set_font("Helvetica", "", 7)
+    # 3 cifras clave centradas — Apple style
+    kpis = [
+        ("11", "agentes de IA", _NEON),
+        ("432", "tests en verde", _G3),
+        ("100%", "robustez adversarial", _BLUE),
+    ]
+    for i, (val, lbl, col) in enumerate(kpis):
+        bx = 55 + i * 70
+        d.set_font("Helvetica", "B", 42)
+        d.set_text_color(*col)
+        d.set_xy(bx, 92)
+        d.cell(60, 22, _t(val), align="C")
+        d.set_font("Helvetica", "", 8)
         d.set_text_color(*_GREY)
-        d.set_xy(bx, 159)
-        d.cell(28, 5, _t(l), align="C")
+        d.set_xy(bx, 116)
+        d.cell(60, 5, _t(lbl), align="C")
+
+    # Separador
+    d.hbar(128, 0.4, _GREY2, 60, 177)
+
+    # Autor y metadata
+    d.set_font("Helvetica", "B", 13)
+    d.set_text_color(*_WHITE)
+    d.set_xy(0, 134)
+    d.cell(W, 8, "Alvaro Ferrer Muro", align="C")
+
+    d.set_font("Helvetica", "", 9)
+    d.set_text_color(*_GREY)
+    d.set_xy(0, 144)
+    d.cell(W, 6, _t(f"Master en IA Generativa & Innovation  |  {date.today().strftime('%B %Y')}"), align="C")
+
+    # Powered by — esquina inferior
+    d.set_font("Helvetica", "", 7)
+    d.set_text_color(*_GREY2)
+    d.set_xy(0, H - 12)
+    d.cell(W, 6, "Powered by Anthropic Claude API  |  FastAPI  |  Flutter  |  Supabase", align="C")
+
+    # Linea inferior neon
+    d.panel(0, H - 3, W, 3, _NEON)
 
 
 def s02_problema(d: Deck):
@@ -639,69 +641,69 @@ def s05_chuwi(d: Deck):
 def s06_resultados(d: Deck):
     d.add_page()
     d.fill(_BG)
+    d.dot_grid(0, 0, W, H, step=10, size=0.4, color=(12, 20, 38))
 
-    d.panel(0, 0, W, 18, _BG2)
-    d.hbar(18, 1.5, _NEON)
-    d.label("Resultados cuantitativos", 12, 5, 200, 8, _NEON)
+    # Header minimal
+    d.panel(0, 0, W, 3, _NEON)
+    d.set_font("Helvetica", "B", 9)
+    d.set_text_color(*_NEON)
+    d.set_xy(0, 8)
+    d.cell(W, 6, "RESULTADOS CUANTITATIVOS", align="C")
 
-    d.heading("Numeros que no dejan\nlugar a dudas.", 12, 24, 190, 26, _WHITE)
+    # Titulo Apple-style — una linea, enorme
+    d.set_font("Helvetica", "B", 34)
+    d.set_text_color(*_WHITE)
+    d.set_xy(0, 22)
+    d.cell(W, 18, "Numeros que no dejan lugar a dudas.", align="C")
 
-    # ---- Grid 2x2 de KPIs grandes ------------------------------------------
+    d.hbar(44, 0.5, _GREY2, 40, 217)
+
+    # ---- 4 KPIs en fila — NUMEROS GIGANTES estilo Apple --------------------
     metrics = [
-        {
-            "value": "323/323", "unit": "", "label": "Tests automatizados\nen < 1 segundo",
-            "sub": "Pytest, sin conexion real a Supabase", "color": _NEON, "pct": 100,
-        },
-        {
-            "value": "100%", "unit": "", "label": "Robustez adversarial\n23 ataques neutralizados",
-            "sub": "Prompt injection, jailbreak, confusion de idiomas...", "color": _G3, "pct": 100,
-        },
-        {
-            "value": "+83pp", "unit": "", "label": "Mejora sobre baseline\naleatorio (16.7%)",
-            "sub": "El sistema clasifica el 100% de casos correctamente", "color": _AMBER, "pct": 83,
-        },
-        {
-            "value": "90.2%", "unit": "", "label": "Mejora multi-agente\nvs agente unico",
-            "sub": "Patron Hub & Spoke con validacion y consenso", "color": _BLUE, "pct": 90,
-        },
+        ("432/432", "Tests en verde\nen menos de 2s", _NEON),
+        ("100%",    "Robustez vs\n23 ataques", _G3),
+        ("+83pp",   "Sobre baseline\naleatorio", _AMBER),
+        ("90.2%",   "Multi-agente vs\nagente unico", _BLUE),
     ]
 
-    for i, m in enumerate(metrics):
-        col_i = i % 2
-        row_i = i // 2
-        bx = 14 + col_i * 140
-        by = 76 + row_i * 64
-        bw, bh = 132, 56
-
-        d.panel(bx, by, bw, bh, _BG2, radius=2)
-        d.panel(bx, by, bw, 2.5, m["color"])
-
-        # valor principal
-        vsize = 32 if len(_t(m["value"])) <= 5 else 24
+    zone_w = W / 4
+    for i, (val, lbl, col) in enumerate(metrics):
+        bx = i * zone_w
+        # numero principal — enorme
+        vsize = 48 if len(_t(val)) <= 4 else 36
         d.set_font("Helvetica", "B", vsize)
-        d.set_text_color(*m["color"])
-        d.set_xy(bx + 6, by + 6)
-        d.cell(bw - 12, vsize * 0.6, _t(m["value"] + m["unit"]))
-
+        d.set_text_color(*col)
+        d.set_xy(bx, 54)
+        d.cell(zone_w, vsize * 0.65, _t(val), align="C")
+        # separador color
+        d.panel(bx + 10, 100, zone_w - 20, 2, col)
         # label
-        d.set_font("Helvetica", "B", 9)
-        d.set_text_color(*_WHITE)
-        d.set_xy(bx + 6, by + 30)
-        d.multi_cell(bw - 12, 5.5, _t(m["label"]))
+        d.set_font("Helvetica", "", 9)
+        d.set_text_color(*_OFF_WHITE)
+        d.set_xy(bx, 106)
+        d.multi_cell(zone_w, 5.5, _t(lbl), align="C")
+        # barra de progreso sutil
+        pct = 100 if "100" in val or "432" in val else (90 if "90" in val else 83)
+        d.progress_bar(bx + 10, 128, zone_w - 20, 3, pct, col, (18, 28, 48))
 
-        # sub
-        d.set_font("Helvetica", "", 7)
-        d.set_text_color(*_GREY)
-        d.set_xy(bx + 6, by + 46)
-        d.multi_cell(bw - 12, 4, _t(m["sub"]))
+    # Separador horizontal
+    d.hbar(138, 0.5, _GREY2, 20, 257)
 
-        # barra de progreso
-        d.progress_bar(bx + 6, by + bh - 6, bw - 12, 3, m["pct"], m["color"], (20, 32, 52))
+    # Fila de badges de stack — como Apple "compatible with"
+    d.set_font("Helvetica", "", 8)
+    d.set_text_color(*_GREY)
+    d.set_xy(0, 144)
+    d.cell(W, 6, "Evaluacion reproducible, sin conexion real a Supabase. Stack completo en produccion.", align="C")
 
-    # Panel derecho
-    d.panel(292, 76, 3, 130, _NEON)
-    d.ring(290, 168, 25, 0.4, (0, 60, 40))
+    # Chips de tecnologia
+    techs = ["Claude Opus 4.7", "Sonnet 4.6", "Haiku 4.5", "FastAPI", "Flutter", "Supabase", "Pytest"]
+    tx = (W - sum(len(t) * 5.5 + 16 for t in techs)) / 2
+    for tech in techs:
+        tw = d.badge(tech, tx, 156, bg=(14, 28, 50), fg=_GREY, size=7.5)
+        tx += tw + 2
 
+    # Linea inferior
+    d.panel(0, H - 3, W, 3, _NEON)
     d.slide_footer(6)
 
 
@@ -908,65 +910,65 @@ def s09_esg(d: Deck):
 
 def s10_cierre(d: Deck):
     d.add_page()
-    d.fill(_BG)
+    # Fondo: degradado oscuro profundo
+    d.gradient_panel(0, 0, W, H, (2, 8, 18), _BG, steps=28, vertical=True)
 
-    # Fondo con patron de circulos concentricos
-    for r in [30, 55, 80, 105, 130, 155]:
-        d.ring(W / 2, H / 2, r, 0.25, (0, 40 + r // 4, 30))
+    # Anillos concentricos muy sutiles
+    for r, lw, grey in [(100, 0.18, 25), (78, 0.25, 35), (56, 0.35, 48), (34, 0.5, 65), (16, 0.8, 90)]:
+        d.ring(W // 2, H // 2, r, lw, (0, grey, int(grey * 0.7)))
 
-    # Degradado central
-    d.gradient_panel(50, 20, 197, 170, (3, 35, 25), _BG, steps=20)
+    # Punto central neon
+    d.circle(W // 2, H // 2, 4, _NEON)
 
-    # Marco neon
-    d.set_draw_color(*_NEON)
-    d.set_line_width(1)
-    d.rect(40, 18, 217, 174, "D")
+    # Linea neon arriba y abajo
+    d.panel(0, 0, W, 3, _NEON)
+    d.panel(0, H - 3, W, 3, _NEON)
 
-    # Linea superior de color
-    d.hbar(18, 3, _NEON, 40, 217)
-
-    # Titulo
-    d.set_font("Helvetica", "B", 56)
+    # Nombre — ENORME, centrado verticalmente
+    d.set_font("Helvetica", "B", 72)
     d.set_text_color(*_WHITE)
-    d.set_xy(40, 26)
-    d.cell(217, 30, "MermaOps", align="C")
+    d.set_xy(0, 35)
+    d.cell(W, 38, "MermaOps", align="C")
 
-    d.set_font("Helvetica", "", 14)
+    # Tagline minimalista
+    d.set_font("Helvetica", "", 13)
     d.set_text_color(*_NEON)
-    d.set_xy(40, 60)
-    d.cell(217, 9, "La IA que hace que los supermercados desperdicien menos", align="C")
+    d.set_xy(0, 80)
+    d.cell(W, 8, "La IA que hace que los supermercados desperdicien menos.", align="C")
 
-    d.hbar(75, 0.8, _G2, 60, 177)
+    # Tres cifras — Apple "one more thing" stats
+    d.hbar(96, 0.4, _GREY2, 50, 197)
 
-    # Bullets resumen
-    bullets = [
-        "11 agentes activos  |  Kuine orquesta, Chuwi ejecuta",
-        "323 tests en verde  |  listo para produccion real",
-        "100% robustez adversarial  |  23 ataques neutralizados",
-        "Stack completo: Claude API + FastAPI + Flutter + Supabase",
-    ]
-    for i, b in enumerate(bullets):
-        d.circle(62, 86 + i * 15, 2.5, _NEON)
-        d.set_font("Helvetica", "", 11)
-        d.set_text_color(*_OFF_WHITE)
-        d.set_xy(70, 82 + i * 15)
-        d.cell(177, 8, _t(b), align="C")
+    kpis = [("11", "agentes", _NEON), ("432", "tests OK", _G3), ("100%", "robustez", _BLUE)]
+    for i, (val, lbl, col) in enumerate(kpis):
+        bx = 60 + i * 62
+        d.set_font("Helvetica", "B", 30)
+        d.set_text_color(*col)
+        d.set_xy(bx, 102)
+        d.cell(50, 16, _t(val), align="C")
+        d.set_font("Helvetica", "", 7.5)
+        d.set_text_color(*_GREY)
+        d.set_xy(bx, 120)
+        d.cell(50, 5, _t(lbl), align="C")
 
-    # Cierre
-    d.hbar(150, 0.8, _G2, 60, 177)
-    d.set_font("Helvetica", "B", 20)
+    d.hbar(132, 0.4, _GREY2, 50, 197)
+
+    # Autor centrado
+    d.set_font("Helvetica", "B", 11)
+    d.set_text_color(*_WHITE)
+    d.set_xy(0, 138)
+    d.cell(W, 7, "Alvaro Ferrer Muro", align="C")
+
+    d.set_font("Helvetica", "", 7.5)
+    d.set_text_color(*_GREY2)
+    d.set_xy(0, 147)
+    d.cell(W, 6, "github.com/alvaroferrer1/Tfm  |  @ChuwiMermaOpsBot", align="C")
+
+    # "Gracias" final — enorme, centrado en la zona inferior
+    d.set_font("Helvetica", "B", 28)
     d.set_text_color(*_NEON)
-    d.set_xy(40, 154)
-    d.cell(217, 12, "Gracias. Preguntas.", align="C")
-
-    d.set_font("Helvetica", "", 9)
-    d.set_text_color(*_GREY)
-    d.set_xy(40, 168)
-    d.cell(217, 7, "github.com/alvaroferrer1/Tfm  |  @ChuwiMermaOpsBot  |  Alvaro Ferrer", align="C")
-
-    # Puntos decorativos en esquinas
-    for px, py in [(42, 20), (255, 20), (42, 190), (255, 190)]:
-        d.circle(px, py, 3, _NEON)
+    d.set_xy(0, 162)
+    d.cell(W, 16, "Gracias. Preguntas.", align="C")
 
 
 # ============================================================  MAIN  =========

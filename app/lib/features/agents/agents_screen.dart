@@ -4,6 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/api_service.dart';
 import '../../core/supabase_client.dart';
 
+// provider accesible desde otros widgets para forzar refresh
+final agentStatusRefreshProvider = StateProvider<int>((ref) => 0);
+
 // ── Providers ────────────────────────────────────────────────────────────────
 
 final _agentStatusProvider = FutureProvider<Map<String, dynamic>>((ref) async {
@@ -221,6 +224,127 @@ class _AgentCard extends StatelessWidget {
     }
   }
 
+  void _showAgentDetail(BuildContext context, Map<String, dynamic> a, Color color) {
+    final name = a['name'] ?? '';
+    final type = a['type'] ?? '';
+    final model = a['model'] ?? '';
+    final desc = a['description'] ?? '';
+    final status = a['status'] ?? 'unknown';
+    final capabilities = List<String>.from(a['capabilities'] ?? []);
+    final lastRun = a['last_run'] as String? ?? '';
+    final lastRunStr = lastRun.isNotEmpty
+        ? DateTime.tryParse(lastRun)?.toLocal().toString().substring(0, 16) ?? lastRun
+        : 'Sin registros';
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => DraggableScrollableSheet(
+        initialChildSize: 0.55,
+        maxChildSize: 0.85,
+        minChildSize: 0.4,
+        expand: false,
+        builder: (_, scroll) => ListView(
+          controller: scroll,
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+          children: [
+            Center(
+              child: Container(
+                width: 40, height: 4,
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            Row(children: [
+              CircleAvatar(
+                radius: 22,
+                backgroundColor: color.withValues(alpha: 0.15),
+                child: Icon(Icons.smart_toy, color: color, size: 24),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(name,
+                        style: const TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.bold)),
+                    Text(model,
+                        style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: (status == 'active' ? Colors.green : Colors.red)
+                      .withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  status == 'active' ? 'ACTIVO' : 'INACTIVO',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: status == 'active' ? Colors.green : Colors.red,
+                  ),
+                ),
+              ),
+            ]),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(type.toUpperCase(),
+                  style: TextStyle(fontSize: 11, color: color,
+                      fontWeight: FontWeight.bold)),
+            ),
+            const SizedBox(height: 12),
+            Text('Descripción',
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade600,
+                    fontWeight: FontWeight.w600)),
+            const SizedBox(height: 4),
+            Text(desc, style: const TextStyle(fontSize: 14, height: 1.5)),
+            const SizedBox(height: 16),
+            Row(children: [
+              const Icon(Icons.schedule, size: 14, color: Colors.grey),
+              const SizedBox(width: 4),
+              Text('Último run: $lastRunStr',
+                  style: const TextStyle(fontSize: 12, color: Colors.grey)),
+            ]),
+            if (capabilities.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              Text('Capacidades',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600,
+                      fontWeight: FontWeight.w600)),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: capabilities.map((c) => Chip(
+                  label: Text(c, style: const TextStyle(fontSize: 11)),
+                  padding: EdgeInsets.zero,
+                  visualDensity: VisualDensity.compact,
+                  backgroundColor: color.withValues(alpha: 0.08),
+                  side: BorderSide(color: color.withValues(alpha: 0.3)),
+                )).toList(),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final name = agent['name'] ?? '';
@@ -233,6 +357,7 @@ class _AgentCard extends StatelessWidget {
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: ListTile(
+        onTap: () => _showAgentDetail(context, agent, color),
         leading: CircleAvatar(
           backgroundColor: color.withValues(alpha: 0.15),
           child: Icon(Icons.smart_toy, color: color, size: 20),
@@ -256,10 +381,17 @@ class _AgentCard extends StatelessWidget {
             Text(desc, style: const TextStyle(fontSize: 12)),
           ],
         ),
-        trailing: Icon(
-          status == 'active' ? Icons.check_circle : Icons.error,
-          color: status == 'active' ? Colors.green : Colors.red,
-          size: 18,
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              status == 'active' ? Icons.check_circle : Icons.error,
+              color: status == 'active' ? Colors.green : Colors.red,
+              size: 18,
+            ),
+            const SizedBox(width: 4),
+            const Icon(Icons.chevron_right, size: 16, color: Colors.grey),
+          ],
         ),
         isThreeLine: true,
       ),

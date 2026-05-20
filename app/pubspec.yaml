@@ -39,6 +39,9 @@ dependencies:
   path_provider: ^2.1.4
   share_plus: ^10.0.0
 
+  # Local notifications (alertas en tiempo real sin FCM)
+  flutter_local_notifications: ^18.0.0
+
   cupertino_icons: ^1.0.8
   flutter_svg: ^2.0.10+1
   qr_flutter: ^4.1.0

@@ -1,16 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/api_service.dart';
+import '../../core/notification_service.dart';
 import '../../core/supabase_client.dart';
+import '../dashboard/dashboard_screen.dart' show dashboardProvider;
+import '../actions/actions_provider.dart';
 
-class DemoControlScreen extends StatefulWidget {
+class DemoControlScreen extends ConsumerStatefulWidget {
   const DemoControlScreen({super.key});
 
   @override
-  State<DemoControlScreen> createState() => _DemoControlScreenState();
+  ConsumerState<DemoControlScreen> createState() => _DemoControlScreenState();
 }
 
-class _DemoControlScreenState extends State<DemoControlScreen> {
+class _DemoControlScreenState extends ConsumerState<DemoControlScreen> {
   int _daysToAdvance = 1;
   bool _loading = false;
   Map<String, dynamic>? _lastResult;
@@ -42,6 +47,18 @@ class _DemoControlScreenState extends State<DemoControlScreen> {
       final before = await _getCurrentState();
       final result = await api.advanceDemo(days: _daysToAdvance);
       final after = await _getCurrentState();
+
+      // Notificación local inmediata
+      final newCritical = (after['critico'] ?? 0) - (before['critico'] ?? 0);
+      if (newCritical > 0) {
+        await notifications.showDemoAdvanceNotification(_daysToAdvance, newCritical);
+      }
+
+      // Refrescar providers globales para que dashboard y acciones vean los cambios
+      ref.invalidate(dashboardProvider);
+      ref.invalidate(pendingActionsProvider);
+      ref.invalidate(completedActionsProvider);
+
       setState(() {
         _lastResult = result;
         _beforeState = before;
@@ -82,10 +99,13 @@ class _DemoControlScreenState extends State<DemoControlScreen> {
     try {
       await api.resetDemo();
       final after = await _getCurrentState();
+      ref.invalidate(dashboardProvider);
+      ref.invalidate(pendingActionsProvider);
+      ref.invalidate(completedActionsProvider);
       setState(() {
         _afterState = after;
         _beforeState = null;
-        _lastResult = {'ok': true, 'message': 'Estado reiniciado'};
+        _lastResult = {'ok': true, 'summary': {'estado': 'reiniciado'}};
         _loading = false;
       });
       if (mounted) {
@@ -336,6 +356,34 @@ class _DemoControlScreenState extends State<DemoControlScreen> {
                                 ),
                               ))),
                     ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              // Botón para ir al dashboard y ver los cambios en tiempo real
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: () => context.go('/'),
+                  icon: const Icon(Icons.dashboard),
+                  label: const Text('Ver cambios en Dashboard'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFF059669),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () => context.go('/actions'),
+                  icon: const Icon(Icons.warning_amber_outlined),
+                  label: const Text('Ver Acciones urgentes'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.orange,
+                    side: const BorderSide(color: Colors.orange),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
                   ),
                 ),
               ),
