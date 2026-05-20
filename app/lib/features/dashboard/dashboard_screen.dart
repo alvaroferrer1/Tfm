@@ -265,6 +265,12 @@ class _DashboardBody extends ConsumerWidget {
                   color: const Color(0xFFF59E0B),
                   onTap: () => _runBrief(context, ref),
                 ),
+                _QuickAction(
+                  icon: Icons.science_outlined,
+                  label: 'Demo',
+                  color: const Color(0xFF7C3AED),
+                  onTap: () => context.go('/demo'),
+                ),
               ];
               if (wide) {
                 return Row(

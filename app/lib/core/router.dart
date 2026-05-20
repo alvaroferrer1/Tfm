@@ -11,6 +11,7 @@ import '../features/reports/reports_screen.dart';
 import '../features/profile/profile_screen.dart';
 import '../features/agents/agents_screen.dart';
 import '../features/onboarding/onboarding_screen.dart';
+import '../features/demo/demo_control_screen.dart';
 import 'shell_scaffold.dart';
 
 /// Inicializado en main() desde SharedPreferences — solo controla la pantalla inicial.
@@ -75,6 +76,10 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(
             path: '/agents',
             builder: (context, state) => const AgentsScreen(),
+          ),
+          GoRoute(
+            path: '/demo',
+            builder: (context, state) => const DemoControlScreen(),
           ),
         ],
       ),

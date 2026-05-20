@@ -159,6 +159,23 @@ class ApiService {
     return _parse(resp);
   }
 
+  Future<Map<String, dynamic>> advanceDemo({int days = 1, bool generateBrief = false}) async {
+    final resp = await http.post(
+      Uri.parse('$_baseUrl/demo/advance'),
+      headers: _headers,
+      body: jsonEncode({'days': days, 'generate_brief': generateBrief}),
+    ).timeout(const Duration(seconds: 60));
+    return _parse(resp);
+  }
+
+  Future<Map<String, dynamic>> resetDemo() async {
+    final resp = await http.post(
+      Uri.parse('$_baseUrl/demo/reset'),
+      headers: _headers,
+    ).timeout(const Duration(seconds: 60));
+    return _parse(resp);
+  }
+
   Future<List<Map<String, dynamic>>> getOrderSuggestions() async {
     final resp = await http.get(
       Uri.parse('$_baseUrl/stats/order-suggestions'),

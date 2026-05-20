@@ -541,41 +541,12 @@ def scan_vision(request: Request, body: VisionAnalysisRequest, _auth: dict = Dep
 
 
 # ── Demo temporal — avanza el tiempo en la BD para la presentación ───────────
+# Los endpoints /demo/advance y /demo/reset están en routes_demo.py
+# y se montan en main.py junto con este router.
+# Se incluyen aquí directamente para que queden bajo el mismo prefijo /api/v1.
 
-class AdvanceDemoRequest(BaseModel):
-    days: float = 1.0
-    store_id: str = ""
-    generate_brief: bool = True
-
-
-@router.post("/demo/advance")
-def advance_demo(body: AdvanceDemoRequest, _auth: dict = Depends(verify_token)):
-    """
-    Avanza N días en la BD para la demo en vivo.
-    Actualiza caducidades, crea acciones urgentes y garantiza distribución de riesgo.
-    Uso: POST /api/v1/demo/advance  {"days": 2}
-    """
-    try:
-        from backend.data.advance_demo import advance as _advance
-        store = body.store_id or os.getenv("STORE_ID", "demo-store-001")
-        result = _advance(body.days, store_id=store, generate_brief=body.generate_brief)
-        return {"ok": True, **result}
-    except Exception as e:
-        logger.error(f"advance_demo error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/demo/reset")
-def reset_demo(_auth: dict = Depends(verify_token)):
-    """Vuelve al estado inicial del Super Martínez (re-seed)."""
-    try:
-        from backend.data.advance_demo import reset as _reset
-        store = os.getenv("STORE_ID", "demo-store-001")
-        _reset(store)
-        return {"ok": True, "message": "Estado reiniciado al día de hoy."}
-    except Exception as e:
-        logger.error(f"demo_reset error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+from backend.api.routes_demo import router as _demo_router
+router.include_router(_demo_router)
 
 
 # ── PDF endpoints ─────────────────────────────────────────────────────────────

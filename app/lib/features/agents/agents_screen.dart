@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/api_service.dart';
+import '../../core/supabase_client.dart';
 
 // ── Providers ────────────────────────────────────────────────────────────────
 
@@ -304,6 +305,7 @@ class _ConvCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final convId = conv['id'] as String? ?? '';
     final msgCount = conv['message_count'] ?? 0;
     final userId = conv['telegram_user_id'] ?? '?';
     final lastMsg = conv['last_message_at'] ?? '';
@@ -314,18 +316,36 @@ class _ConvCard extends StatelessWidget {
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: ListTile(
+        onTap: convId.isNotEmpty
+            ? () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => ConversationMessagesScreen(
+                      conversationId: convId,
+                      userId: userId.toString(),
+                    ),
+                  ),
+                )
+            : null,
         leading: const CircleAvatar(child: Icon(Icons.chat, size: 18)),
         title: Text('Usuario $userId',
             style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-        subtitle: Text('$msgCount mensajes${lastDate != null ? ' • $lastDate' : ''}',
+        subtitle: Text('$msgCount mensajes${lastDate != null && lastDate.isNotEmpty ? ' • $lastDate' : ''}',
             style: const TextStyle(fontSize: 12)),
-        trailing: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            color: Colors.blue.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Text('$msgCount msgs', style: const TextStyle(fontSize: 11)),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.blue.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text('$msgCount msgs', style: const TextStyle(fontSize: 11)),
+            ),
+            const SizedBox(width: 4),
+            const Icon(Icons.chevron_right, size: 16, color: Colors.grey),
+          ],
         ),
       ),
     );
@@ -407,14 +427,17 @@ class _RunCard extends StatelessWidget {
               Wrap(
                 spacing: 4,
                 runSpacing: 4,
-                children: toolsList.take(8).map((t) => Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Colors.purple.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(t.toString(), style: const TextStyle(fontSize: 10)),
-                )).toList(),
+                children: toolsList
+                    .where((t) => t != null && t.toString().isNotEmpty)
+                    .take(8)
+                    .map((t) => Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.purple.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(t.toString(), style: const TextStyle(fontSize: 10)),
+                    )).toList(),
               ),
             ],
           ],
@@ -609,6 +632,193 @@ class _ErrorChip extends StatelessWidget {
     return Chip(
       avatar: const Icon(Icons.error_outline, size: 16, color: Colors.red),
       label: Text(message, style: const TextStyle(fontSize: 11)),
+    );
+  }
+}
+
+// ── Conversation Messages Screen ─────────────────────────────────────────────
+
+class ConversationMessagesScreen extends StatefulWidget {
+  final String conversationId;
+  final String userId;
+
+  const ConversationMessagesScreen({
+    super.key,
+    required this.conversationId,
+    required this.userId,
+  });
+
+  @override
+  State<ConversationMessagesScreen> createState() => _ConversationMessagesScreenState();
+}
+
+class _ConversationMessagesScreenState extends State<ConversationMessagesScreen> {
+  List<Map<String, dynamic>> _messages = [];
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMessages();
+  }
+
+  Future<void> _loadMessages() async {
+    setState(() { _loading = true; _error = null; });
+    try {
+      final data = await supabase
+          .from('agent_messages')
+          .select()
+          .eq('conversation_id', widget.conversationId)
+          .order('created_at', ascending: true);
+      setState(() {
+        _messages = List<Map<String, dynamic>>.from(data);
+        _loading = false;
+      });
+    } catch (e) {
+      setState(() { _error = e.toString(); _loading = false; });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Chuwi — Usuario ${widget.userId}'),
+        centerTitle: true,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _loadMessages,
+          ),
+        ],
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+              ? Center(child: Text('Error: $_error', style: const TextStyle(color: Colors.red)))
+              : _messages.isEmpty
+                  ? const Center(
+                      child: Column(mainAxisSize: MainAxisSize.min, children: [
+                        Icon(Icons.chat_bubble_outline, size: 48, color: Colors.grey),
+                        SizedBox(height: 8),
+                        Text('Sin mensajes en esta conversación',
+                            style: TextStyle(color: Colors.grey)),
+                      ]),
+                    )
+                  : ListView.builder(
+                      padding: const EdgeInsets.all(12),
+                      itemCount: _messages.length,
+                      itemBuilder: (_, i) => _MessageBubble(msg: _messages[i]),
+                    ),
+    );
+  }
+}
+
+class _MessageBubble extends StatelessWidget {
+  final Map<String, dynamic> msg;
+  const _MessageBubble({required this.msg});
+
+  @override
+  Widget build(BuildContext context) {
+    final role = msg['role'] as String? ?? 'user';
+    final content = msg['content'] as String? ?? '';
+    final intentTag = msg['intent_tag'] as String? ?? '';
+    final agentSource = msg['agent_source'] as String? ?? '';
+    final toolsUsed = List<dynamic>.from(msg['tools_used'] ?? []);
+    final createdAt = msg['created_at'] as String? ?? '';
+    final dateStr = createdAt.isNotEmpty
+        ? DateTime.tryParse(createdAt)?.toLocal().toString().substring(0, 16) ?? ''
+        : '';
+
+    final isUser = role == 'user';
+    final isKuine = agentSource == 'kuine';
+
+    Color bubbleColor;
+    if (isUser) {
+      bubbleColor = Colors.blue.shade50;
+    } else if (isKuine) {
+      bubbleColor = Colors.purple.shade50;
+    } else {
+      bubbleColor = Colors.green.shade50;
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          CircleAvatar(
+            radius: 16,
+            backgroundColor: isUser
+                ? Colors.blue.withValues(alpha: 0.15)
+                : isKuine
+                    ? Colors.purple.withValues(alpha: 0.15)
+                    : Colors.green.withValues(alpha: 0.15),
+            child: Icon(
+              isUser ? Icons.person : isKuine ? Icons.psychology : Icons.smart_toy,
+              size: 16,
+              color: isUser ? Colors.blue : isKuine ? Colors.purple : Colors.green,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [
+                  Text(
+                    isUser ? 'Encargado' : isKuine ? 'Kuine' : 'Chuwi',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                  ),
+                  if (intentTag.isNotEmpty) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade200,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(intentTag,
+                          style: const TextStyle(fontSize: 9, color: Colors.grey)),
+                    ),
+                  ],
+                  const Spacer(),
+                  Text(dateStr, style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                ]),
+                const SizedBox(height: 4),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: bubbleColor,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: Text(content,
+                      style: const TextStyle(fontSize: 13, height: 1.5)),
+                ),
+                if (toolsUsed.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Wrap(
+                    spacing: 4,
+                    children: toolsUsed
+                        .where((t) => t != null)
+                        .map((t) => Chip(
+                              label: Text(t.toString(),
+                                  style: const TextStyle(fontSize: 9)),
+                              padding: EdgeInsets.zero,
+                              visualDensity: VisualDensity.compact,
+                              backgroundColor: Colors.purple.shade50,
+                            ))
+                        .toList(),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

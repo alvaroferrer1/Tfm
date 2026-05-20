@@ -184,9 +184,9 @@ class Deck(FPDF):
         return tw + 3
 
     def progress_bar(self, x, y, w, h, pct, color=_NEON, bg=_BG2):
-        self.panel(x, y, w, h, bg, radius=h / 2)
-        filled = max(h, w * pct / 100)
-        self.panel(x, y, filled, h, color, radius=h / 2)
+        self.panel(x, y, w, h, bg)
+        filled = max(1, w * pct / 100)
+        self.panel(x, y, filled, h, color)
 
     def big_kpi(self, value, label, x, y, w=60, h=40, vcolor=_NEON, unit=""):
         # caja con borde neon arriba
@@ -268,7 +268,7 @@ def s01_portada(d: Deck):
     d.set_font("Helvetica", "B", 16)
     d.set_text_color(*_WHITE)
     d.set_xy(128, 112)
-    d.cell(160, 9, "Alvaro Ferrer Margalef")
+    d.cell(160, 9, "Alvaro Ferrer Muro")
 
     d.sub(date.today().strftime("%B %Y"), 128, 124, 160, 10, _GREY)
 
@@ -407,29 +407,35 @@ def s04_arquitectura(d: Deck):
     d.add_page()
     d.fill(_BG)
 
+    # Header bar
     d.panel(0, 0, W, 18, _BG2)
     d.hbar(18, 1.5, _NEON)
     d.label("Arquitectura multi-agente — Hub & Spoke", 12, 5, 200, 8, _NEON)
 
-    d.heading("11 agentes. Un cerebro central.", 12, 22, 200, 22, _WHITE)
+    d.heading("11 agentes. Un cerebro central.", 12, 22, 218, 18, _WHITE)
+    d.sub("Kuine (Opus 4.7) en el nucleo  |  4 agentes primarios  |  6 especializados",
+          12, 34, 210, 7.5, _GREY)
 
-    # ---- Hub Kuine ---------------------------------------------------------
-    cx, cy = 148, 126
-    # anillos decorativos
-    d.ring(cx, cy, 52, 0.3, (0, 50, 35))
-    d.ring(cx, cy, 38, 0.4, (0, 65, 48))
+    # ── Diagram geometry ──────────────────────────────────────────────────────
+    cx, cy = 160, 122   # hub center
+    r_inner, r_outer = 50, 80
 
-    # Hexagono central Kuine
+    # Decorative orbit rings (faint concentric)
+    d.ring(cx, cy, r_outer + 2, 0.18, (0, 28, 20))
+    d.ring(cx, cy, r_outer,     0.30, (0, 44, 34))
+    d.ring(cx, cy, r_inner + 1, 0.20, (0, 40, 30))
+    d.ring(cx, cy, r_inner,     0.42, (0, 60, 46))
+    d.ring(cx, cy, 26,          0.55, (0, 78, 58))
+
+    # ── Hub: Kuine hexagon ────────────────────────────────────────────────────
     d.hex_shape(cx, cy, 22, _G1)
     d.hex_shape(cx, cy, 22, _NEON, "D")
-
-    d.set_draw_color(*_NEON)
-    d.set_line_width(0.8)
 
     d.set_font("Helvetica", "B", 13)
     d.set_text_color(*_WHITE)
     d.set_xy(cx - 18, cy - 8)
     d.cell(36, 7, "KUINE", align="C")
+
     d.set_font("Helvetica", "", 6.5)
     d.set_text_color(*_NEON)
     d.set_xy(cx - 18, cy + 1)
@@ -437,70 +443,80 @@ def s04_arquitectura(d: Deck):
     d.set_xy(cx - 18, cy + 7)
     d.cell(36, 5, "25 tools", align="C")
 
-    # ---- Agentes alrededor -------------------------------------------------
-    agents = [
-        ("Chuwi",      "Sonnet 4.6", "Telegram", _G3,     90),
-        ("Evaluador",  "Sonnet 4.6", "Score",     _BLUE,   140),
-        ("Validador",  "Sonnet 4.6", "100%",      _BLUE,   190),
-        ("Consenso",   "Son. x3",    ">=90",      _BLUE,   240),
-        ("Predictor",  "Haiku 4.5",  "Tiempo",    _PURPLE, 290),
-        ("Vision",     "claude-3-5", "Fotos",     _PURPLE, 340),
-        ("Precio",     "Haiku 4.5",  "EUR",       _AMBER,  30),
-        ("Stock",      "Haiku 4.5",  "Repos.",    _AMBER,  0),
-        ("Notificador","Sonnet 4.6", "Alertas",   _RED,    310),
-        ("Reportero",  "Sonnet 4.6", "Briefs",    _TEAL,   50),
+    # ── Agents ────────────────────────────────────────────────────────────────
+    # Inner ring (r=50): 4 core agents at diagonal positions
+    inner_agents = [
+        ("Chuwi",     "Sonnet 4.6", "Telegram", _G3,   315),
+        ("Evaluador", "Sonnet 4.6", "Score",    _BLUE,  45),
+        ("Validador", "Sonnet 4.6", "100%",     _BLUE, 135),
+        ("Consenso",  "Son. x3",   ">=90",      _BLUE, 225),
+    ]
+    # Outer ring (r=80): 6 specialized agents at hexagonal positions
+    outer_agents = [
+        ("Reportero",  "Sonnet 4.6", "Briefs",  _TEAL,    0),
+        ("Notificador","Sonnet 4.6", "Alertas", _RED,     60),
+        ("Stock",      "Haiku 4.5",  "Repos.",  _AMBER,  120),
+        ("Precio",     "Haiku 4.5",  "EUR",     _AMBER,  180),
+        ("Predictor",  "Haiku 4.5",  "Tiempo",  _PURPLE, 240),
+        ("Vision",     "claude-3-5", "Fotos",   _PURPLE, 300),
     ]
 
-    r_orbit = 70
-    for name, model, role, col, deg in agents:
-        a = math.radians(deg)
-        ax = cx + r_orbit * math.cos(a)
-        ay = cy + r_orbit * math.sin(a)
+    bw, bh = 36, 19
 
-        # linea de conexion
-        # punto en borde del hexagono central (radio 22)
-        inner_x = cx + 22 * math.cos(a)
-        inner_y = cy + 22 * math.sin(a)
-        # punto en borde de la caja agente (radio aprox 10)
-        outer_x = ax - 10 * math.cos(a)
-        outer_y = ay - 10 * math.sin(a)
-        d.set_draw_color(*col)
-        d.set_line_width(0.5)
-        d.line(inner_x, inner_y, outer_x, outer_y)
+    for r_orbit, agents in [(r_inner, inner_agents), (r_outer, outer_agents)]:
+        for name, model, role, col, deg in agents:
+            a = math.radians(deg)
+            ax = cx + r_orbit * math.cos(a)
+            ay = cy + r_orbit * math.sin(a)
 
-        # caja del agente
-        bw, bh = 38, 20
-        bx = ax - bw / 2
-        by = ay - bh / 2
-        d.panel(bx, by, bw, bh, _BG2, radius=1)
-        d.panel(bx, by, bw, 2, col)
+            # Connection line: hex edge → agent center
+            hx = cx + 23 * math.cos(a)
+            hy = cy + 23 * math.sin(a)
+            d.set_draw_color(*col)
+            d.set_line_width(0.4)
+            d.line(hx, hy, ax, ay)
 
-        d.set_font("Helvetica", "B", 7.5)
-        d.set_text_color(*_WHITE)
-        d.set_xy(bx + 1, by + 4)
-        d.cell(bw - 2, 5, _t(name), align="C")
+            # Agent box
+            bx = ax - bw / 2
+            by = ay - bh / 2
+            d.panel(bx, by, bw, bh, _BG2)
+            d.panel(bx, by, bw, 2.5, col)
 
-        d.set_font("Helvetica", "", 5.5)
-        d.set_text_color(*_GREY)
-        d.set_xy(bx + 1, by + 10)
-        d.cell(bw - 2, 4, _t(model), align="C")
+            d.set_font("Helvetica", "B", 8)
+            d.set_text_color(*_WHITE)
+            d.set_xy(bx + 1, by + 4.5)
+            d.cell(bw - 2, 5, _t(name), align="C")
 
-        d.set_font("Helvetica", "B", 5.5)
-        d.set_text_color(*col)
-        d.set_xy(bx + 1, by + 14)
-        d.cell(bw - 2, 4, _t(role), align="C")
+            d.set_font("Helvetica", "", 5.5)
+            d.set_text_color(*_GREY)
+            d.set_xy(bx + 1, by + 10)
+            d.cell(bw - 2, 4, _t(model), align="C")
 
-    # Leyenda colores
-    legend = [("Sonnet 4.6", _BLUE), ("Haiku 4.5", _AMBER), ("Opus 4.7", _NEON),
-              ("Multimodal", _PURPLE), ("Especial", _RED)]
+            d.set_font("Helvetica", "B", 5.5)
+            d.set_text_color(*col)
+            d.set_xy(bx + 1, by + 14)
+            d.cell(bw - 2, 4, _t(role), align="C")
+
+    # ── Legend (top-right corner, clear of all agent boxes) ───────────────────
+    lx = 237
+    d.set_font("Helvetica", "B", 6)
+    d.set_text_color(*_GREY2)
+    d.set_xy(lx, 22)
+    d.cell(55, 5, "MODELOS")
+    legend = [
+        ("Opus 4.7",   _NEON),
+        ("Sonnet 4.6", _BLUE),
+        ("Haiku 4.5",  _AMBER),
+        ("Multimodal", _PURPLE),
+        ("Interfaz",   _G3),
+    ]
     for i, (lbl, col) in enumerate(legend):
-        lx = 238 + (i % 3) * 18
-        ly = 178 + (i // 3) * 10
-        d.circle(lx + 2, ly + 3, 2, col)
-        d.set_font("Helvetica", "", 6)
+        ly = 28 + i * 9
+        d.circle(lx + 2, ly + 3.5, 2, col)
+        d.set_font("Helvetica", "", 6.5)
         d.set_text_color(*_GREY)
-        d.set_xy(lx + 6, ly)
-        d.cell(30, 6, _t(lbl))
+        d.set_xy(lx + 6, ly + 0.5)
+        d.cell(50, 6, _t(lbl))
 
     d.slide_footer(4)
 

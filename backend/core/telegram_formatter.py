@@ -236,7 +236,7 @@ def format_proveedores(stats: list[dict]) -> str:
         "<i>Merma promedio — base para negociación</i>",
         "",
     ]
-    for s in stats:
+    for s in stats[:20]:  # Telegram 4096-char limit
         risk = s.get("risk", "BAJO")
         icon = "🔴" if risk == "ALTO" else ("🟡" if risk == "MEDIO" else "🟢")
         lines.append(

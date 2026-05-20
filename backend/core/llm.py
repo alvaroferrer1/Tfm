@@ -165,6 +165,90 @@ def _cached_system(extra: str = "") -> list[dict]:
     return [{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}]
 
 
+# ── Token cost tracker ────────────────────────────────────────────────────────
+# Precios por millón de tokens (Anthropic, mayo 2025)
+_PRICE_PER_1M: dict[str, dict[str, float]] = {
+    "claude-haiku-4-5-20251001": {"input": 0.80,  "output": 4.00,  "cache_read": 0.08,  "cache_write": 1.00},
+    "claude-sonnet-4-6":         {"input": 3.00,  "output": 15.00, "cache_read": 0.30,  "cache_write": 3.75},
+    "claude-opus-4-7":           {"input": 15.00, "output": 75.00, "cache_read": 1.50,  "cache_write": 18.75},
+}
+
+# Acumulador global (se resetea al reiniciar el proceso — basta para la demo)
+_cost_tracker: dict[str, float] = {
+    "total_usd": 0.0,
+    "saved_usd": 0.0,
+    "calls": 0.0,
+    "cache_hits": 0.0,
+    "input_tokens": 0.0,
+    "output_tokens": 0.0,
+    "cache_read_tokens": 0.0,
+}
+
+
+def _tok(usage: Any, attr: str) -> int:
+    """Extrae un contador de tokens de forma segura (0 si MagicMock o None)."""
+    val = getattr(usage, attr, None)
+    try:
+        return int(val) if val is not None else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def _track_cost(usage: Any, model: str) -> tuple[float, float]:
+    """
+    Calcula el coste real y el coste sin caché para una llamada.
+    Actualiza el acumulador global y devuelve (actual_usd, baseline_usd).
+    """
+    prices = _PRICE_PER_1M.get(model, _PRICE_PER_1M["claude-sonnet-4-6"])
+    cache_read  = _tok(usage, "cache_read_input_tokens")
+    cache_write = _tok(usage, "cache_creation_input_tokens")
+    input_tok   = _tok(usage, "input_tokens")
+    output_tok  = _tok(usage, "output_tokens")
+
+    actual = (
+        input_tok   * prices["input"]        / 1_000_000 +
+        output_tok  * prices["output"]       / 1_000_000 +
+        cache_read  * prices["cache_read"]   / 1_000_000 +
+        cache_write * prices["cache_write"]  / 1_000_000
+    )
+    baseline = (
+        (input_tok + cache_read + cache_write) * prices["input"]  / 1_000_000 +
+        output_tok                             * prices["output"] / 1_000_000
+    )
+    saved = baseline - actual
+
+    _cost_tracker["total_usd"]        += actual
+    _cost_tracker["saved_usd"]        += max(0.0, saved)
+    _cost_tracker["calls"]            += 1
+    _cost_tracker["input_tokens"]     += input_tok + cache_read + cache_write
+    _cost_tracker["output_tokens"]    += output_tok
+    _cost_tracker["cache_read_tokens"] += cache_read
+    if cache_read > 0:
+        _cost_tracker["cache_hits"] += 1
+
+    return actual, baseline
+
+
+def get_cost_summary() -> dict:
+    """Devuelve el resumen de coste de la sesión actual."""
+    t = _cost_tracker
+    calls = int(t["calls"])
+    cache_hit_pct = round(t["cache_hits"] / calls * 100) if calls > 0 else 0
+    total = t["total_usd"]
+    saved = t["saved_usd"]
+    saving_pct = round(saved / (total + saved) * 100) if (total + saved) > 0 else 0
+    return {
+        "total_usd": round(total, 6),
+        "saved_usd": round(saved, 6),
+        "saving_pct": saving_pct,
+        "calls": calls,
+        "cache_hit_pct": cache_hit_pct,
+        "input_tokens": int(t["input_tokens"]),
+        "output_tokens": int(t["output_tokens"]),
+        "cache_read_tokens": int(t["cache_read_tokens"]),
+    }
+
+
 # ── Llamada simple ────────────────────────────────────────────────────────────
 
 def _log_usage(
@@ -178,9 +262,11 @@ def _log_usage(
     if usage:
         cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
         cache_write = getattr(usage, "cache_creation_input_tokens", 0) or 0
+        actual, baseline = _track_cost(usage, model)
         logger.debug(
             f"[{label}] tokens in={usage.input_tokens} out={usage.output_tokens} "
             f"cache_read={cache_read} cache_write={cache_write} "
+            f"cost=${actual:.6f} saved=${baseline - actual:.6f} "
             f"duration_ms={duration_ms:.0f}"
         )
         _trace_call(

@@ -702,7 +702,7 @@ Al finalizar, genera el brief completo para el encargado."""
 
     # Log del run con traza completa de herramientas (Fase 3)
     duration_ms = int((_time.monotonic() - _t0) * 1000)
-    tool_names = [t.get("name") if isinstance(t, dict) else str(t) for t in tool_trace]
+    tool_names = [t.get("tool") if isinstance(t, dict) else str(t) for t in tool_trace if t is not None]
     _run_id = database.log_agent_run({
         "store_id": store_id,
         "agent_type": "kuine_daily_brief",

@@ -84,12 +84,11 @@ demo-reset:
 # Requiere: flutter instalado, emulador Android o dispositivo conectado
 # Cambia API_URL por la IP local de tu máquina: ipconfig | findstr IPv4
 flutter-run:
-	@python -c "\
-import os; from dotenv import load_dotenv; load_dotenv();\
-url = os.getenv('SUPABASE_URL',''); key = os.getenv('SUPABASE_KEY','');\
-ip = os.getenv('API_HOST','127.0.0.1'); port = os.getenv('APP_PORT','8001');\
-print(f'flutter run --dart-define=SUPABASE_URL={url} --dart-define=SUPABASE_ANON_KEY={key} --dart-define=API_URL=http://{ip}:{port}/api/v1')\
-"
+	python scripts/run_app.py
+
+# Lanza backend + emulador + app Flutter todo en un comando
+app:
+	python scripts/run_app.py
 
 # Estado de la tienda demo
 status:

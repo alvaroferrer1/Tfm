@@ -1,0 +1,12 @@
+{
+  "name": "MermaOps — Demo TFM 2026",
+  "description": "Demo técnica del sistema multi-agente de IA para reducción de merma en supermercados. Hub & spoke: Kuine (Opus 4.7) + 10 agentes especializados + Chuwi Telegram.",
+  "author": "Alvaro Ferrer Muro",
+  "version": "1.0.0",
+  "format": "16:9",
+  "fps": 60,
+  "duration": 42,
+  "width": 1920,
+  "height": 1080,
+  "entry": "index.html"
+}

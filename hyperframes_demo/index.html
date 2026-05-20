@@ -1,0 +1,741 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1920, height=1080">
+<title>MermaOps — Demo TFM 2026</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { margin: 0; padding: 0; background: #080c16; }
+  [data-composition-id] {
+    width: 1920px; height: 1080px; overflow: hidden;
+    font-family: 'Courier New', monospace; color: #fff;
+  }
+
+  /* ── Color tokens ── */
+  :root {
+    --neon:   #00e68c;
+    --neon2:  #00ffa0;
+    --bg:     #080c16;
+    --bg2:    #0d1424;
+    --bg3:    #111928;
+    --grey:   #8ca0b9;
+    --red:    #e13737;
+    --amber:  #e6a51e;
+    --blue:   #2d73f0;
+    --teal:   #14b9a5;
+    --purple: #8237e1;
+    --white:  #ffffff;
+  }
+
+  /* ── Shared atoms ── */
+  .scene { position: absolute; inset: 0; opacity: 0; }
+  .badge {
+    display: inline-block; padding: 4px 14px; border-radius: 20px;
+    font-size: 13px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase;
+  }
+  .neon-line { height: 2px; background: linear-gradient(90deg, transparent, var(--neon), transparent); }
+
+  /* ── Scene 1: Intro ── */
+  #s1 { background: var(--bg); display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  #s1 .grid-bg {
+    position: absolute; inset: 0;
+    background-image: linear-gradient(rgba(0,230,140,0.04) 1px, transparent 1px),
+                      linear-gradient(90deg, rgba(0,230,140,0.04) 1px, transparent 1px);
+    background-size: 60px 60px;
+  }
+  #s1 .logo-ring {
+    width: 160px; height: 160px; border-radius: 50%;
+    border: 2px solid var(--neon); position: relative;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 0 40px rgba(0,230,140,0.3), inset 0 0 40px rgba(0,230,140,0.05);
+  }
+  #s1 .logo-ring::before {
+    content: ''; position: absolute; inset: -10px; border-radius: 50%;
+    border: 1px solid rgba(0,230,140,0.2);
+  }
+  #s1 .logo-ring::after {
+    content: ''; position: absolute; inset: -20px; border-radius: 50%;
+    border: 1px solid rgba(0,230,140,0.1);
+  }
+  #s1 .logo-text { font-size: 52px; font-weight: 900; color: var(--neon); }
+  #s1 h1 {
+    font-size: 96px; font-weight: 900; letter-spacing: -2px; margin-top: 32px;
+    background: linear-gradient(135deg, #fff 40%, var(--neon));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  #s1 .tagline { font-size: 28px; color: var(--grey); margin-top: 16px; letter-spacing: 2px; }
+  #s1 .stats-row { display: flex; gap: 80px; margin-top: 56px; }
+  #s1 .stat { text-align: center; }
+  #s1 .stat .num { font-size: 48px; font-weight: 900; color: var(--neon); }
+  #s1 .stat .lbl { font-size: 14px; color: var(--grey); letter-spacing: 1px; margin-top: 4px; }
+
+  /* ── Scene 2: Arquitectura Hub & Spoke ── */
+  #s2 { background: var(--bg); }
+  #s2 .arch-title {
+    position: absolute; top: 60px; left: 0; right: 0; text-align: center;
+    font-size: 52px; font-weight: 900;
+    background: linear-gradient(135deg, #fff, var(--neon));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  #s2 .arch-sub {
+    position: absolute; top: 130px; left: 0; right: 0; text-align: center;
+    font-size: 20px; color: var(--grey); letter-spacing: 2px;
+  }
+  #s2 svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #s2 .layer-label {
+    position: absolute; font-size: 12px; font-weight: 700;
+    letter-spacing: 2px; text-transform: uppercase; color: var(--grey);
+    border-left: 2px solid; padding-left: 8px;
+  }
+
+  /* ── Scene 3: Kuine — Capa Directiva ── */
+  #s3 { background: var(--bg); }
+  #s3 .side-panel {
+    position: absolute; left: 0; top: 0; bottom: 0; width: 520px;
+    background: linear-gradient(135deg, #0a2818, var(--bg));
+    border-right: 1px solid rgba(0,230,140,0.2);
+    display: flex; flex-direction: column; justify-content: center; padding: 80px 60px;
+  }
+  #s3 .section-tag {
+    font-size: 11px; font-weight: 700; letter-spacing: 3px;
+    color: var(--neon); text-transform: uppercase; margin-bottom: 20px;
+  }
+  #s3 h2 { font-size: 72px; font-weight: 900; line-height: 1; }
+  #s3 .model-badge {
+    display: inline-block; margin-top: 20px; padding: 8px 20px;
+    background: rgba(0,230,140,0.1); border: 1px solid var(--neon);
+    border-radius: 4px; font-size: 14px; color: var(--neon); font-family: monospace;
+  }
+  #s3 .desc { font-size: 20px; color: var(--grey); margin-top: 24px; line-height: 1.6; }
+  #s3 .right-panel {
+    position: absolute; left: 560px; top: 100px; right: 60px;
+    display: flex; flex-direction: column; gap: 16px;
+  }
+  #s3 .tool-row {
+    display: flex; align-items: center; gap: 16px; padding: 18px 24px;
+    background: var(--bg2); border-radius: 8px;
+    border-left: 3px solid var(--neon); opacity: 0;
+  }
+  #s3 .tool-icon { width: 8px; height: 8px; border-radius: 50%; background: var(--neon); }
+  #s3 .tool-name { font-family: monospace; font-size: 15px; color: var(--neon2); }
+  #s3 .tool-desc { font-size: 13px; color: var(--grey); margin-left: auto; }
+
+  /* ── Scene 4: Terminal Demo ── */
+  #s4 { background: #050810; }
+  #s4 .term-header {
+    position: absolute; top: 60px; left: 0; right: 0; text-align: center;
+  }
+  #s4 .term-header h2 { font-size: 52px; font-weight: 900; color: var(--white); }
+  #s4 .term-header p { font-size: 20px; color: var(--grey); margin-top: 8px; }
+  #s4 .terminal {
+    position: absolute; top: 180px; left: 120px; right: 120px; bottom: 80px;
+    background: #0a0e18; border-radius: 12px; overflow: hidden;
+    border: 1px solid rgba(0,230,140,0.2);
+    box-shadow: 0 0 60px rgba(0,230,140,0.08);
+  }
+  #s4 .term-topbar {
+    background: #0f1520; height: 40px; display: flex; align-items: center;
+    padding: 0 16px; gap: 8px; border-bottom: 1px solid rgba(255,255,255,0.06);
+  }
+  #s4 .dot { width: 12px; height: 12px; border-radius: 50%; }
+  #s4 .dot-r { background: #ff5f57; }
+  #s4 .dot-y { background: #febc2e; }
+  #s4 .dot-g { background: #28c840; }
+  #s4 .term-title { margin-left: 12px; font-size: 13px; color: var(--grey); }
+  #s4 .term-body { padding: 24px 32px; font-family: 'Courier New', monospace; font-size: 15px; line-height: 1.8; }
+  #s4 .term-line { opacity: 0; white-space: pre; }
+  #s4 .prompt { color: var(--neon); }
+  #s4 .cmd { color: #fff; }
+  #s4 .out-ok { color: #00e68c; }
+  #s4 .out-info { color: #8ca0b9; }
+  #s4 .out-warn { color: #e6a51e; }
+  #s4 .out-crit { color: #e13737; }
+  #s4 .cursor { display: inline-block; width: 10px; height: 16px; background: var(--neon); animation: blink 1s infinite; vertical-align: middle; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+  /* ── Scene 5: Chuwi Telegram ── */
+  #s5 { background: var(--bg); }
+  #s5 .split-left {
+    position: absolute; left: 0; top: 0; bottom: 0; width: 480px;
+    background: linear-gradient(135deg, #0e1a2e, var(--bg));
+    border-right: 1px solid rgba(45,115,240,0.2);
+    display: flex; flex-direction: column; justify-content: center; padding: 60px 50px;
+  }
+  #s5 .section-tag { font-size: 11px; font-weight: 700; letter-spacing: 3px; color: #2d73f0; text-transform: uppercase; margin-bottom: 16px; }
+  #s5 h2 { font-size: 64px; font-weight: 900; line-height: 1; }
+  #s5 .model-badge {
+    display: inline-block; margin-top: 16px; padding: 6px 16px;
+    background: rgba(45,115,240,0.1); border: 1px solid #2d73f0;
+    border-radius: 4px; font-size: 13px; color: #2d73f0; font-family: monospace;
+  }
+  #s5 .features { margin-top: 32px; display: flex; flex-direction: column; gap: 14px; }
+  #s5 .feat { display: flex; align-items: center; gap: 12px; font-size: 17px; color: var(--grey); opacity: 0; }
+  #s5 .feat-dot { width: 6px; height: 6px; border-radius: 50%; background: #2d73f0; flex-shrink: 0; }
+  #s5 .chat-panel {
+    position: absolute; left: 520px; top: 80px; right: 60px; bottom: 80px;
+    background: var(--bg2); border-radius: 16px; overflow: hidden;
+    border: 1px solid rgba(255,255,255,0.06);
+  }
+  #s5 .chat-header {
+    background: #14b9a5; padding: 16px 24px; display: flex; align-items: center; gap: 16px;
+  }
+  #s5 .chat-avatar { width: 44px; height: 44px; border-radius: 50%; background: var(--bg); display: flex; align-items: center; justify-content: center; font-size: 22px; }
+  #s5 .chat-name { font-weight: 700; font-size: 18px; }
+  #s5 .chat-status { font-size: 13px; opacity: 0.8; }
+  #s5 .chat-body { padding: 24px 20px; display: flex; flex-direction: column; gap: 16px; }
+  #s5 .msg { max-width: 80%; padding: 14px 18px; border-radius: 16px; font-size: 15px; line-height: 1.5; opacity: 0; }
+  #s5 .msg-user { background: #1a2744; border-radius: 16px 16px 4px 16px; align-self: flex-end; color: #e0e8f8; }
+  #s5 .msg-bot { background: #0d1f1a; border: 1px solid rgba(0,230,140,0.15); border-radius: 16px 16px 16px 4px; align-self: flex-start; color: #cce8d8; }
+  #s5 .msg-typing { display: flex; gap: 6px; align-items: center; padding: 14px 18px; }
+  #s5 .typing-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--neon); animation: typing-bounce 1.2s infinite; }
+  #s5 .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+  #s5 .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes typing-bounce { 0%,80%,100%{transform:scale(0.6);opacity:0.4} 40%{transform:scale(1);opacity:1} }
+
+  /* ── Scene 6: Resultados ── */
+  #s6 { background: var(--bg); display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  #s6 .res-title {
+    font-size: 52px; font-weight: 900; text-align: center; margin-bottom: 16px;
+    background: linear-gradient(135deg, #fff, var(--neon));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  #s6 .res-sub { font-size: 18px; color: var(--grey); text-align: center; margin-bottom: 60px; letter-spacing: 1px; }
+  #s6 .metrics-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; width: 1400px; }
+  #s6 .metric-card {
+    background: var(--bg2); border-radius: 12px; padding: 36px 28px;
+    border-top: 3px solid; text-align: center; opacity: 0;
+    position: relative; overflow: hidden;
+  }
+  #s6 .metric-card::before {
+    content: ''; position: absolute; inset: 0;
+    background: linear-gradient(135deg, rgba(255,255,255,0.02), transparent);
+  }
+  #s6 .metric-num { font-size: 64px; font-weight: 900; line-height: 1; }
+  #s6 .metric-lbl { font-size: 14px; color: var(--grey); margin-top: 12px; letter-spacing: 1px; text-transform: uppercase; }
+  #s6 .metric-sub { font-size: 12px; color: var(--grey); opacity: 0.6; margin-top: 6px; }
+
+  /* ── Scene 7: Cierre ── */
+  #s7 { background: var(--bg); display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  #s7 .grid-bg {
+    position: absolute; inset: 0;
+    background-image: linear-gradient(rgba(0,230,140,0.03) 1px, transparent 1px),
+                      linear-gradient(90deg, rgba(0,230,140,0.03) 1px, transparent 1px);
+    background-size: 80px 80px;
+  }
+  #s7 .close-ring { width: 200px; height: 200px; border-radius: 50%; border: 2px solid var(--neon); display: flex; align-items: center; justify-content: center; box-shadow: 0 0 60px rgba(0,230,140,0.2); }
+  #s7 .close-text { font-size: 64px; font-weight: 900; color: var(--neon); }
+  #s7 h1 {
+    font-size: 88px; font-weight: 900; margin-top: 28px;
+    background: linear-gradient(135deg, #fff 40%, var(--neon));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  #s7 .close-tag { font-size: 22px; color: var(--grey); margin-top: 12px; letter-spacing: 3px; }
+  #s7 .close-author { font-size: 18px; color: var(--grey); margin-top: 40px; }
+
+  /* ── Progress bar ── */
+  #progress {
+    position: fixed; bottom: 0; left: 0; height: 3px;
+    background: linear-gradient(90deg, var(--neon), var(--neon2));
+    width: 0%; z-index: 999; box-shadow: 0 0 10px var(--neon);
+  }
+</style>
+</head>
+<body>
+<div data-composition-id="mermaops-demo-v1" data-width="1920" data-height="1080" data-duration="42" style="position:relative;width:1920px;height:1080px;overflow:hidden">
+
+<!-- Progress bar -->
+<div id="progress"></div>
+
+
+<!-- ═══════════════════════════════════════════════════════
+     SCENE 1 — INTRO (0–5s)
+════════════════════════════════════════════════════════ -->
+<div id="s1" class="scene clip" data-start="0" data-duration="5">
+  <div class="grid-bg"></div>
+  <div id="s1-ring" class="logo-ring" style="opacity:0">
+    <span class="logo-text">M</span>
+  </div>
+  <h1 id="s1-title" style="opacity:0">MermaOps</h1>
+  <p id="s1-tag" class="tagline" style="opacity:0">Sistema multi-agente de IA · Reducción de merma</p>
+  <div id="s1-stats" class="stats-row" style="opacity:0">
+    <div class="stat"><div class="num">11</div><div class="lbl">Agentes IA</div></div>
+    <div class="stat"><div class="num">432</div><div class="lbl">Tests · 0 fallos</div></div>
+    <div class="stat"><div class="num">100%</div><div class="lbl">Precisión</div></div>
+    <div class="stat"><div class="num">€80B</div><div class="lbl">Problema a resolver</div></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════
+     SCENE 2 — ARQUITECTURA (5–14s)
+════════════════════════════════════════════════════════ -->
+<div id="s2" class="scene clip" data-start="5" data-duration="9">
+  <div class="arch-title" id="s2-title" style="opacity:0">11 agentes. Un cerebro central.</div>
+  <div class="arch-sub" id="s2-sub" style="opacity:0">Arquitectura Hub & Spoke — Kuine (Opus 4.7) coordina 10 agentes especializados</div>
+
+  <!-- Layer labels -->
+  <div class="layer-label" style="left:60px; top:240px; border-color:var(--neon); color:var(--neon); opacity:0" id="lbl-dir">CAPA DIRECTIVA</div>
+  <div class="layer-label" style="left:60px; top:430px; border-color:var(--blue); color:var(--blue); opacity:0" id="lbl-orch">ORQUESTACIÓN</div>
+  <div class="layer-label" style="left:60px; top:640px; border-color:var(--amber); color:var(--amber); opacity:0" id="lbl-exec">EJECUCIÓN</div>
+  <div class="layer-label" style="left:60px; top:820px; border-color:var(--grey); color:var(--grey); opacity:0" id="lbl-skill">SKILLS</div>
+
+  <svg id="arch-svg" viewBox="0 0 1920 1080" xmlns="http://www.w3.org/2000/svg">
+    <!-- Background grid -->
+    <defs>
+      <pattern id="grid" width="60" height="60" patternUnits="userSpaceOnUse">
+        <path d="M 60 0 L 0 0 0 60" fill="none" stroke="rgba(0,230,140,0.04)" stroke-width="1"/>
+      </pattern>
+      <filter id="glow">
+        <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+        <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+      <filter id="glow-strong">
+        <feGaussianBlur stdDeviation="8" result="coloredBlur"/>
+        <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+    </defs>
+    <rect width="1920" height="1080" fill="url(#grid)"/>
+
+    <!-- Orbit rings -->
+    <circle id="orbit1" cx="960" cy="580" r="160" fill="none" stroke="rgba(0,230,140,0.08)" stroke-width="1" stroke-dasharray="6,4" opacity="0"/>
+    <circle id="orbit2" cx="960" cy="580" r="300" fill="none" stroke="rgba(0,230,140,0.05)" stroke-width="1" stroke-dasharray="6,4" opacity="0"/>
+    <circle id="orbit3" cx="960" cy="580" r="440" fill="none" stroke="rgba(0,230,140,0.03)" stroke-width="1" opacity="0"/>
+
+    <!-- ── HUB: Kuine ── -->
+    <g id="hub" opacity="0">
+      <!-- Hex shape -->
+      <polygon points="960,500 1020,535 1020,605 960,640 900,605 900,535" fill="#0a2818" stroke="#00e68c" stroke-width="2" filter="url(#glow)"/>
+      <polygon points="960,510 1012,542 1012,598 960,630 908,598 908,542" fill="rgba(0,230,140,0.05)"/>
+      <text x="960" y="570" text-anchor="middle" fill="#00e68c" font-size="18" font-weight="900" font-family="Courier New">KUINE</text>
+      <text x="960" y="592" text-anchor="middle" fill="rgba(0,230,140,0.7)" font-size="11" font-family="Courier New">Opus 4.7</text>
+      <text x="960" y="612" text-anchor="middle" fill="rgba(0,230,140,0.5)" font-size="10" font-family="Courier New">25 tools · loop</text>
+    </g>
+
+    <!-- ── Spoke connections (animated) ── -->
+    <!-- Inner ring connections -->
+    <line id="line-chuwi"    x1="960" y1="500" x2="960"  y2="280"  stroke="#2d73f0" stroke-width="1.5" opacity="0" stroke-dasharray="4,3"/>
+    <line id="line-eval"     x1="1020" y1="535" x2="1200" y2="430" stroke="#2d73f0" stroke-width="1.5" opacity="0" stroke-dasharray="4,3"/>
+    <line id="line-valid"    x1="1020" y1="605" x2="1200" y2="700" stroke="#2d73f0" stroke-width="1.5" opacity="0" stroke-dasharray="4,3"/>
+    <line id="line-consen"   x1="960" y1="640" x2="960"  y2="840"  stroke="#2d73f0" stroke-width="1.5" opacity="0" stroke-dasharray="4,3"/>
+    <!-- Outer ring connections -->
+    <line id="line-report"   x1="900" y1="535" x2="660"  y2="380"  stroke="rgba(20,185,165,0.6)" stroke-width="1" opacity="0" stroke-dasharray="3,4"/>
+    <line id="line-notif"    x1="900" y1="605" x2="560"  y2="580"  stroke="rgba(225,55,55,0.6)" stroke-width="1" opacity="0" stroke-dasharray="3,4"/>
+    <line id="line-stock"    x1="960" y1="500" x2="760"  y2="220"  stroke="rgba(230,165,30,0.6)" stroke-width="1" opacity="0" stroke-dasharray="3,4"/>
+    <line id="line-precio"   x1="960" y1="640" x2="760"  y2="900"  stroke="rgba(230,165,30,0.6)" stroke-width="1" opacity="0" stroke-dasharray="3,4"/>
+    <line id="line-pred"     x1="1020" y1="535" x2="1340" y2="280" stroke="rgba(130,55,225,0.6)" stroke-width="1" opacity="0" stroke-dasharray="3,4"/>
+    <line id="line-vision"   x1="1020" y1="605" x2="1340" y2="820" stroke="rgba(130,55,225,0.6)" stroke-width="1" opacity="0" stroke-dasharray="3,4"/>
+
+    <!-- ── Agent nodes: Inner ring ── -->
+    <!-- Chuwi (top, blue) -->
+    <g id="node-chuwi" opacity="0">
+      <rect x="880" y="200" width="160" height="60" rx="6" fill="#0d1424" stroke="#2d73f0" stroke-width="1.5" filter="url(#glow)"/>
+      <rect x="880" y="200" width="160" height="5" rx="3" fill="#2d73f0"/>
+      <text x="960" y="228" text-anchor="middle" fill="#fff" font-size="15" font-weight="700" font-family="Courier New">CHUWI</text>
+      <text x="960" y="246" text-anchor="middle" fill="#8ca0b9" font-size="11" font-family="Courier New">Sonnet 4.6 · Telegram</text>
+    </g>
+    <!-- Evaluador (right-top, blue) -->
+    <g id="node-eval" opacity="0">
+      <rect x="1210" y="390" width="180" height="60" rx="6" fill="#0d1424" stroke="#2d73f0" stroke-width="1.5" filter="url(#glow)"/>
+      <rect x="1210" y="390" width="180" height="5" rx="3" fill="#2d73f0"/>
+      <text x="1300" y="418" text-anchor="middle" fill="#fff" font-size="15" font-weight="700" font-family="Courier New">EVALUADOR</text>
+      <text x="1300" y="436" text-anchor="middle" fill="#8ca0b9" font-size="11" font-family="Courier New">Sonnet 4.6 · score 0-100</text>
+    </g>
+    <!-- Validador (right-bottom, blue) -->
+    <g id="node-valid" opacity="0">
+      <rect x="1210" y="660" width="180" height="60" rx="6" fill="#0d1424" stroke="#2d73f0" stroke-width="1.5" filter="url(#glow)"/>
+      <rect x="1210" y="660" width="180" height="5" rx="3" fill="#2d73f0"/>
+      <text x="1300" y="688" text-anchor="middle" fill="#fff" font-size="15" font-weight="700" font-family="Courier New">VALIDADOR</text>
+      <text x="1300" y="706" text-anchor="middle" fill="#8ca0b9" font-size="11" font-family="Courier New">Sonnet 4.6 · adversarial</text>
+    </g>
+    <!-- Consenso (bottom, blue) -->
+    <g id="node-consen" opacity="0">
+      <rect x="880" y="850" width="160" height="60" rx="6" fill="#0d1424" stroke="#2d73f0" stroke-width="1.5" filter="url(#glow)"/>
+      <rect x="880" y="850" width="160" height="5" rx="3" fill="#2d73f0"/>
+      <text x="960" y="878" text-anchor="middle" fill="#fff" font-size="15" font-weight="700" font-family="Courier New">CONSENSO</text>
+      <text x="960" y="896" text-anchor="middle" fill="#8ca0b9" font-size="11" font-family="Courier New">Sonnet ×3 · score≥90</text>
+    </g>
+
+    <!-- ── Agent nodes: Outer ring ── -->
+    <!-- Reportero (left-top, teal) -->
+    <g id="node-report" opacity="0">
+      <rect x="560" y="340" width="160" height="60" rx="6" fill="#0d1424" stroke="#14b9a5" stroke-width="1.5"/>
+      <rect x="560" y="340" width="160" height="5" rx="3" fill="#14b9a5"/>
+      <text x="640" y="368" text-anchor="middle" fill="#fff" font-size="14" font-weight="700" font-family="Courier New">REPORTERO</text>
+      <text x="640" y="384" text-anchor="middle" fill="#8ca0b9" font-size="11" font-family="Courier New">Sonnet · briefs</text>
+    </g>
+    <!-- Notificador (far-left, red) -->
+    <g id="node-notif" opacity="0">
+      <rect x="440" y="550" width="180" height="60" rx="6" fill="#0d1424" stroke="#e13737" stroke-width="1.5"/>
+      <rect x="440" y="550" width="180" height="5" rx="3" fill="#e13737"/>
+      <text x="530" y="578" text-anchor="middle" fill="#fff" font-size="14" font-weight="700" font-family="Courier New">NOTIFICADOR</text>
+      <text x="530" y="594" text-anchor="middle" fill="#8ca0b9" font-size="11" font-family="Courier New">Sonnet · alertas</text>
+    </g>
+    <!-- Stock (left-top outer, amber) -->
+    <g id="node-stock" opacity="0">
+      <rect x="660" y="180" width="160" height="60" rx="6" fill="#0d1424" stroke="#e6a51e" stroke-width="1.5"/>
+      <rect x="660" y="180" width="160" height="5" rx="3" fill="#e6a51e"/>
+      <text x="740" y="208" text-anchor="middle" fill="#fff" font-size="14" font-weight="700" font-family="Courier New">STOCK</text>
+      <text x="740" y="224" text-anchor="middle" fill="#8ca0b9" font-size="11" font-family="Courier New">Haiku · reposición</text>
+    </g>
+    <!-- Precio (left-bottom outer, amber) -->
+    <g id="node-precio" opacity="0">
+      <rect x="660" y="870" width="160" height="60" rx="6" fill="#0d1424" stroke="#e6a51e" stroke-width="1.5"/>
+      <rect x="660" y="870" width="160" height="5" rx="3" fill="#e6a51e"/>
+      <text x="740" y="898" text-anchor="middle" fill="#fff" font-size="14" font-weight="700" font-family="Courier New">PRECIO</text>
+      <text x="740" y="914" text-anchor="middle" fill="#8ca0b9" font-size="11" font-family="Courier New">Haiku · descuentos</text>
+    </g>
+    <!-- Predictor (right-top outer, purple) -->
+    <g id="node-pred" opacity="0">
+      <rect x="1340" y="240" width="160" height="60" rx="6" fill="#0d1424" stroke="#8237e1" stroke-width="1.5"/>
+      <rect x="1340" y="240" width="160" height="5" rx="3" fill="#8237e1"/>
+      <text x="1420" y="268" text-anchor="middle" fill="#fff" font-size="14" font-weight="700" font-family="Courier New">PREDICTOR</text>
+      <text x="1420" y="284" text-anchor="middle" fill="#8ca0b9" font-size="11" font-family="Courier New">Haiku · meteo+hist</text>
+    </g>
+    <!-- Vision (right-bottom outer, purple) -->
+    <g id="node-vision" opacity="0">
+      <rect x="1340" y="790" width="160" height="60" rx="6" fill="#0d1424" stroke="#8237e1" stroke-width="1.5"/>
+      <rect x="1340" y="790" width="160" height="5" rx="3" fill="#8237e1"/>
+      <text x="1420" y="818" text-anchor="middle" fill="#fff" font-size="14" font-weight="700" font-family="Courier New">VISIÓN</text>
+      <text x="1420" y="834" text-anchor="middle" fill="#8ca0b9" font-size="11" font-family="Courier New">Claude 3.5 · fotos</text>
+    </g>
+  </svg>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════
+     SCENE 3 — KUINE DIRECTIVA (14–21s)
+════════════════════════════════════════════════════════ -->
+<div id="s3" class="scene clip" data-start="14" data-duration="7">
+  <div class="side-panel">
+    <div class="section-tag">🧠 CAPA DIRECTIVA</div>
+    <h2 style="color:var(--neon)">Kuine</h2>
+    <div class="model-badge">claude-opus-4-7 · adaptive thinking</div>
+    <p class="desc">El cerebro orquestador. Analiza la tienda completa, planifica acciones y coordina los 10 agentes especializados en tiempo real.</p>
+  </div>
+  <div class="right-panel">
+    <div style="font-size:14px; color:var(--grey); margin-bottom:4px; font-family:monospace; letter-spacing:1px">25 HERRAMIENTAS ACTIVAS</div>
+    <div class="tool-row" id="t1"><div class="tool-icon"></div><span class="tool-name">analyze_product()</span><span class="tool-desc">Analiza lote completo con reasoning</span></div>
+    <div class="tool-row" id="t2"><div class="tool-icon"></div><span class="tool-name">create_action()</span><span class="tool-desc">Crea tarea priorizada para el equipo</span></div>
+    <div class="tool-row" id="t3"><div class="tool-icon"></div><span class="tool-name">get_store_summary()</span><span class="tool-desc">Estado completo de la tienda</span></div>
+    <div class="tool-row" id="t4"><div class="tool-icon"></div><span class="tool-name">evaluate_with_consensus()</span><span class="tool-desc">3 instancias paralelas · score≥90</span></div>
+    <div class="tool-row" id="t5"><div class="tool-icon"></div><span class="tool-name">get_weather_forecast()</span><span class="tool-desc">Open-Meteo + predicción de merma</span></div>
+    <div class="tool-row" id="t6"><div class="tool-icon"></div><span class="tool-name">log_supervisor_decision()</span><span class="tool-desc">Trazabilidad completa → agent_runs</span></div>
+    <div class="tool-row" id="t7"><div class="tool-icon" style="background:var(--grey)"></div><span class="tool-name" style="color:var(--grey)">+ 18 herramientas más...</span><span class="tool-desc">stock, donaciones, suppliers, RAG...</span></div>
+    <div style="margin-top:16px; padding:16px 24px; background:rgba(0,230,140,0.06); border:1px solid rgba(0,230,140,0.2); border-radius:8px; font-family:monospace; font-size:13px; color:var(--grey)">
+      <span style="color:var(--neon)">→</span> Loop autónomo · hasta 20 iteraciones · 7 cron jobs diarios<br>
+      <span style="color:var(--neon)">→</span> Extended thinking en decisiones críticas (budget=3000 tokens)<br>
+      <span style="color:var(--neon)">→</span> Prompt caching · trazabilidad completa en Supabase
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════
+     SCENE 4 — TERMINAL DEMO (21–29s)
+════════════════════════════════════════════════════════ -->
+<div id="s4" class="scene clip" data-start="21" data-duration="8">
+  <div class="term-header">
+    <h2>Demo en vivo — <span style="color:var(--neon)">make advance N=3</span></h2>
+    <p>Simulación de 3 días en 2 segundos · datos reales en Supabase</p>
+  </div>
+  <div class="terminal">
+    <div class="term-topbar">
+      <div class="dot dot-r"></div>
+      <div class="dot dot-y"></div>
+      <div class="dot dot-g"></div>
+      <div class="term-title">MermaOps Terminal — Super Martínez · demo-store-001</div>
+    </div>
+    <div class="term-body">
+      <div class="term-line" id="l1"><span class="prompt">$</span> <span class="cmd">python -m pytest backend/tests/ -q</span></div>
+      <div class="term-line" id="l2"><span class="out-ok">................................ 432 passed in 1.40s ✓</span></div>
+      <div class="term-line" id="l3">&nbsp;</div>
+      <div class="term-line" id="l4"><span class="prompt">$</span> <span class="cmd">make advance N=3</span></div>
+      <div class="term-line" id="l5"><span class="out-info">  Simulando 3 días en Super Martínez...</span></div>
+      <div class="term-line" id="l6"><span class="out-info">  Día 1: 9 lotes actualizados · 2 nuevos CRÍTICOS detectados</span></div>
+      <div class="term-line" id="l7"><span class="out-info">  Día 2: 7 lotes actualizados · 1 acción completada por el equipo</span></div>
+      <div class="term-line" id="l8"><span class="out-info">  Día 3: 11 lotes actualizados · Kuine activa brief automático</span></div>
+      <div class="term-line" id="l9">&nbsp;</div>
+      <div class="term-line" id="l10"><span class="out-ok">  ══════════════════════════════════════════</span></div>
+      <div class="term-line" id="l11"><span class="out-ok">    DEMO AVANZADA 3 DIAS</span></div>
+      <div class="term-line" id="l12"><span class="out-ok">  ══════════════════════════════════════════</span></div>
+      <div class="term-line" id="l13"><span class="out-warn">    Lotes actualizados   : 27</span></div>
+      <div class="term-line" id="l14"><span class="out-crit">    Críticos nuevos      : 3  🔴</span></div>
+      <div class="term-line" id="l15"><span class="out-warn">    Acciones nuevas      : 5</span></div>
+      <div class="term-line" id="l16"><span class="out-ok">    Acciones completadas : 2</span></div>
+      <div class="term-line" id="l17"><span class="out-ok">    Stock reducido       : 18 uds</span></div>
+      <div class="term-line" id="l18"><span class="out-ok">  ══════════════════════════════════════════</span></div>
+      <div class="term-line" id="l19">&nbsp;</div>
+      <div class="term-line" id="l20"><span class="prompt">$</span> <span class="cmd">curl -X POST http://localhost:8001/api/v1/demo/advance -d '{"days":1}'</span></div>
+      <div class="term-line" id="l21"><span class="out-ok">{"ok":true,"summary":{"days":1,"batches_updated":10,"actions_created":2}}</span></div>
+      <div class="term-line" id="l22"><span class="prompt">$</span> <span class="cursor"></span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════
+     SCENE 5 — CHUWI TELEGRAM (29–36s)
+════════════════════════════════════════════════════════ -->
+<div id="s5" class="scene clip" data-start="29" data-duration="7">
+  <div class="split-left">
+    <div class="section-tag">💬 INTERFAZ CONVERSACIONAL</div>
+    <h2 style="background:linear-gradient(135deg,#fff,#2d73f0);-webkit-background-clip:text;-webkit-text-fill-color:transparent">Chuwi</h2>
+    <div class="model-badge">claude-sonnet-4-6 · streaming</div>
+    <div class="features">
+      <div class="feat" id="f1"><div class="feat-dot"></div>Indicador de escritura en tiempo real</div>
+      <div class="feat" id="f2"><div class="feat-dot"></div>Reflexion Loop — aprende de cada turno</div>
+      <div class="feat" id="f3"><div class="feat-dot"></div>Alertas proactivas sin que le pregunten</div>
+      <div class="feat" id="f4"><div class="feat-dot"></div>Foto → Kuine analiza y decide en segundos</div>
+      <div class="feat" id="f5"><div class="feat-dot" style="background:var(--red)"></div>Bloqueo adversarial — 23/23 ataques frenados</div>
+    </div>
+  </div>
+  <div class="chat-panel">
+    <div class="chat-header">
+      <div class="chat-avatar">🤖</div>
+      <div>
+        <div class="chat-name">Chuwi MermaOps</div>
+        <div class="chat-status">en línea · @ChuwiMermaOpsBot</div>
+      </div>
+    </div>
+    <div class="chat-body" id="chat-body">
+      <div class="msg msg-user" id="msg1">¿Qué productos están en estado crítico ahora mismo?</div>
+      <div class="msg msg-bot" id="msg-typing" style="background:var(--bg2)">
+        <div class="msg-typing"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div>
+      </div>
+      <div class="msg msg-bot" id="msg2">🔴 <b>3 productos CRÍTICOS en Super Martínez:</b><br><br>
+        1. <b>Merluza fresca</b> — caduca mañana · 4 ud · Pasillo 7<br>
+           → Kuine recomienda: <span style="color:var(--neon)">donar hoy antes 17h</span><br><br>
+        2. <b>Yogur natural Danone</b> — caduca en 1 día · 12 ud<br>
+           → Acción: <span style="color:var(--amber)">rebajar 40% esta tarde</span><br><br>
+        3. <b>Pan de molde integral</b> — caduca hoy · 7 ud<br>
+           → <span style="color:var(--red)">Retirar ahora mismo</span>
+      </div>
+      <div class="msg msg-user" id="msg3">Ok, apruebo la donación de la merluza</div>
+      <div class="msg msg-bot" id="msg4">✅ <b>Donación registrada.</b><br>Kuine ha notificado a la Asociación Vecinos del Barrio.<br><span style="color:var(--neon);font-size:13px">Deducción fiscal: 2.10€ (Ley 49/2002)</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════
+     SCENE 6 — RESULTADOS (36–40s)
+════════════════════════════════════════════════════════ -->
+<div id="s6" class="scene clip" data-start="36" data-duration="4">
+  <div class="res-title">Resultados cuantitativos</div>
+  <div class="res-sub">Evaluación formal · Sistema vs. Baseline sin IA</div>
+  <div class="metrics-grid">
+    <div class="metric-card" id="mc1" style="border-color:var(--neon)">
+      <div class="metric-num" style="color:var(--neon)">100%</div>
+      <div class="metric-lbl">Precisión sistema</div>
+      <div class="metric-sub">vs 16.7% baseline</div>
+    </div>
+    <div class="metric-card" id="mc2" style="border-color:var(--blue)">
+      <div class="metric-num" style="color:var(--blue)">432</div>
+      <div class="metric-lbl">Tests automáticos</div>
+      <div class="metric-sub">0 fallos · &lt; 1.5s</div>
+    </div>
+    <div class="metric-card" id="mc3" style="border-color:var(--red)">
+      <div class="metric-num" style="color:var(--red)">23/23</div>
+      <div class="metric-lbl">Ataques adversariales</div>
+      <div class="metric-sub">100% neutralizados</div>
+    </div>
+    <div class="metric-card" id="mc4" style="border-color:var(--amber)">
+      <div class="metric-num" style="color:var(--amber)">+83pp</div>
+      <div class="metric-lbl">Mejora sobre sin-IA</div>
+      <div class="metric-sub">Evaluación cuantitativa</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════
+     SCENE 7 — CIERRE (40–42s)
+════════════════════════════════════════════════════════ -->
+<div id="s7" class="scene clip" data-start="40" data-duration="2">
+  <div class="grid-bg"></div>
+  <div class="close-ring" id="s7-ring" style="opacity:0">
+    <span class="close-text">M</span>
+  </div>
+  <h1 id="s7-title" style="opacity:0">MermaOps</h1>
+  <div class="close-tag" id="s7-tag" style="opacity:0">TRABAJO DE FIN DE MÁSTER · 2026</div>
+  <div class="close-author" id="s7-auth" style="opacity:0">Alvaro Ferrer Muro — Powered by Claude (Anthropic)</div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════
+//  GSAP MASTER TIMELINE — MermaOps Demo · 42 segundos
+// ═══════════════════════════════════════════════════════
+gsap.registerPlugin();
+
+const tl = gsap.timeline({ paused: true });
+window.__timelines = window.__timelines || {};
+window.__timelines["mermaops-demo-v1"] = tl;
+
+// Progress bar sync
+tl.eventCallback("onUpdate", () => {
+  const pct = (tl.time() / tl.totalDuration()) * 100;
+  document.getElementById("progress").style.width = pct + "%";
+});
+
+// ── S1: Intro (0-5s) ──────────────────────────────────
+tl.to("#s1",       { opacity: 1, duration: 0 }, 0)
+  .from("#s1",     { opacity: 0, duration: 0.3 }, 0)
+  .to("#s1-ring",  { opacity: 1, scale: 1, duration: 0.6, ease: "back.out(1.5)" }, 0.3)
+  .from("#s1-ring",{ scale: 0.3 }, 0.3)
+  .to("#s1-title", { opacity: 1, y: 0, duration: 0.7, ease: "power3.out" }, 0.8)
+  .from("#s1-title",{ y: 40 }, 0.8)
+  .to("#s1-tag",   { opacity: 1, y: 0, duration: 0.5 }, 1.3)
+  .from("#s1-tag", { y: 20 }, 1.3)
+  .to("#s1-stats", { opacity: 1, y: 0, duration: 0.6, ease: "power2.out" }, 2.0)
+  .from("#s1-stats",{ y: 30 }, 2.0)
+  .to("#s1",       { opacity: 0, duration: 0.4 }, 4.6)
+
+// ── S2: Arquitectura (5-14s) ──────────────────────────
+  .to("#s2",            { opacity: 1, duration: 0 }, 5)
+  .to("#s2-title",      { opacity: 1, y: 0, duration: 0.6 }, 5.2)
+  .from("#s2-title",    { y: -30 }, 5.2)
+  .to("#s2-sub",        { opacity: 1, duration: 0.4 }, 5.7)
+  .to("#orbit1",        { opacity: 1, duration: 1, ease: "power1.out" }, 5.8)
+  .to("#orbit2",        { opacity: 1, duration: 1 }, 6.0)
+  .to("#orbit3",        { opacity: 1, duration: 1 }, 6.2)
+  .to("#hub",           { opacity: 1, scale: 1, duration: 0.7, ease: "back.out(2)" }, 6.4)
+  .from("#hub",         { scale: 0 }, 6.4)
+  // Layer labels
+  .to("#lbl-dir",       { opacity: 1, duration: 0.4 }, 6.8)
+  .to("#lbl-orch",      { opacity: 1, duration: 0.4 }, 7.0)
+  .to("#lbl-exec",      { opacity: 1, duration: 0.4 }, 7.2)
+  .to("#lbl-skill",     { opacity: 1, duration: 0.4 }, 7.4)
+  // Inner ring nodes + lines
+  .to(["#line-chuwi","#node-chuwi"],  { opacity: 1, duration: 0.5 }, 7.0)
+  .to(["#line-eval","#node-eval"],    { opacity: 1, duration: 0.5 }, 7.4)
+  .to(["#line-valid","#node-valid"],  { opacity: 1, duration: 0.5 }, 7.8)
+  .to(["#line-consen","#node-consen"],{ opacity: 1, duration: 0.5 }, 8.2)
+  // Outer ring
+  .to(["#line-report","#node-report"],{ opacity: 1, duration: 0.4 }, 8.8)
+  .to(["#line-notif","#node-notif"],  { opacity: 1, duration: 0.4 }, 9.1)
+  .to(["#line-stock","#node-stock"],  { opacity: 1, duration: 0.4 }, 9.4)
+  .to(["#line-precio","#node-precio"],{ opacity: 1, duration: 0.4 }, 9.7)
+  .to(["#line-pred","#node-pred"],    { opacity: 1, duration: 0.4 }, 10.0)
+  .to(["#line-vision","#node-vision"],{ opacity: 1, duration: 0.4 }, 10.3)
+  // Pulse hub
+  .to("#hub polygon:first-child", { attr: { stroke: "#00ffa0" }, duration: 0.3, yoyo: true, repeat: 3 }, 11.0)
+  .to("#s2", { opacity: 0, duration: 0.5 }, 13.5)
+
+// ── S3: Kuine directiva (14-21s) ──────────────────────
+  .to("#s3",  { opacity: 1, duration: 0 }, 14)
+  .from("#s3 .side-panel", { x: -80, opacity: 0, duration: 0.7, ease: "power3.out" }, 14.1)
+  .to("#s3 .side-panel", { x: 0, opacity: 1, duration: 0.7 }, 14.1)
+  .to("#t1",  { opacity: 1, x: 0, duration: 0.4 }, 14.8)
+  .from("#t1",{ x: 40 }, 14.8)
+  .to("#t2",  { opacity: 1, x: 0, duration: 0.4 }, 15.2)
+  .from("#t2",{ x: 40 }, 15.2)
+  .to("#t3",  { opacity: 1, x: 0, duration: 0.4 }, 15.6)
+  .from("#t3",{ x: 40 }, 15.6)
+  .to("#t4",  { opacity: 1, x: 0, duration: 0.4 }, 16.0)
+  .from("#t4",{ x: 40 }, 16.0)
+  .to("#t5",  { opacity: 1, x: 0, duration: 0.4 }, 16.4)
+  .from("#t5",{ x: 40 }, 16.4)
+  .to("#t6",  { opacity: 1, x: 0, duration: 0.4 }, 16.8)
+  .from("#t6",{ x: 40 }, 16.8)
+  .to("#t7",  { opacity: 1, x: 0, duration: 0.4 }, 17.2)
+  .from("#t7",{ x: 40 }, 17.2)
+  .to("#s3",  { opacity: 0, duration: 0.5 }, 20.5)
+
+// ── S4: Terminal demo (21-29s) ────────────────────────
+  .to("#s4",   { opacity: 1, duration: 0 }, 21)
+  .from("#s4 .term-header", { y: -30, opacity: 0, duration: 0.5 }, 21.2)
+  .to("#s4 .term-header",   { y: 0, opacity: 1, duration: 0.5 }, 21.2)
+  .from("#s4 .terminal",    { scale: 0.95, opacity: 0, duration: 0.5 }, 21.5)
+  .to("#s4 .terminal",      { scale: 1, opacity: 1, duration: 0.5 }, 21.5)
+  .to("#l1",  { opacity: 1, duration: 0.2 }, 22.0)
+  .to("#l2",  { opacity: 1, duration: 0.3 }, 22.5)
+  .to("#l3",  { opacity: 1, duration: 0.1 }, 22.8)
+  .to("#l4",  { opacity: 1, duration: 0.2 }, 23.0)
+  .to("#l5",  { opacity: 1, duration: 0.3 }, 23.4)
+  .to("#l6",  { opacity: 1, duration: 0.3 }, 23.8)
+  .to("#l7",  { opacity: 1, duration: 0.3 }, 24.2)
+  .to("#l8",  { opacity: 1, duration: 0.3 }, 24.6)
+  .to("#l9",  { opacity: 1, duration: 0.1 }, 24.9)
+  .to("#l10", { opacity: 1, duration: 0.2 }, 25.0)
+  .to("#l11", { opacity: 1, duration: 0.2 }, 25.1)
+  .to("#l12", { opacity: 1, duration: 0.2 }, 25.2)
+  .to("#l13", { opacity: 1, duration: 0.2 }, 25.4)
+  .to("#l14", { opacity: 1, duration: 0.2 }, 25.6)
+  .to("#l15", { opacity: 1, duration: 0.2 }, 25.8)
+  .to("#l16", { opacity: 1, duration: 0.2 }, 26.0)
+  .to("#l17", { opacity: 1, duration: 0.2 }, 26.2)
+  .to("#l18", { opacity: 1, duration: 0.2 }, 26.4)
+  .to("#l19", { opacity: 1, duration: 0.1 }, 26.6)
+  .to("#l20", { opacity: 1, duration: 0.2 }, 26.7)
+  .to("#l21", { opacity: 1, duration: 0.3 }, 27.2)
+  .to("#l22", { opacity: 1, duration: 0.2 }, 27.8)
+  .to("#s4",  { opacity: 0, duration: 0.5 }, 28.5)
+
+// ── S5: Chuwi Telegram (29-36s) ───────────────────────
+  .to("#s5",  { opacity: 1, duration: 0 }, 29)
+  .from("#s5 .split-left", { x: -60, opacity: 0, duration: 0.6 }, 29.2)
+  .to("#s5 .split-left",   { x: 0, opacity: 1, duration: 0.6 }, 29.2)
+  .from("#s5 .chat-panel", { x: 60, opacity: 0, duration: 0.6 }, 29.4)
+  .to("#s5 .chat-panel",   { x: 0, opacity: 1, duration: 0.6 }, 29.4)
+  .to("#f1",  { opacity: 1, x: 0, duration: 0.3 }, 29.8)
+  .from("#f1",{ x: 20 }, 29.8)
+  .to("#f2",  { opacity: 1, x: 0, duration: 0.3 }, 30.1)
+  .from("#f2",{ x: 20 }, 30.1)
+  .to("#f3",  { opacity: 1, x: 0, duration: 0.3 }, 30.4)
+  .from("#f3",{ x: 20 }, 30.4)
+  .to("#f4",  { opacity: 1, x: 0, duration: 0.3 }, 30.7)
+  .from("#f4",{ x: 20 }, 30.7)
+  .to("#f5",  { opacity: 1, x: 0, duration: 0.3 }, 31.0)
+  .from("#f5",{ x: 20 }, 31.0)
+  // Chat messages
+  .to("#msg1",    { opacity: 1, y: 0, duration: 0.4 }, 30.2)
+  .from("#msg1",  { y: 20 }, 30.2)
+  .to("#msg-typing",{ opacity: 1, duration: 0.3 }, 30.9)
+  .to("#msg-typing",{ opacity: 0, duration: 0.2 }, 32.0)
+  .to("#msg2",    { opacity: 1, y: 0, duration: 0.5 }, 32.1)
+  .from("#msg2",  { y: 10 }, 32.1)
+  .to("#msg3",    { opacity: 1, y: 0, duration: 0.4 }, 33.5)
+  .from("#msg3",  { y: 15 }, 33.5)
+  .to("#msg4",    { opacity: 1, y: 0, duration: 0.4 }, 34.3)
+  .from("#msg4",  { y: 10 }, 34.3)
+  .to("#s5",  { opacity: 0, duration: 0.5 }, 35.5)
+
+// ── S6: Resultados (36-40s) ───────────────────────────
+  .to("#s6",  { opacity: 1, duration: 0 }, 36)
+  .from("#s6 .res-title", { y: -30, opacity: 0, duration: 0.5 }, 36.2)
+  .to("#s6 .res-title",   { y: 0, opacity: 1, duration: 0.5 }, 36.2)
+  .from("#s6 .res-sub",   { opacity: 0, duration: 0.4 }, 36.6)
+  .to("#s6 .res-sub",     { opacity: 1, duration: 0.4 }, 36.6)
+  .to("#mc1", { opacity: 1, y: 0, scale: 1, duration: 0.5, ease: "back.out(1.5)" }, 37.0)
+  .from("#mc1",{ y: 40, scale: 0.85 }, 37.0)
+  .to("#mc2", { opacity: 1, y: 0, scale: 1, duration: 0.5, ease: "back.out(1.5)" }, 37.3)
+  .from("#mc2",{ y: 40, scale: 0.85 }, 37.3)
+  .to("#mc3", { opacity: 1, y: 0, scale: 1, duration: 0.5, ease: "back.out(1.5)" }, 37.6)
+  .from("#mc3",{ y: 40, scale: 0.85 }, 37.6)
+  .to("#mc4", { opacity: 1, y: 0, scale: 1, duration: 0.5, ease: "back.out(1.5)" }, 37.9)
+  .from("#mc4",{ y: 40, scale: 0.85 }, 37.9)
+  .to("#s6",  { opacity: 0, duration: 0.5 }, 39.5)
+
+// ── S7: Cierre (40-42s) ───────────────────────────────
+  .to("#s7",       { opacity: 1, duration: 0 }, 40)
+  .to("#s7-ring",  { opacity: 1, scale: 1, duration: 0.6, ease: "back.out(2)" }, 40.2)
+  .from("#s7-ring",{ scale: 0.3 }, 40.2)
+  .to("#s7-title", { opacity: 1, y: 0, duration: 0.5 }, 40.7)
+  .from("#s7-title",{ y: 30 }, 40.7)
+  .to("#s7-tag",   { opacity: 1, duration: 0.4 }, 41.1)
+  .to("#s7-auth",  { opacity: 1, duration: 0.4 }, 41.4);
+
+// ── Orbit rotation (finite repeats para render determinista) ──────────
+gsap.to("#orbit1", { rotation: 360, duration: 20, repeat: 2, ease: "none", svgOrigin: "960 580" });
+gsap.to("#orbit2", { rotation: -360, duration: 35, repeat: 1, ease: "none", svgOrigin: "960 580" });
+
+// ── Auto-play ─────────────────────────────────────────
+tl.play();
+
+// Keyboard controls for Hyperframes preview
+document.addEventListener("keydown", e => {
+  if (e.key === " ") tl.paused() ? tl.play() : tl.pause();
+  if (e.key === "r") tl.restart();
+  if (e.key === "ArrowRight") tl.time(Math.min(tl.time() + 3, tl.totalDuration()));
+  if (e.key === "ArrowLeft") tl.time(Math.max(tl.time() - 3, 0));
+});
+</script>
+</div><!-- /composition -->
+</body>
+</html>

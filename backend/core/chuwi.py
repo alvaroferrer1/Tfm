@@ -200,15 +200,48 @@ def _persist_chat_history(chat_key: str, history: list) -> None:
 
 
 def _compact_history(history: list) -> list:
+    """
+    Compacta el historial usando Haiku para resumir los turnos antiguos.
+    Preserva datos operativos clave: acciones, productos, precios, decisiones.
+    Cae en truncación simple si la llamada LLM falla (Supabase no disponible, etc.)
+    """
     if len(history) <= MAX_HISTORY:
         return history
-    old = history[:-MAX_HISTORY + 4]
-    recent = history[-MAX_HISTORY + 4:]
-    summary = (
-        f"[Resumen de {len(old)} mensajes anteriores sobre operaciones "
-        f"del Super Martinez, gestión de merma y productos.]"
-    )
-    return [{"role": "user", "content": summary}] + recent
+    keep = MAX_HISTORY - 6
+    old = history[:-keep]
+    recent = history[-keep:]
+
+    # Extraer solo texto de los mensajes antiguos
+    old_lines = []
+    for m in old:
+        role = m.get("role", "")
+        content = m.get("content", "")
+        if isinstance(content, str) and content.strip():
+            old_lines.append(f"{role.upper()}: {content[:250]}")
+        elif isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    old_lines.append(f"{role.upper()}: {block['text'][:200]}")
+
+    if not old_lines:
+        return [{"role": "user", "content": f"[{len(old)} mensajes anteriores omitidos.]"}] + recent
+
+    old_text = "\n".join(old_lines[:60])  # máx 60 líneas para el prompt
+
+    try:
+        summary = llm.call_fast(
+            f"""Resume este historial de conversación sobre gestión de merma en un supermercado.
+Conserva exactamente: acciones tomadas, productos críticos mencionados (nombre, pasillo, fecha),
+decisiones del encargado, precios acordados y cualquier dato numérico relevante.
+Máximo 120 palabras. Escribe en español, tono operativo.
+
+HISTORIAL:
+{old_text}""",
+            max_tokens=180,
+        )
+        return [{"role": "user", "content": f"[Contexto anterior (Kuine): {summary}]"}] + recent
+    except Exception:
+        return [{"role": "user", "content": f"[{len(old)} mensajes anteriores — operaciones Super Martínez.]"}] + recent
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
@@ -268,8 +301,10 @@ async def _typing_loop(bot, chat_id: int, done: asyncio.Event) -> None:
                 await asyncio.wait_for(done.wait(), timeout=4)
             except asyncio.TimeoutError:
                 pass
-    except (asyncio.CancelledError, Exception):
+    except (asyncio.CancelledError, asyncio.TimeoutError, asyncio.InvalidStateError):
         pass
+    except Exception:
+        pass  # Telegram unavailable during shutdown — non-fatal
 
 
 # ── Send helpers ──────────────────────────────────────────────────────────────
@@ -291,11 +326,12 @@ async def _safe_edit(message, text: str, reply_markup=None) -> None:
                 await message.get_bot().send_message(
                     message.chat_id, formatted[i:i + limit], parse_mode=ParseMode.HTML,
                 )
-    except Exception:
+    except Exception as e:
+        logger.warning(f"_safe_edit HTML fallback: {e}")
         try:
             await message.edit_text(text[:limit], reply_markup=reply_markup)
         except Exception:
-            pass
+            pass  # Message deleted or bot kicked — nothing we can do
 
 
 async def _send(update: Update, text: str, reply_markup=None) -> None:
@@ -679,6 +715,9 @@ CHUWI_TOOLS = [
             },
             "required": ["pattern_key"],
         },
+        # cache_control en el ÚLTIMO tool: Anthropic cachea todas las definiciones de tools
+        # anteriores a este punto → ahorro ~5-8K tokens en cada llamada (15 tools × ~500 tokens).
+        "cache_control": {"type": "ephemeral"},
     },
 ]
 
@@ -1015,6 +1054,10 @@ async def _run_agent_loop(
     system_extra = _build_agent_system(user)
     if intent_context:
         system_extra = system_extra + intent_context
+    from backend.core import reflexion as _reflexion
+    _rfx_ctx = _reflexion.get_reflexion_context(STORE_ID)
+    if _rfx_ctx:
+        system_extra = system_extra + _rfx_ctx
     messages = _compact_history(list(chat_history))
     messages.append({"role": "user", "content": user_text})
 
@@ -1139,6 +1182,15 @@ async def _run_agent_loop(
                 buffer = _agent_respond(chat_history, user_text, user)
             except Exception as e2:
                 buffer = f"Error: {e2}"
+
+    # Fire-and-forget reflexion when Kuine was involved (no token cost to user)
+    _kuine_tools = {"analyze_product", "run_supervisor_analysis", "evaluate_product"}
+    if any(t in _kuine_tools for t in all_tools_used) and buffer:
+        asyncio.ensure_future(_reflexion.async_generate_and_save(
+            store_id=STORE_ID,
+            query=user_text,
+            response=buffer,
+        ))
 
     return buffer or "Sin respuesta.", all_tools_used
 
@@ -3800,6 +3852,8 @@ async def _cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         "/citar [consulta] — Citar normativa alimentaria\n"
         "/demo [días|reset] — Simular paso del tiempo\n"
         "/kuine — Estado del orquestador\n"
+        "/costes — Coste IA real y ahorro por prompt caching\n"
+        "/reflexiones — Lecciones aprendidas por el Reflexion Loop\n"
     )
     tip = (
         "\n💡 <b>Tip:</b> También puedes escribir en lenguaje natural.\n"
@@ -3808,6 +3862,101 @@ async def _cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
     text = base + (manager_cmds if manager else "") + tip
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+
+
+async def _cmd_costes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    /costes — Muestra el coste real de tokens en la sesión actual y el ahorro
+    generado por el prompt caching. Impresionante para la demo del TFM.
+    """
+    user = _get_user(update.effective_user.id)
+    if not _is_manager(user):
+        await update.message.reply_text("🔒 Solo encargados pueden ver los costes del sistema.")
+        return
+
+    stats = llm.get_cost_summary()
+    total   = stats["total_usd"]
+    saved   = stats["saved_usd"]
+    pct     = stats["saving_pct"]
+    calls   = stats["calls"]
+    hits    = stats["cache_hit_pct"]
+    inp_k   = stats["input_tokens"] // 1000
+    out_k   = stats["output_tokens"] // 1000
+    cached_k = stats["cache_read_tokens"] // 1000
+
+    # Extrapolación: si ahorro actual es X, en un mes con ~30× más llamadas...
+    monthly_saved_est = saved * 30 if calls > 0 else 0.0
+
+    lines = [
+        "┌──────────────────────────────────┐",
+        "│  💰  <b>COSTES IA — sesión actual</b>",
+        "└──────────────────────────────────┘",
+        "",
+        f"📊 Llamadas al API:    <b>{calls}</b>",
+        f"✅ Cache hits:         <b>{hits}%</b> de llamadas",
+        "",
+        "━" * 34,
+        f"💸 Coste real:         <b>${total:.4f}</b>",
+        f"🎯 Ahorro por caché:   <b>${saved:.4f}  ({pct}%)</b>",
+        "",
+        f"📥 Tokens entrada:     <b>{inp_k}K</b>",
+        f"📤 Tokens salida:      <b>{out_k}K</b>",
+        f"⚡ Tokens cacheados:   <b>{cached_k}K</b>  (10% del precio normal)",
+        "",
+        "━" * 34,
+        f"📅 Proyección mensual: <b>~${monthly_saved_est:.2f} ahorrado</b>",
+        "",
+        "<i>Prompt caching activo en sistema y herramientas.</i>",
+        "<i>Cache TTL: 5 min · Mín. 1024 tokens para activarse.</i>",
+    ]
+    await update.message.reply_text(
+        "\n".join(lines),
+        parse_mode=ParseMode.HTML,
+        reply_markup=_back_keyboard(),
+    )
+
+
+async def _cmd_reflexiones(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    /reflexiones — Muestra las lecciones operativas que Chuwi ha aprendido
+    de conversaciones anteriores (Reflexion Loop).
+    """
+    user = _get_user(update.effective_user.id)
+    if not _is_manager(user):
+        await update.message.reply_text("🔒 Solo encargados pueden ver las reflexiones del sistema.")
+        return
+
+    from backend.core import reflexion as _reflexion
+    try:
+        lessons = _reflexion.load_reflexions(STORE_ID)
+    except Exception:
+        lessons = []
+
+    if not lessons:
+        await update.message.reply_text(
+            "🧠 <b>Reflexion Loop activo</b>\n\n"
+            "Aún no hay lecciones aprendidas. Chuwi genera reflexiones automáticamente "
+            "después de analizar productos con Kuine.\n\n"
+            "<i>Tip: analiza un producto y vuelve a consultar /reflexiones.</i>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    items = "\n".join(f"  {i+1}. {l}" for i, l in enumerate(lessons))
+    text = (
+        "┌──────────────────────────────────┐\n"
+        "│  🧠  <b>LECCIONES APRENDIDAS — Chuwi</b>\n"
+        "└──────────────────────────────────┘\n"
+        "\n"
+        f"<b>{len(lessons)} lecciones activas</b> (buffer rotante de 5):\n"
+        "\n"
+        f"{items}\n"
+        "\n"
+        "━" * 34 + "\n"
+        "<i>Generadas por Haiku tras cada análisis de Kuine.</i>\n"
+        "<i>Se usan automáticamente en el próximo mensaje.</i>"
+    )
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=_back_keyboard())
 
 
 # ── PDF helpers ──────────────────────────────────────────────────────────────
@@ -4022,6 +4171,8 @@ async def _post_init(application) -> None:
         BotCommand("logout", "Desvincular cuenta de Telegram"),
         BotCommand("informe", "Descargar brief de hoy en PDF 📄"),
         BotCommand("semana", "Descargar informe semanal en PDF 📊"),
+        BotCommand("costes", "Coste de IA y ahorro por caché (encargado)"),
+        BotCommand("reflexiones", "Lecciones aprendidas por Chuwi (Reflexion Loop)"),
     ])
 
 
@@ -4131,6 +4282,8 @@ def run() -> None:
     app.add_handler(CommandHandler("logout", _cmd_logout))
     app.add_handler(CommandHandler("informe", _cmd_informe))
     app.add_handler(CommandHandler("semana", _cmd_semana))
+    app.add_handler(CommandHandler("costes", _cmd_costes))
+    app.add_handler(CommandHandler("reflexiones", _cmd_reflexiones))
 
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
