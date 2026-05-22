@@ -35,12 +35,28 @@ _HEAT_SENSITIVE = {"carne", "pescado", "lacteos", "fruta", "verdura", "marisco"}
 # Categorías que se venden menos cuando llueve (gente no sale)
 _RAIN_AFFECTED = {"panaderia", "bolleria", "fruta", "verdura"}
 
+# Caché de previsión meteorológica — evita llamar a Open-Meteo más de una vez por hora.
+# Clave: (lat, lon, days, date_str) → (timestamp_monotonic, data)
+# Open-Meteo actualiza datos cada hora — refrescar más seguido no aporta nada.
+_weather_cache: dict[tuple, tuple[float, list[dict]]] = {}
+_WEATHER_CACHE_TTL = 3600.0  # segundos
+
 
 def get_weather_forecast(lat: float = _DEFAULT_LAT, lon: float = _DEFAULT_LON, days: int = 7) -> list[dict]:
     """
     Obtiene previsión meteorológica de Open-Meteo (gratis, sin clave API).
+    Caché en memoria de 1 hora — Open-Meteo actualiza datos cada hora.
     Devuelve lista de dicts con fecha, temp_max, precipitación.
     """
+    import time as _time
+    cache_key = (lat, lon, days, str(date.today()))
+    cached = _weather_cache.get(cache_key)
+    if cached:
+        ts, data = cached
+        if (_time.monotonic() - ts) < _WEATHER_CACHE_TTL:
+            logger.debug(f"[predictor] Weather cache hit — {len(data)} días")
+            return data
+
     try:
         resp = requests.get(
             _OPEN_METEO_URL,
@@ -75,6 +91,9 @@ def get_weather_forecast(lat: float = _DEFAULT_LAT, lon: float = _DEFAULT_LON, d
                 "is_rainy": (rain or 0) >= 5,
                 "is_storm": code >= 80,
             })
+        import time as _time
+        _weather_cache[cache_key] = (_time.monotonic(), forecast)
+        logger.info(f"[predictor] Weather forecast cacheado — {len(forecast)} días")
         return forecast
     except Exception as e:
         logger.warning(f"[predictor] Weather API error: {e}")
@@ -147,33 +166,56 @@ def predict_merma_risk(store_id: str, forecast_days: int = 7) -> list[dict]:
         # ── Calcular score de riesgo predictivo ──────────────────────────────
         risk_score = 0
         risk_factors = []
+        signal_count = 0  # número de señales de riesgo independientes (para confidence)
 
         # 1. Proximidad a alert_days_1 (zona de pre-alerta)
         proximity_pct = max(0, 1 - (days_left - alert_days_2) / max(alert_days_1 - alert_days_2, 1))
         risk_score += int(proximity_pct * 35)
+        if proximity_pct > 0.5:
+            signal_count += 1
 
         # 2. Sensibilidad a temperatura
         heat_days = sum(1 for f in forecast[:days_left] if f.get("is_hot"))
-        if heat_days > 0 and category in _HEAT_SENSITIVE:
+        is_hot_period = heat_days > 0 and category in _HEAT_SENSITIVE
+        if is_hot_period:
             risk_score += min(25, heat_days * 8)
             risk_factors.append(f"Temperatura alta {heat_days} días de los próximos {days_left}")
+            signal_count += 1
 
         # 3. Lluvia → menos clientes → stock sin rotar
         rain_days = sum(1 for f in forecast[:days_left] if f.get("is_rainy"))
-        if rain_days > 0 and category in _RAIN_AFFECTED:
+        is_rainy_period = rain_days > 0 and category in _RAIN_AFFECTED
+        if is_rainy_period:
             risk_score += min(20, rain_days * 5)
             risk_factors.append(f"Lluvia prevista {rain_days} días — menor afluencia")
+            signal_count += 1
 
         # 4. Factor día de la semana (caducidad cae en día de bajas ventas)
         dow_factor = _day_of_week_factor(expiry_str)
-        if dow_factor < 0.85:
+        is_low_sales_day = dow_factor < 0.85
+        if is_low_sales_day:
             risk_score += 15
             risk_factors.append(f"Caduca en día de ventas bajas ({expiry.strftime('%A')})")
+            signal_count += 1
+
+        # 4b. Efecto compuesto — señales que se amplifican mutuamente
+        # Calor + día de bajas ventas: el deterioro se acelera justo cuando menos se vende
+        if is_hot_period and is_low_sales_day:
+            compound_bonus = min(15, heat_days * 3)
+            risk_score += compound_bonus
+            risk_factors.append(
+                f"COMPUESTO: calor + día de ventas bajas — riesgo amplificado +{compound_bonus}pts"
+            )
+        # Lluvia + caducidad en fin de semana: la gente no sale y el stock no rota
+        if is_rainy_period and not is_low_sales_day and dow_factor >= 1.1:
+            risk_score += 8
+            risk_factors.append("Lluvia en fin de semana — clientes compran menos frescos")
 
         # 5. Valor en riesgo (más caro = más urgente prevenir)
         value = qty * price
         if value > 50:
             risk_score += 10
+            signal_count += 1
         if value > 100:
             risk_score += 10
 
@@ -181,11 +223,21 @@ def predict_merma_risk(store_id: str, forecast_days: int = 7) -> list[dict]:
         if qty > 20:
             risk_score += 10
             risk_factors.append(f"Cantidad elevada: {qty} uds")
+            signal_count += 1
 
         risk_score = min(100, risk_score)
 
         if risk_score < 20:
             continue  # descartamos riesgos insignificantes
+
+        # ── Nivel de confianza en la predicción ──────────────────────────────
+        # Alta confianza cuando múltiples señales independientes apuntan al mismo riesgo
+        if signal_count >= 3:
+            confidence_level = "alta"
+        elif signal_count == 2:
+            confidence_level = "media"
+        else:
+            confidence_level = "baja"
 
         # ── Acción preventiva recomendada ─────────────────────────────────────
         if risk_score >= 70:
@@ -207,6 +259,8 @@ def predict_merma_risk(store_id: str, forecast_days: int = 7) -> list[dict]:
             "risk_factors": risk_factors or ["Proximidad a caducidad"],
             "recommended_preemptive_action": preemptive,
             "weather_alert": heat_days > 0 or rain_days > 0,
+            "confidence_level": confidence_level,
+            "signal_count": signal_count,
         })
 
     predictions.sort(key=lambda p: p["risk_score"], reverse=True)

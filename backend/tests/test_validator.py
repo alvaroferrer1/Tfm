@@ -149,3 +149,80 @@ class TestSectionReview:
         result = validate_section_review("store", batches, completed_actions=[])
         # B2 has 3 critical, A1 has 1 — B2 should come first
         assert result["alerts"][0]["pasillo"] == "B2"
+
+
+class TestNewAdversarialAttacks:
+    """Tests para los 6 nuevos ataques adversariales (contradicciones 8-13)."""
+
+    def _make_risk(self, risk_level, score, action, days_left):
+        return {"risk_level": risk_level, "score": score, "action": action,
+                "days_left": days_left, "reasoning": "test"}
+
+    def _make_price(self, discount_pct, new_price, original_price=4.20):
+        return {"discount_pct": discount_pct, "new_price": new_price,
+                "original_price": original_price, "recommendation_text": f"{discount_pct}%"}
+
+    def test_attack8_high_score_soft_action(self):
+        """Score ≥95 con acción blanda debe detectarse (ataque 8)."""
+        product = {"id": "p1", "name": "Merluza", "cost": 2.10, "price": 4.20}
+        batch = {"expiry_date": date.today().isoformat(), "quantity": 5}
+        risk = self._make_risk("CRÍTICO", 98, "revisar", 0)
+        price = self._make_price(0, 4.20)
+        issues = _check_contradictions(product, batch, risk, "NO reponer", price)
+        assert any("DIVERGENCIA" in i or "score" in i.lower() for i in issues)
+
+    def test_attack9_rebajar_with_zero_stock(self):
+        """Rebajar con 0 unidades en tienda es acción imposible (ataque 9)."""
+        product = {"id": "p2", "name": "Pan integral", "cost": 0.80, "price": 1.60}
+        batch = {"expiry_date": date.today().isoformat(), "quantity": 0}
+        risk = self._make_risk("ALTO", 82, "rebajar", 0)
+        price = self._make_price(40, 0.96)
+        issues = _check_contradictions(product, batch, risk, "NO reponer", price)
+        assert any("IMPOSIBLE" in i or "0 unidades" in i for i in issues)
+
+    def test_attack10_excessive_discount_low_risk(self):
+        """Descuento >70% con riesgo MEDIO y 3 días es excesivo (ataque 10)."""
+        product = {"id": "p3", "name": "Yogur", "cost": 0.50, "price": 1.20}
+        batch = {"expiry_date": (date.today() + timedelta(days=3)).isoformat(), "quantity": 10}
+        risk = self._make_risk("MEDIO", 50, "rebajar", 3)
+        price = self._make_price(75, 0.30)
+        issues = _check_contradictions(product, batch, risk, "NO reponer", price)
+        assert any("EXCESIVO" in i or "70%" in i for i in issues)
+
+    def test_attack11_large_expired_stock_no_donation(self):
+        """Más de 50 uds caducadas sin proponer donación (ataque 11)."""
+        product = {"id": "p4", "name": "Baguettes", "cost": 0.40, "price": 0.90}
+        batch = {"expiry_date": (date.today() - timedelta(days=1)).isoformat(), "quantity": 60}
+        risk = self._make_risk("CRÍTICO", 99, "retirar", -1)
+        price = self._make_price(0, 0.90)
+        issues = _check_contradictions(product, batch, risk, "NO reponer", price)
+        assert any("DONACIÓN" in i or "50" in i for i in issues)
+
+    def test_attack12_reposicion_con_riesgo_alto(self):
+        """Reponer con riesgo ALTO viola FEFO (ataque 12)."""
+        product = {"id": "p5", "name": "Fresas", "cost": 1.50, "price": 3.00}
+        batch = {"expiry_date": (date.today() + timedelta(days=1)).isoformat(), "quantity": 8}
+        risk = self._make_risk("ALTO", 88, "reponer", 1)
+        price = self._make_price(30, 2.10)
+        issues = _check_contradictions(product, batch, risk, "SÍ reponer — solo 8 uds", price)
+        assert any("REPOSICIÓN" in i or "FEFO" in i for i in issues)
+
+    def test_attack13_rebaja_sin_efecto(self):
+        """Acción rebajar pero precio nuevo = precio original (ataque 13)."""
+        product = {"id": "p6", "name": "Leche", "cost": 0.60, "price": 1.20, "category": "lacteos"}
+        batch = {"expiry_date": (date.today() + timedelta(days=2)).isoformat(), "quantity": 12}
+        risk = self._make_risk("ALTO", 80, "rebajar", 2)
+        price = self._make_price(0, 1.20, 1.20)  # mismo precio
+        issues = _check_contradictions(product, batch, risk, "NO reponer", price)
+        assert any("SIN EFECTO" in i or "idéntico" in i for i in issues)
+
+    def test_attack8_no_false_positive_normal_action(self):
+        """Score 95 con RETIRAR no debe disparar la contradicción 8."""
+        product = {"id": "p7", "name": "Pollo", "cost": 3.00, "price": 6.00}
+        batch = {"expiry_date": date.today().isoformat(), "quantity": 4}
+        risk = self._make_risk("CRÍTICO", 97, "retirar", 0)
+        price = self._make_price(0, 6.00)
+        issues = _check_contradictions(product, batch, risk, "NO reponer", price)
+        # score 97 + retirar = correcto, no debe disparar la contradicción 8
+        divergence_issues = [i for i in issues if "DIVERGENCIA" in i]
+        assert len(divergence_issues) == 0

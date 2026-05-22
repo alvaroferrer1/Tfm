@@ -1,8 +1,12 @@
 """
-Notifier Agent — envía mensajes a Telegram con HTML y chunking correcto.
+Notifier Agent — envía mensajes a Telegram con HTML, chunking y deduplicación.
+La deduplicación evita enviar la misma alerta más de una vez por hora.
 """
 from __future__ import annotations
+import hashlib
 import os
+import time
+from datetime import datetime as _datetime
 import requests
 from dotenv import load_dotenv
 from backend.core.database import get_store
@@ -12,6 +16,36 @@ load_dotenv()
 _TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 _DEFAULT_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 _CHUNK_SIZE = 4000
+
+# Deduplicación de alertas — evita spam cuando el scheduler llama cada 30 min
+# clave: hash(store_id + title + body[:50]) → timestamp último envío
+_alert_dedup: dict[str, float] = {}
+_DEDUP_WINDOW_SECONDS = 3600.0  # 1 hora entre alertas idénticas
+
+# Horario de silencio para alertas no urgentes — no molestar al encargado fuera de turno.
+# Las alertas urgentes SIEMPRE se envían independientemente de la hora.
+_QUIET_HOUR_START = 22  # 22:00h
+_QUIET_HOUR_END = 7     # 07:00h
+
+
+def _is_quiet_hours() -> bool:
+    """True si estamos en horario de silencio (22:00 – 07:00)."""
+    hour = _datetime.now().hour
+    return hour >= _QUIET_HOUR_START or hour < _QUIET_HOUR_END
+
+
+def _dedup_key(store_id: str, title: str, body: str) -> str:
+    raw = f"{store_id}:{title}:{body[:60]}"
+    return hashlib.md5(raw.encode()).hexdigest()[:12]
+
+
+def _is_duplicate(key: str) -> bool:
+    """True si esta alerta ya fue enviada en la última hora."""
+    last_sent = _alert_dedup.get(key)
+    if last_sent and (time.monotonic() - last_sent) < _DEDUP_WINDOW_SECONDS:
+        return True
+    _alert_dedup[key] = time.monotonic()
+    return False
 
 
 def _get_chat_id(store_id: str) -> str:
@@ -88,7 +122,23 @@ def send_telegram(store_id: str, text: str) -> bool:
 
 
 def send_alert(store_id: str, title: str, body: str, urgent: bool = False) -> bool:
-    """Envía una alerta formateada."""
+    """
+    Envía una alerta formateada con deduplicación.
+    Si la misma alerta (mismo store + title + inicio del body) se envió en la
+    última hora, se descarta silenciosamente para evitar spam al encargado.
+    """
+    key = _dedup_key(store_id, title, body)
+    if _is_duplicate(key):
+        print(f"[notifier] Alerta duplicada suprimida: {title[:40]}")
+        return True  # no es un error — deliberadamente omitida
+
+    # Las alertas no urgentes se silencian fuera del horario comercial.
+    # El encargado no debe recibir notificaciones secundarias a las 3am.
+    # Las URGENTES siempre pasan — un producto que caduca hoy no puede esperar.
+    if not urgent and _is_quiet_hours():
+        print(f"[notifier] Alerta no urgente diferida (horario de silencio 22-07h): {title[:40]}")
+        return True  # omitida intencionalmente, el scheduler la reintentará en horario laboral
+
     prefix = "URGENTE: " if urgent else ""
     message = f"{prefix}{title}\n\n{body}"
     return send_telegram(store_id, message)

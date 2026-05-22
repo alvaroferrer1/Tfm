@@ -27,6 +27,12 @@ logger = logging.getLogger("mermaops.consensus")
 
 _ACTION_ENUM = ["rebajar", "retirar", "donar", "revisar", "reponer", "ok"]
 
+# Categorías donde la perspectiva de seguridad alimentaria pesa más.
+# En carne/pescado un error cuesta salud — el voto de seguridad se amplifica.
+_SAFETY_DOMINANT = {"carne", "pescado", "marisco", "lacteos"}
+# Categorías donde el riesgo sanitario es bajo — rentabilidad pesa más.
+_PROFIT_DOMINANT = {"conservas", "bebidas", "legumbres", "congelados"}
+
 # Roles del debate Jeffrey — razonamiento secuencial, cada uno ve el debate previo
 _DEBATE_ROLES = [
     {
@@ -317,6 +323,25 @@ def reach_consensus(
             logger.error(f"[consensus] Timeout en perspectivas para '{name}': {e}")
             return _fallback(product, days_left, qty, heuristic_score)
 
+    # ── Pesos por categoría — ajustar confianza antes de ponderar ────────────
+    # Para carne/pescado la seguridad alimentaria tiene más peso que la rentabilidad.
+    # Para conservas/bebidas la rentabilidad domina porque el riesgo sanitario es mínimo.
+    category = product.get("category", "").lower()
+    if category in _SAFETY_DOMINANT:
+        votes = [
+            {**v, "confidence": min(100, v["confidence"] + 20)}
+            if v["perspective"] == "seguridad" else v
+            for v in votes
+        ]
+        logger.debug(f"[consensus] '{name}': boost seguridad +20 (categoría {category})")
+    elif category in _PROFIT_DOMINANT:
+        votes = [
+            {**v, "confidence": min(100, v["confidence"] + 15)}
+            if v["perspective"] == "rentabilidad" else v
+            for v in votes
+        ]
+        logger.debug(f"[consensus] '{name}': boost rentabilidad +15 (categoría {category})")
+
     # ── Contar votos ──────────────────────────────────────────────────────────
 
     buckets: dict[str, list[dict]] = {}
@@ -331,29 +356,53 @@ def reach_consensus(
     )
     logger.info(f"[consensus] '{name}': {log_line} → {winner_action} ({winner_count}/3)")
 
-    # ── Mayoría (2/3 o 3/3) ──────────────────────────────────────────────────
+    # ── Unanimidad con alta confianza: fast-path sin arbiter ─────────────────
+    # Si los 3 agentes coinciden Y todos tienen confianza ≥70, el resultado es claro.
+    # Promedio ponderado por confianza en lugar de simple promedio.
 
     if winner_count >= 2:
         winning = buckets[winner_action]
-        avg_confidence = sum(v["confidence"] for v in winning) // len(winning)
-        avg_discount = sum(v["price_adjustment_pct"] for v in winning) // len(winning)
+
+        # Descuento ponderado por confianza — votos más seguros pesan más
+        total_confidence = sum(v["confidence"] for v in winning)
+        if total_confidence > 0:
+            weighted_discount = int(
+                sum(v["price_adjustment_pct"] * v["confidence"] for v in winning)
+                / total_confidence
+            )
+        else:
+            weighted_discount = sum(v["price_adjustment_pct"] for v in winning) // len(winning)
+
+        avg_confidence = total_confidence // len(winning)
+
+        # Boost de confianza cuando unanimidad (3/3) y todos seguros
+        if winner_count == 3 and avg_confidence >= 70:
+            avg_confidence = min(100, avg_confidence + 5)
+
         dissent = [v for v in votes if v["action"] != winner_action]
-        dissent_note = (
-            f" (Disiente {dissent[0]['perspective']}: {dissent[0]['reasoning'][:70]})"
-            if dissent else ""
+        dissent_note = ""
+        if dissent:
+            d = dissent[0]
+            dissent_note = (
+                f" (Disiente {d['perspective']} con confianza {d['confidence']}%: {d['reasoning'][:60]})"
+            )
+
+        vote_trace = " | ".join(
+            f"{v['perspective']}→{v['action']}({v['confidence']}%)" for v in votes
         )
+
         return _build_result(
             action=winner_action,
             confidence=avg_confidence,
-            price_adjustment_pct=avg_discount,
+            price_adjustment_pct=weighted_discount,
             reasoning=winning[0]["reasoning"] + dissent_note,
             thinking_summary=(
-                f"Consenso {winner_count}/3 — "
-                + " + ".join(v["perspective"] for v in winning)
+                f"Consenso {winner_count}/3 ponderado por confianza — {vote_trace}"
             ),
             days_left=days_left,
             total_value_at_risk=round(qty * float(product.get("price", 0)), 2),
             heuristic_score=heuristic_score,
+            vote_trace=votes,
         )
 
     # ── Empate: árbitro ───────────────────────────────────────────────────────
@@ -407,6 +456,7 @@ def _build_result(
     days_left: int,
     total_value_at_risk: float,
     heuristic_score: int,
+    vote_trace: list | None = None,
 ) -> dict:
     # El score final combina el heurístico con la confianza del consenso
     adjusted_score = min(100, int(heuristic_score * 0.7 + confidence * 0.3))
@@ -419,7 +469,7 @@ def _build_result(
     else:
         risk_level = "BAJO"
 
-    return {
+    result = {
         "risk_level": risk_level,
         "score": adjusted_score,
         "action": action,
@@ -430,6 +480,16 @@ def _build_result(
         "total_value_at_risk": total_value_at_risk,
         "consensus_used": True,
     }
+    if vote_trace:
+        result["vote_trace"] = [
+            {
+                "perspective": v["perspective"],
+                "action": v["action"],
+                "confidence": v["confidence"],
+            }
+            for v in vote_trace
+        ]
+    return result
 
 
 def _fallback(product: dict, days_left: int, qty: int, heuristic_score: int) -> dict:

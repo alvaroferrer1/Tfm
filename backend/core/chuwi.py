@@ -107,7 +107,8 @@ ERES UN AGENTE REAL — no un bot de comandos:
 
 PERSONALIDAD:
 - Directo, claro y práctico. Sin rodeos. Como un mensaje de WhatsApp profesional.
-- Sin asteriscos ni markdown — texto limpio.
+- NUNCA uses asteriscos, markdown, ni etiquetas HTML como <b>, <i>, </b>, </i>.
+- NUNCA pongas texto entre asteriscos (**texto**) ni entre guiones bajos (_texto_).
 - Guiones o números para listas. Mayúsculas para énfasis: CRÍTICO, REBAJAR, RETIRAR, URGENTE.
 - Español natural. Nunca robótico.
 - Cuando hay críticos sin resolver, lo dices claramente y das el pasillo exacto.
@@ -260,6 +261,11 @@ def _is_manager(user: Optional[dict]) -> bool:
 # ── Formato HTML para Telegram ────────────────────────────────────────────────
 
 def _md_to_html(text: str) -> str:
+    # Eliminar etiquetas HTML que Claude genere literalmente (antes de escape).
+    # Claude a veces emite <b>, </b>, <i>, </i> aunque se le diga que no.
+    # Si no las limpiamos, html.escape las convierte en &lt;b&gt; que Telegram
+    # muestra como texto literal <b>, que es exactamente el bug.
+    text = re.sub(r"</?(?:b|i|u|s|code|pre|em|strong)>", "", text)
     text = html.escape(text)
     placeholders: dict[str, str] = {}
     counter = 0
@@ -929,10 +935,17 @@ _INTENT_PATTERNS: list[tuple[str, list[str]]] = [
     ("registrar_donacion", [
         "donar", "donación", "donacion", "banco de alimentos", "banco alimentos",
         "food bank", "entidad benéfica", "ong",
+        "quiero donar", "podemos donar", "vamos a donar", "para donar",
+        "lo donamos", "donamos esto", "mandamos al banco",
     ]),
     ("registrar_merma", [
         "registrar merma", "apuntar merma", "anotar merma", "hubo merma",
         "se perdió", "se perdio", "tiré", "tire ",
+        "está malo", "esta malo", "se echó a perder", "echo a perder", "echó a perder",
+        "hay que tirar", "tirar esto", "para tirar", "ya no sirve",
+        "está en mal estado", "esta en mal estado", "se ha puesto mal",
+        "se pudrió", "se pudrio", "está podrido", "esta podrido",
+        "en mal estado", "deteriorado", "caducado", "ha caducado",
     ]),
     ("pedir_ruta", [
         "ruta", "iniciar ruta", "empezar ruta", "comenzar ruta",
@@ -1236,16 +1249,31 @@ def _clear_conv_state(user_id: str) -> None:
 # ── Respuesta de bienvenida ───────────────────────────────────────────────────
 
 def _welcome_text(name: str, is_manager: bool) -> str:
-    role_extra = (
-        "\n\nComo encargado tienes acceso a: proveedores, pedido semanal, "
-        "generar brief manualmente y ver estadísticas completas."
-        if is_manager else ""
-    )
+    if is_manager:
+        role_line = "🔑 <b>ENCARGADO</b> — acceso completo al sistema"
+        extra = (
+            "\n\nComo encargado puedes:\n"
+            "- Generar el brief del dia ahora mismo\n"
+            "- Ver ficha de proveedores y negociacion\n"
+            "- Pedido semanal basado en historico\n"
+            "- Impacto ESG y deduccion fiscal\n"
+            "- Simular paso del tiempo en la demo"
+        )
+    else:
+        role_line = "👷 <b>EMPLEADO</b> — operaciones del dia"
+        extra = (
+            "\n\nPuedo ayudarte con:\n"
+            "- Que hay que hacer ahora mismo\n"
+            "- La ruta guiada por pasillos\n"
+            "- Registrar que ya hiciste algo\n"
+            "- Informar de merma o donacion"
+        )
     return (
-        f"Hola {name}. Soy Chuwi, tu agente de MermaOps.\n\n"
-        f"Puedo ayudarte con cualquier cosa sobre la tienda: qué caduca hoy, "
-        f"qué acciones hay pendientes, cómo está la merma, qué rutas seguir...\n\n"
-        f"Escríbeme en lenguaje natural o usa el menú de abajo.{role_extra}"
+        f"Hola <b>{html.escape(name)}</b>. Soy Chuwi, el agente de MermaOps.\n\n"
+        f"{role_line}\n"
+        f"{extra}\n\n"
+        f"Escríbeme en lenguaje natural o usa el menu de abajo.\n"
+        f"<i>Escribe /yo para ver tu perfil completo.</i>"
     )
 
 
@@ -2277,6 +2305,7 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     keyboard = _main_menu_keyboard(manager)
     await update.message.reply_text(
         _welcome_text(tg_name, manager),
+        parse_mode=ParseMode.HTML,
         reply_markup=keyboard,
     )
 
@@ -3713,18 +3742,55 @@ async def _cmd_yo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
 
-    role_emoji = {"admin": "👑", "manager": "🔑", "staff": "👷"}.get(user.get("role", ""), "👷")
+    role = user.get("role", "staff")
+    role_info = {
+        "admin":   ("👑", "ADMIN",    "Acceso completo — todas las funciones del sistema"),
+        "manager": ("🔑", "ENCARGADO","Acceso completo — proveedores, informes, brief manual"),
+        "staff":   ("👷", "EMPLEADO", "Acciones diarias — ruta, estado, completar acciones"),
+    }.get(role, ("👷", role.upper(), "Personal de tienda"))
+    role_emoji, role_label, role_desc = role_info
+
+    # Mostrar qué puede y qué no puede hacer según su rol
+    if role in ("admin", "manager"):
+        access_lines = (
+            "Tienes acceso a TODO:\n"
+            "- /brief — generar brief manualmente\n"
+            "- /proveedores — ficha de proveedores\n"
+            "- /pedido — pedido semanal\n"
+            "- /esg — impacto CO2 y deducción fiscal\n"
+            "- /prediccion — riesgo a 7 dias\n"
+            "- /demo — simular paso del tiempo"
+        )
+    else:
+        access_lines = (
+            "Tienes acceso a operaciones del dia:\n"
+            "- /estado — semaforo de la tienda\n"
+            "- /acciones — que hacer ahora\n"
+            "- /ruta — ruta guiada por pasillos\n"
+            "- /merma — merma registrada\n"
+            "- /donaciones — impacto social\n"
+            "Necesitas rol encargado para: brief, proveedores, pedido, ESG"
+        )
+
     await update.message.reply_text(
-        f"👤 <b>Tu perfil</b>\n\n"
-        f"Nombre: {tg_name}\n"
-        f"Email: {user.get('email', '?')}\n"
-        f"Rol: {role_emoji} {user.get('role', '?').capitalize()}\n"
+        f"┌{'─' * 30}┐\n"
+        f"│  👤  <b>TU PERFIL</b>\n"
+        f"└{'─' * 30}┘\n\n"
+        f"Nombre: <b>{html.escape(tg_name)}</b>\n"
+        f"Email: {html.escape(user.get('email', '?'))}\n"
         f"ID Telegram: <code>{tg_id}</code>\n"
-        f"Estado: ✅ Vinculado con la app\n"
-        f"Tienda: {STORE_ID}\n\n"
-        "Comandos disponibles: /ayuda\n"
-        "Para desvincular escribe: <code>desconectar telegram</code>",
+        f"Tienda: <code>{STORE_ID}</code>\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Rol: {role_emoji} <b>{role_label}</b>\n"
+        f"<i>{role_desc}</i>\n\n"
+        f"{access_lines}\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"Estado: ✅ Vinculado\n"
+        f"Para desvincular: <code>desconectar telegram</code>",
         parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("⬅️ Menu", callback_data="cmd:menu"),
+        ]]),
     )
 
 

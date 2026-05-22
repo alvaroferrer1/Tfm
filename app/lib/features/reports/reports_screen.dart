@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -416,7 +414,7 @@ class _MonthlyReportsTab extends ConsumerWidget {
 class _MermaTab extends ConsumerWidget {
   const _MermaTab();
 
-  static void _exportCsv(BuildContext context, List<Map<String, dynamic>> logs) {
+  static Future<void> _exportCsv(BuildContext context, List<Map<String, dynamic>> logs) async {
     final lines = <String>['fecha,valor_perdido,cantidad_perdida,motivo'];
     for (final log in logs) {
       final date = log['date'] ?? '';
@@ -426,13 +424,28 @@ class _MermaTab extends ConsumerWidget {
       lines.add('$date,$value,$qty,$reason');
     }
     final csv = lines.join('\n');
-    Clipboard.setData(ClipboardData(text: csv));
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('CSV copiado al portapapeles (${logs.length} registros)'),
-        backgroundColor: const Color(0xFF059669),
-      ),
-    );
+    try {
+      final dir = await getTemporaryDirectory();
+      final now = DateTime.now();
+      final filename = 'merma_${now.year}${now.month.toString().padLeft(2, '0')}.csv';
+      final file = File('${dir.path}/$filename');
+      await file.writeAsString(csv);
+      await Share.shareXFiles(
+        [XFile(file.path, mimeType: 'text/csv')],
+        subject: 'Registro merma MermaOps — ${logs.length} entradas',
+      );
+    } catch (_) {
+      // Fallback: copy to clipboard
+      Clipboard.setData(ClipboardData(text: csv));
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('CSV copiado al portapapeles (${logs.length} registros)'),
+            backgroundColor: const Color(0xFF059669),
+          ),
+        );
+      }
+    }
   }
 
   @override
@@ -829,7 +842,36 @@ class _MermaBarChart extends StatelessWidget {
     }).toList();
 
     final maxVal = values.fold<double>(0, (a, b) => b > a ? b : a);
-    if (maxVal == 0) return const SizedBox.shrink();
+    if (maxVal == 0) {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFE5E7EB)),
+        ),
+        child: const Row(
+          children: [
+            Icon(Icons.bar_chart, color: Colors.grey, size: 28),
+            SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Merma diaria (€)',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                  SizedBox(height: 2),
+                  Text('Sin registros de merma en los últimos 14 días.',
+                      style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  Text('Las acciones completadas generan entradas automáticamente.',
+                      style: TextStyle(fontSize: 11, color: Colors.grey)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
 
     final todayKey = now.toIso8601String().substring(0, 10);
 

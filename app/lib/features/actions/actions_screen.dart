@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../core/api_service.dart';
 import '../../core/supabase_client.dart';
@@ -1239,16 +1240,17 @@ class _DiscountLabelSheet extends StatelessWidget {
                 const SizedBox(width: 12),
                 Expanded(
                   child: ElevatedButton.icon(
-                    icon: const Icon(Icons.print_outlined, size: 18),
-                    label: const Text('Imprimir'),
+                    icon: const Icon(Icons.share_outlined, size: 18),
+                    label: const Text('Compartir'),
                     onPressed: () {
                       Navigator.pop(context);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Etiqueta enviada a impresora'),
-                          backgroundColor: Color(0xFF059669),
-                        ),
-                      );
+                      final text = '🏷️ OFERTA — $productName\n'
+                          '${originalPrice > 0 ? 'Antes: ${originalPrice.toStringAsFixed(2)} €\n' : ''}'
+                          '-$discountPct% DESCUENTO\n'
+                          'Ahora: ${newPrice.toStringAsFixed(2)} €\n'
+                          '${expiryDate.isNotEmpty ? 'Caduca: $expiryDate\n' : ''}'
+                          'Precio especial por proximidad a caducidad.';
+                      Share.share(text);
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFFF59E0B),

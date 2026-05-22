@@ -862,3 +862,25 @@ def get_supervisor_decisions(store_id: str = None, limit: int = 50):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/llm/stats")
+def get_llm_stats():
+    """
+    Estadísticas de uso LLM en tiempo real: tokens, coste y ahorro por prompt caching.
+    Muestra el impacto económico real de las técnicas de optimización implementadas:
+    - Prompt caching (system + tool definitions): ~80% ahorro en tokens cacheados
+    - Token-efficient tools (beta): ~15% ahorro en overhead de definiciones
+    - Adaptive thinking: Claude gestiona el presupuesto de reasoning por sí solo
+    """
+    from backend.core.llm import get_cost_summary
+    stats = get_cost_summary()
+    return {
+        "session_stats": stats,
+        "techniques": {
+            "prompt_caching": "system prompt + 25 tool definitions cacheados (ephemeral, TTL 5min)",
+            "token_efficient_tools": "beta anthropic-2025-02-19 activo en agentic loop",
+            "adaptive_thinking": "Claude Opus 4.7 + Sonnet 4.6 con thinking adaptativo",
+            "parallel_tools": "ThreadPoolExecutor — hasta 5 tools en paralelo por iteración",
+        },
+    }

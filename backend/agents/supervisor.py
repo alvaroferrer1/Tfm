@@ -9,6 +9,7 @@ Identidad: Kuine es el agente orquestador. Chuwi es la interfaz con el encargado
 """
 from __future__ import annotations
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
 
 from backend.core import llm, database, memory as mem, knowledge
@@ -314,6 +315,11 @@ SUPERVISOR_TOOLS = [
             "properties": {},
             "required": [],
         },
+        # Cachear todas las definiciones de tools hasta este punto.
+        # En el loop agéntico de 20 iteraciones, la 2ª–20ª lectura cuesta 10% del precio normal.
+        # Ahorro real: ~80% en tokens de tool definitions por brief.
+        # Ref: https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching#tool-definitions
+        "cache_control": {"type": "ephemeral"},
     },
 ]
 
@@ -563,12 +569,21 @@ def run_scan(store_id: str, barcode: str, user_id: str) -> str:
     warehouse_qty = database.get_warehouse_stock(store_id, product["id"])
     historical_context = mem.recall_product_pattern(store_id, product["id"]) or ""
 
-    # Evaluación completa con extended thinking si el producto es crítico
-    risk = evaluator.evaluate(
-        product, batches, historical_context=historical_context, warehouse_qty=warehouse_qty
-    )
+    # Evaluador y stock son independientes entre sí — se ejecutan en paralelo.
+    # stock.decide_restocking es puro Python (<1ms). Evaluator puede usar extended thinking (2-5s).
+    # Ganar: el time to first response del scan se reduce al tiempo del evaluador solo.
+    risk: dict = {}
+    stock_dec: dict = {}
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="scan") as pool:
+        f_risk = pool.submit(
+            evaluator.evaluate, product, batches,
+            historical_context=historical_context, warehouse_qty=warehouse_qty
+        )
+        f_stock = pool.submit(stock.decide_restocking, product, batches, warehouse_qty)
+        risk = f_risk.result()
+        stock_dec = f_stock.result()
+
     price_rec = price.calculate(product, soonest, risk)
-    stock_dec = stock.decide_restocking(product, batches, warehouse_qty)
 
     # Validación adversarial
     validation = validator.validate_scan_result(product, soonest, risk, stock_dec["reason"], price_rec)
@@ -746,9 +761,10 @@ def run_intraday_check(store_id: str) -> str:
         return "Check de mediodia: sin acciones criticas ni pasillos sin revisar. Todo en orden."
 
     if critical:
-        message = reporter.generate_intraday_alert(critical)
-        notifier.send_telegram(store_id, message)
-        return message
+        message = reporter.generate_intraday_alert(critical, store_id=store_id)
+        if message:
+            notifier.send_telegram(store_id, message)
+        return message or "Check completado — brief reciente, alerta de mediodía omitida."
 
     return f"Check completado. {section_check['total_stale_pasillos']} pasillo(s) sin revisión reciente."
 

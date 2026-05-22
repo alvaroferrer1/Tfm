@@ -21,6 +21,19 @@ class _DemoControlScreenState extends ConsumerState<DemoControlScreen> {
   Map<String, dynamic>? _lastResult;
   Map<String, int>? _beforeState;
   Map<String, int>? _afterState;
+  List<Map<String, dynamic>> _criticalProducts = [];
+
+  Future<List<Map<String, dynamic>>> _fetchCriticalProducts() async {
+    final data = await supabase
+        .from('actions')
+        .select('action_type, priority_score, batches(expiry_date, quantity, products(name, pasillo, estanteria, nivel))')
+        .eq('store_id', storeId)
+        .eq('status', 'pending')
+        .gte('priority_score', 85)
+        .order('priority_score', ascending: false)
+        .limit(8);
+    return List<Map<String, dynamic>>.from(data);
+  }
 
   Future<Map<String, int>> _getCurrentState() async {
     final batches = await supabase
@@ -47,14 +60,13 @@ class _DemoControlScreenState extends ConsumerState<DemoControlScreen> {
       final before = await _getCurrentState();
       final result = await api.advanceDemo(days: _daysToAdvance);
       final after = await _getCurrentState();
+      final critical = await _fetchCriticalProducts();
 
-      // Notificación local inmediata
       final newCritical = (after['critico'] ?? 0) - (before['critico'] ?? 0);
       if (newCritical > 0) {
         await notifications.showDemoAdvanceNotification(_daysToAdvance, newCritical);
       }
 
-      // Refrescar providers globales para que dashboard y acciones vean los cambios
       ref.invalidate(dashboardProvider);
       ref.invalidate(pendingActionsProvider);
       ref.invalidate(completedActionsProvider);
@@ -63,6 +75,7 @@ class _DemoControlScreenState extends ConsumerState<DemoControlScreen> {
         _lastResult = result;
         _beforeState = before;
         _afterState = after;
+        _criticalProducts = critical;
         _loading = false;
       });
     } catch (e) {
@@ -99,12 +112,14 @@ class _DemoControlScreenState extends ConsumerState<DemoControlScreen> {
     try {
       await api.resetDemo();
       final after = await _getCurrentState();
+      final critical = await _fetchCriticalProducts();
       ref.invalidate(dashboardProvider);
       ref.invalidate(pendingActionsProvider);
       ref.invalidate(completedActionsProvider);
       setState(() {
         _afterState = after;
         _beforeState = null;
+        _criticalProducts = critical;
         _lastResult = {'ok': true, 'summary': {'estado': 'reiniciado'}};
         _loading = false;
       });
@@ -327,6 +342,108 @@ class _DemoControlScreenState extends ConsumerState<DemoControlScreen> {
                   ),
                 ),
               ),
+            ],
+
+            // Productos críticos actuales
+            if (_criticalProducts.isNotEmpty) ...[
+              const SizedBox(height: 20),
+              Text('Productos críticos ahora',
+                  style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 10),
+              ..._criticalProducts.map((action) {
+                final batch = action['batches'] as Map<String, dynamic>?;
+                final product = batch?['products'] as Map<String, dynamic>?;
+                final name = product?['name'] as String? ?? 'Producto';
+                final pasillo = product?['pasillo'] as String? ?? '?';
+                final est = product?['estanteria'] as String? ?? '?';
+                final nivel = product?['nivel'] as String? ?? '?';
+                final expiry = batch?['expiry_date'] as String? ?? '';
+                final qty = batch?['quantity'] as int? ?? 0;
+                final score = action['priority_score'] as int? ?? 0;
+                final actionType = (action['action_type'] as String? ?? '').toUpperCase();
+                int daysLeft = 999;
+                try {
+                  daysLeft = DateTime.parse(expiry).difference(DateTime.now()).inDays;
+                } catch (_) {}
+                final urgencyColor = daysLeft <= 0
+                    ? Colors.red.shade900
+                    : daysLeft <= 2
+                        ? Colors.red
+                        : Colors.orange;
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: urgencyColor.withValues(alpha: 0.06),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: urgencyColor.withValues(alpha: 0.3)),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 6, height: 40,
+                        decoration: BoxDecoration(
+                          color: urgencyColor,
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(name,
+                                style: const TextStyle(
+                                    fontSize: 13, fontWeight: FontWeight.w700)),
+                            const SizedBox(height: 2),
+                            Text(
+                              'Pasillo $pasillo — E$est N$nivel | $qty uds',
+                              style: const TextStyle(fontSize: 11, color: Colors.grey),
+                            ),
+                            Text(
+                              daysLeft <= 0
+                                  ? 'Caducado'
+                                  : daysLeft == 1
+                                      ? 'Caduca mañana'
+                                      : 'Caduca en $daysLeft días',
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  color: urgencyColor,
+                                  fontWeight: FontWeight.w600),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: urgencyColor.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              actionType,
+                              style: TextStyle(
+                                  fontSize: 10,
+                                  color: urgencyColor,
+                                  fontWeight: FontWeight.w700),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text('$score/100',
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  color: urgencyColor,
+                                  fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                    ],
+                  ),
+                );
+              }),
             ],
 
             // Summary from API

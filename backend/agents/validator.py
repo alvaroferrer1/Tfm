@@ -79,6 +79,50 @@ def _check_contradictions(
             "Requiere retirada o donación inmediata."
         )
 
+    # Contradicción 8: score extremadamente alto pero acción blanda
+    score = risk.get("score", 0)
+    if score >= 95 and action in ("revisar", "ok"):
+        issues.append(
+            f"DIVERGENCIA SCORE-ACCIÓN: Score de riesgo {score}/100 (crítico extremo) "
+            "pero acción propuesta es '{action}'. Scores ≥95 exigen retirada o donación inmediata."
+        )
+
+    # Contradicción 9: cantidad en tienda = 0 y se propone rebajar (no hay nada que rebajar)
+    if qty == 0 and action == "rebajar":
+        issues.append(
+            "ACCIÓN IMPOSIBLE: Se propone rebajar un producto con 0 unidades en tienda. "
+            "Sin stock visible no hay etiqueta que modificar. Revisar estado del lote."
+        )
+
+    # Contradicción 10: descuento superior al 70% sin riesgo CRÍTICO (pérdida innecesaria)
+    if price_pct > 70 and risk_level not in ("CRÍTICO",) and days_left > 1:
+        issues.append(
+            f"DESCUENTO EXCESIVO: {price_pct}% de descuento con riesgo {risk_level} y {days_left} días. "
+            "Un descuento >70% solo se justifica con riesgo CRÍTICO y caducidad inmediata."
+        )
+
+    # Contradicción 11: cantidad muy alta en tienda (>50 uds) con caducidad hoy sin donación
+    if qty > 50 and days_left <= 0 and action != "donar":
+        issues.append(
+            f"OPORTUNIDAD DE DONACIÓN PERDIDA: {qty} unidades caducadas hoy sin proponer donación. "
+            "Volúmenes >50 uds son candidatos prioritarios para banco de alimentos (Ley 49/2002)."
+        )
+
+    # Contradicción 12: acción de reposición cuando el riesgo es ALTO o CRÍTICO
+    if action == "reponer" and risk_level in ("ALTO", "CRÍTICO"):
+        issues.append(
+            f"REPOSICIÓN EN SITUACIÓN DE RIESGO {risk_level}: Reponer aumenta el stock en un lote "
+            "que ya está en situación crítica. Viola FEFO — el nuevo stock quedaría detrás del crítico."
+        )
+
+    # Contradicción 13: precio nuevo idéntico al original (descuento no aplicado)
+    original_price = product.get("price", 0)
+    if action == "rebajar" and new_price > 0 and original_price > 0 and abs(new_price - original_price) < 0.01:
+        issues.append(
+            f"REBAJA SIN EFECTO: El precio nuevo ({new_price}€) es idéntico al original ({original_price}€). "
+            "La acción 'rebajar' requiere reducción real del precio en el sistema."
+        )
+
     return issues
 
 

@@ -30,7 +30,9 @@ class TestBaseDiscount:
 class TestCalculate:
     def test_basic_discount_tomorrow(self, product_panaderia, batch_expiring_tomorrow):
         result = calculate(product_panaderia, batch_expiring_tomorrow, {"risk_level": "CRÍTICO", "price_adjustment_pct": 0})
-        assert result["discount_pct"] == 50
+        # panaderia tiene multiplicador 1.15 → 50% base × 1.15 = 57%
+        assert result["discount_pct"] == 57
+        assert result["category_multiplier"] == 1.15
         assert result["new_price"] < product_panaderia["price"]
         assert result["new_price"] >= product_panaderia["cost"]
 

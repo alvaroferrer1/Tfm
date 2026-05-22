@@ -604,7 +604,12 @@ def run_agentic_loop(
         if thinking_param:
             create_kwargs["thinking"] = thinking_param
 
-        response = client.messages.create(**create_kwargs)
+        # Token-efficient tool use: formato compacto de tool definitions (~15% ahorro).
+        # Ref: https://docs.anthropic.com/en/docs/build-with-claude/tool-use/token-efficient-tool-use
+        response = client.messages.create(
+            **create_kwargs,
+            extra_headers={"anthropic-beta": "token-efficient-tools-2025-02-19"},
+        )
 
         # Si Claude llegó a una conclusión final, terminamos
         if response.stop_reason == "end_turn":

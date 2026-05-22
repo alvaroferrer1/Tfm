@@ -1,5 +1,5 @@
 # MermaOps — comandos de desarrollo
-.PHONY: install run seed test test-fast lint clean check migrate
+.PHONY: install run seed test test-fast lint clean check migrate demo-ready hero
 
 # Arrancar el sistema con guia de pruebas (verifica + arranca + guia)
 start:
@@ -82,13 +82,47 @@ demo-reset:
 
 # Arrancar app Flutter con credenciales desde .env
 # Requiere: flutter instalado, emulador Android o dispositivo conectado
-# Cambia API_URL por la IP local de tu máquina: ipconfig | findstr IPv4
 flutter-run:
 	python scripts/run_app.py
 
 # Lanza backend + emulador + app Flutter todo en un comando
 app:
 	python scripts/run_app.py
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WEB — Compilar y servir la app Flutter como web (sin emulador)
+# Estrategia para la defensa: backend local + web en Chrome + Telegram en móvil
+# ─────────────────────────────────────────────────────────────────────────────
+flutter-web:
+	python scripts/build_web.py
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DEMO DEFENSA — arranca TODO para la presentación sin emulador:
+#   Terminal 1: make demo-defensa  (backend + web)
+#   Móvil real: Telegram con @ChuwiMermaOpsBot
+# ─────────────────────────────────────────────────────────────────────────────
+demo-defensa:
+	@echo ""
+	@echo "=== MermaOps — Demo defensa TFM ==="
+	@echo ""
+	@python scripts/start.py --seed
+	@echo ""
+	@echo "Siguiente paso: make flutter-web (en otro terminal)"
+	@echo "Móvil: escribe en @ChuwiMermaOpsBot para activar Chuwi"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DEMO — ejecutar esto la mañana de la presentación
+#   1. Verifica .env + Supabase + Telegram
+#   2. Carga datos si las tablas están vacías (seed automático)
+#   3. Arranca el backend en puerto 8001
+#   4. Imprime el comando flutter run con las credenciales ya rellenas
+# ─────────────────────────────────────────────────────────────────────────────
+demo-ready:
+	python scripts/start.py --seed
+
+# Regenerar la imagen hero del README
+hero:
+	python scripts/generate_hero.py
 
 # Estado de la tienda demo
 status:

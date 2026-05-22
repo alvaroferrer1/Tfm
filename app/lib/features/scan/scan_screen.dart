@@ -1,7 +1,10 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../core/api_service.dart';
@@ -153,6 +156,94 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
     }
   }
 
+  Future<void> _analyzePhoto({ImageSource source = ImageSource.camera}) async {
+    if (ref.read(_scanLoadingProvider)) return;
+    final picker = ImagePicker();
+    final picked = await picker.pickImage(
+      source: source,
+      maxWidth: 1200,
+      imageQuality: 85,
+    );
+    if (picked == null) return;
+
+    ref.read(_scanLoadingProvider.notifier).state = true;
+    ref.read(_scanResultProvider.notifier).state = null;
+    ref.read(_lastBarcodeProvider.notifier).state = '📷 Foto';
+    _controller?.stop();
+    setState(() => _cameraActive = false);
+
+    try {
+      final bytes = await picked.readAsBytes();
+      final base64Image = base64Encode(bytes);
+      final result = await api.analyzeProductImage(imageBase64: base64Image);
+      final estado = result['estado'] as String? ?? '';
+      final accion = result['accion_recomendada'] as String? ?? '';
+      final razon = result['razonamiento'] as String? ?? '';
+      final confianza = result['confianza_pct'];
+      final fechaVisible = result['fecha_visible'] as String? ?? '';
+      final sb = StringBuffer();
+      if (estado.isNotEmpty) sb.writeln('Estado: ${estado.toUpperCase()}');
+      if (confianza != null) sb.writeln('Confianza: $confianza%');
+      if (accion.isNotEmpty) sb.writeln('\nRecomendación: $accion');
+      if (razon.isNotEmpty) sb.writeln('\n$razon');
+      if (fechaVisible.isNotEmpty) sb.writeln('\nFecha visible en etiqueta: $fechaVisible');
+      ref.read(_scanResultProvider.notifier).state = sb.toString().trim();
+    } catch (e) {
+      ref.read(_scanResultProvider.notifier).state = 'Error al analizar la foto: $e';
+    } finally {
+      ref.read(_scanLoadingProvider.notifier).state = false;
+    }
+  }
+
+  void _showPhotoOptions(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.grey.shade900,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Text(
+                'Analizar producto con IA visual',
+                style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w600),
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: Text(
+                'Kuine detecta frescura, daños y fecha de caducidad visible en la etiqueta',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white54, fontSize: 12),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.camera_alt, color: Colors.white),
+              title: const Text('Hacer foto ahora', style: TextStyle(color: Colors.white)),
+              onTap: () {
+                Navigator.pop(context);
+                _analyzePhoto(source: ImageSource.camera);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined, color: Colors.white),
+              title: const Text('Elegir de galería', style: TextStyle(color: Colors.white)),
+              onTap: () {
+                Navigator.pop(context);
+                _analyzePhoto(source: ImageSource.gallery);
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final result = ref.watch(_scanResultProvider);
@@ -188,6 +279,11 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
               onPressed: _toggleTorch,
               tooltip: _torchOn ? 'Apagar linterna' : 'Encender linterna',
             ),
+          IconButton(
+            icon: const Icon(Icons.photo_camera_outlined),
+            tooltip: 'Analizar foto con IA',
+            onPressed: loading ? null : () => _showPhotoOptions(context),
+          ),
           if (result != null || !_cameraActive || cameraError != null)
             IconButton(
               icon: const Icon(Icons.refresh),

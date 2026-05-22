@@ -41,12 +41,36 @@ def generate_daily_brief(
             f"| {days} dias | ACCION: {action.upper()} | {reasoning}"
         )
 
+    # Tendencia automática respecto al día anterior (sin coste de LLM)
+    trend_line = ""
+    try:
+        all_briefs = database.get_db().table("daily_briefs") \
+            .select("date,critical_count,value_at_risk") \
+            .eq("store_id", store_id) \
+            .order("date", desc=True) \
+            .limit(2) \
+            .execute()
+        briefs_data = all_briefs.data or []
+        if len(briefs_data) >= 1:
+            prev = briefs_data[0]  # el más reciente (ayer o antes)
+            prev_critical = prev.get("critical_count", 0) or 0
+            prev_value = float(prev.get("value_at_risk", 0) or 0)
+            delta_critical = len(critical) - prev_critical
+            trend_symbol = "↑" if delta_critical > 0 else ("↓" if delta_critical < 0 else "=")
+            trend_line = (
+                f"\nTENDENCIA vs dia anterior: {len(critical)} criticos hoy {trend_symbol} "
+                f"(antes: {prev_critical}) | Valor en riesgo: {round(total_value, 2)}€ "
+                f"{'(sube)' if total_value > prev_value else '(baja)' if total_value < prev_value else '(igual)'}"
+            )
+    except Exception:
+        pass  # Tendencia opcional, no bloquea el brief
+
     context = f"""Fecha: {today.strftime('%A %d de %B de %Y')}
 Total productos a gestionar hoy: {len(risk_reports)}
 Situacion critica: {len(critical)} productos (requieren accion inmediata)
 Situacion alta: {len(high)} productos (requieren accion antes del mediodia)
 Valor total en riesgo: {round(total_value, 2)} euros
-Tiempo estimado de ruta: {daily_route.get('estimated_minutes', 0)} minutos
+Tiempo estimado de ruta: {daily_route.get('estimated_minutes', 0)} minutos{trend_line}
 
 PRODUCTOS CRITICOS HOY:
 {chr(10).join(critical_lines) if critical_lines else "Ninguno"}
@@ -89,8 +113,35 @@ CONTEXTO HISTORICO (patrones anteriores):
     return brief_text
 
 
-def generate_intraday_alert(critical_actions: list[dict]) -> str:
-    """Alerta de mediodía para acciones críticas sin resolver."""
+def generate_intraday_alert(critical_actions: list[dict], store_id: str = "") -> str:
+    """
+    Alerta de mediodía para acciones críticas sin resolver.
+    Retorna "" si no hay acciones críticas o si el último brief fue hace menos de 3h
+    (para evitar spam cuando el scheduler la dispara muy seguido tras el brief).
+    """
+    if not critical_actions:
+        return ""
+
+    # No generar alerta si el brief de la mañana fue hace menos de 3 horas
+    if store_id:
+        try:
+            from datetime import datetime, timezone
+            brief = database.get_latest_brief(store_id)
+            if brief:
+                brief_ts = brief.get("created_at") or brief.get("date", "")
+                if brief_ts:
+                    if isinstance(brief_ts, str):
+                        brief_dt = datetime.fromisoformat(brief_ts.replace("Z", "+00:00"))
+                    else:
+                        brief_dt = brief_ts
+                    if brief_dt.tzinfo is None:
+                        brief_dt = brief_dt.replace(tzinfo=timezone.utc)
+                    elapsed_hours = (datetime.now(timezone.utc) - brief_dt).total_seconds() / 3600
+                    if elapsed_hours < 3:
+                        return ""  # brief muy reciente — el encargado lo acaba de leer
+        except Exception:
+            pass  # silencioso — la guardia es opcional
+
     items = []
     for action in critical_actions[:6]:
         batch_info = action.get("batches", {})

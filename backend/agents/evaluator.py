@@ -34,6 +34,29 @@ def _base_score(days_left: int) -> int:
     return 5
 
 
+def _safe_days_left(expiry_str: str) -> int:
+    """Returns days until expiry, or 999 on parse error."""
+    try:
+        return (date.fromisoformat(expiry_str) - date.today()).days
+    except (ValueError, TypeError):
+        return 999
+
+
+def _multi_batch_factor(batches: list[dict], critical_window_days: int = 3) -> float:
+    """
+    Amplification factor when multiple batches of the same product expire soon.
+    Each additional batch expiring within critical_window_days adds 15% more risk,
+    capped at 1.60 (4 or more batches simultaneously critical).
+    Economic intuition: if you have 3 batches of carne all expiring in 2 days,
+    it's not just 1× harder to clear — it's geometrically harder.
+    """
+    critical_count = sum(
+        1 for b in batches
+        if _safe_days_left(b.get("expiry_date", "")) <= critical_window_days
+    )
+    return min(1.60, 1.0 + 0.15 * max(0, critical_count - 1))
+
+
 def _risk_level(score: int) -> str:
     if score >= 85:
         return "CRÍTICO"
@@ -45,10 +68,21 @@ def _risk_level(score: int) -> str:
 
 
 def _action_from_risk(risk_level: str, days_left: int, category: str) -> str:
+    """
+    Acción operativa basada en nivel de riesgo, días restantes y categoría.
+    La categoría es relevante para caducidades ≤0: el pan caducado se dona,
+    la carne/pescado se retira (no es seguro donar producto cárnico expirado).
+    """
+    _DONATABLE_EXPIRED = {"panaderia", "bolleria", "fruta", "verdura", "legumbres"}
+    _cat = category.lower() if category else ""
+
     if days_left <= 0:
-        return "retirar"
+        # Normativa: pan y frescos vegetales se pueden donar si caducan hoy
+        # Carne, pescado, lácteos: retirar siempre por seguridad alimentaria (CE 178/2002)
+        return "donar" if _cat in _DONATABLE_EXPIRED else "retirar"
+
     if risk_level == "CRÍTICO":
-        return "rebajar" if days_left >= 1 else "retirar"
+        return "rebajar"
     if risk_level == "ALTO":
         return "rebajar"
     if risk_level == "MEDIO":
@@ -228,7 +262,14 @@ def evaluate(
     cost = float(product.get("cost", 0))
     category = product.get("category", "general").lower()
     name = product.get("name", "desconocido")
-    total_value_at_risk = round(qty * price, 2)
+
+    # Valor económico real en riesgo: todos los lotes que caducan en ≤7 días,
+    # no solo el lote más próximo. El valor total determinará si se activa consenso.
+    near_expiry_qty = sum(
+        b.get("quantity", 0) for b in batches
+        if _safe_days_left(b.get("expiry_date", "")) <= 7
+    )
+    total_value_at_risk = round(near_expiry_qty * price, 2)
 
     # Puntuación heurística base
     base = _base_score(days_left)
@@ -240,7 +281,11 @@ def evaluate(
     # Almacén lleno + poco tiempo = doble problema
     warehouse_factor = 1.1 if warehouse_qty > 0 and days_left <= 3 else 1.0
 
-    raw_score = base * multiplier * value_factor * warehouse_factor
+    # Múltiples lotes críticos simultáneos — el riesgo se amplifica geométricamente
+    # porque cada lote adicional exige tiempo de gestión y espacio en tienda
+    mb_factor = _multi_batch_factor(batches)
+
+    raw_score = base * multiplier * value_factor * warehouse_factor * mb_factor
     heuristic_score = min(100, int(raw_score))
     heuristic_level = _risk_level(heuristic_score)
 
@@ -379,6 +424,10 @@ Responde con el JSON de la herramienta structured_output."""
         "MEDIO": 20,
         "BAJO": 0,
     }
+    critical_batches = sum(
+        1 for b in batches
+        if _safe_days_left(b.get("expiry_date", "")) <= 3
+    )
     return {
         "risk_level": heuristic_level,
         "score": heuristic_score,
@@ -387,10 +436,12 @@ Responde con el JSON de la herramienta structured_output."""
         "reasoning": (
             f"{days_left} días hasta caducidad, {qty} unidades en tienda, "
             f"valor en riesgo {total_value_at_risk} euros."
+            + (f" ({critical_batches} lotes críticos simultáneos)" if critical_batches > 1 else "")
         ),
         "thinking_summary": "",
         "days_left": days_left,
         "total_value_at_risk": total_value_at_risk,
+        "critical_batches_count": critical_batches,
     }
 
 

@@ -52,7 +52,7 @@ Producto próximo a caducar
 | Precisión del sistema de evaluación | **100%** (5/5 casos) |
 | Mejora sobre baseline sin IA | **+83.3 puntos porcentuales** |
 | Baseline (clasificación aleatoria) | 16.7% |
-| Tests automatizados | **323 / 323** (< 1 s) |
+| Tests automatizados | **439 / 439** (< 1 s) |
 | Robustez adversarial | **23 / 23** ataques neutralizados |
 | Modelos Claude integrados | 3 (Haiku 4.5, Sonnet 4.6, Opus 4.7) |
 | Agentes especializados | 11 |
@@ -72,7 +72,7 @@ Kuine es el cerebro del sistema. Ejecuta un **loop agéntico con 25 herramientas
 Kuine (Opus 4.7, adaptive thinking, 25 tools, 20 iter)
 ├── Evaluator  (Sonnet 4.6, extended thinking)
 │   └── Consenso 3 instancias en paralelo — score ≥ 90 para casos extremos
-├── Validator  (Sonnet 4.6) — 23 ataques adversariales, 100% bloqueados
+├── Validator  (Sonnet 4.6) — 29 ataques adversariales, 100% bloqueados
 ├── Price      (Haiku 4.5) — descuento exacto sobre coste
 ├── Stock      (Haiku 4.5) — reposición FEFO
 ├── Route      (Sonnet 4.6) — ruta optimizada por pasillos
@@ -107,7 +107,7 @@ Chuwi no responde comandos con if/else. **Razona, recuerda y actúa de forma pro
 | Prompt caching | `cache_control: ephemeral` en todos los prompts | 90% ahorro tokens |
 | Structured output (tool_use) | JSON garantizado en Vision y Evaluator | vision.py, evaluator.py |
 | Multi-agent consensus | 3 instancias paralelas, mayoría — casos extremos | consensus.py |
-| Adversarial robustness | 23 ataques: injection, falsos datos, bypass FEFO | validator.py + tests |
+| Adversarial robustness | 29 ataques: injection, falsos datos, bypass FEFO | validator.py + tests |
 | OTEL observability | Langfuse + AnthropicInstrumentor | auto-instrumentado |
 | FEFO enforcement | Validator bloquea decisiones que ignoran orden | normativa EU |
 | Streaming async | AsyncAnthropic + Telegram edit progresivo | chuwi.py |
@@ -126,7 +126,7 @@ Mensajería      Telegram Bot API · python-telegram-bot 21.x
 Observabilidad  Langfuse · OpenTelemetry · AnthropicInstrumentor
 Datos externos  Open-Meteo (clima) · OpenFoodFacts (productos)
 Voz             Google Speech Recognition (sin API key adicional)
-Tests           pytest · 323 tests deterministas · < 1 s
+Tests           pytest · 439 tests deterministas · < 1 s
 ```
 
 ---
@@ -140,7 +140,7 @@ mermaops/
 │   │   ├── supervisor.py      # Kuine — orquestador, 25 tools, adaptive thinking
 │   │   ├── evaluator.py       # Análisis de riesgo con extended thinking
 │   │   ├── consensus.py       # Consenso 3 instancias paralelas
-│   │   ├── validator.py       # Validación adversarial (23 ataques)
+│   │   ├── validator.py       # Validación adversarial (29 ataques)
 │   │   ├── price.py           # Cálculo de descuentos sobre coste
 │   │   ├── stock.py           # Reposición FEFO
 │   │   ├── route.py           # Ruta diaria optimizada por pasillos
@@ -165,7 +165,7 @@ mermaops/
 │   │   ├── seed.py            # Datos demo Super Martínez
 │   │   ├── advance_demo.py    # Simulación temporal (make advance N=3)
 │   │   └── demo_actions.py    # Acciones + merma + donaciones + comparativa tiendas
-│   └── tests/                 # 323 tests (unitarios + adversariales + integración)
+│   └── tests/                 # 439 tests (unitarios + adversariales + integración)
 ├── app/                       # Flutter (6 pantallas + nav)
 │   └── lib/
 │       ├── features/
@@ -270,7 +270,7 @@ make advance N=2    # simula 2 días de paso del tiempo
 make demo-reset     # vuelve al estado inicial
 make brief          # fuerza generación de brief ahora
 make flutter-run    # imprime el comando flutter run con vars del .env
-make test           # ejecuta los 323 tests
+make test           # ejecuta los 439 tests
 make test-fast      # tests sin red ni LLM
 make lint           # flake8
 ```
@@ -385,17 +385,17 @@ Precisión baseline: 16.7%
 Mejora:            +83.3 pp
 ```
 
-### Adversarial (23 ataques)
+### Adversarial (29 ataques)
 
 Ataques testados: inyección de prompt, datos falsos, precio < coste, fechas inconsistentes, proveedores ficticios, escalación falsa, bypass FEFO, desbordamiento de stock, instrucciones contradictorias entre agentes.
 
-**Resultado: 23/23 bloqueados por el Validator** — sin ninguna acción incorrecta llegando al usuario.
+**Resultado: 29/29 bloqueados por el Validator** — sin ninguna acción incorrecta llegando al usuario.
 
 ### Tests
 
 ```bash
 python -m pytest backend/tests/ -q
-# 323 passed in < 1s — sin conexión a Supabase ni llamadas LLM
+# 439 passed in < 1s — sin conexión a Supabase ni llamadas LLM
 ```
 
 ---

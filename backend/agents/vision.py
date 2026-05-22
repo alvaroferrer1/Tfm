@@ -15,6 +15,7 @@ para retail pequeño con Claude Vision.
 from __future__ import annotations
 import base64
 import logging
+from datetime import date, timedelta
 from backend.core import llm
 
 logger = logging.getLogger("mermaops.vision")
@@ -200,16 +201,44 @@ La acción debe ser inmediatamente ejecutable por un empleado de tienda."""
 
     logger.info(f"[vision] Análisis completado para '{product_name}': {structured.get('condition')} / {structured.get('action')}")
 
+    visible_date_str = structured.get("visible_date") or None
+    action = structured.get("action", "revisar")
+
+    # Comparar fecha visible en la foto con los días que dice el sistema
+    date_matches: bool | None = None
+    if visible_date_str and days_left >= 0:
+        try:
+            visible_dt = date.fromisoformat(visible_date_str)
+            expected_dt = date.today() + timedelta(days=days_left)
+            diff = abs((visible_dt - expected_dt).days)
+            date_matches = diff <= 1  # Tolerancia de 1 día para errores de escaneo
+            if diff > 3:
+                logger.warning(
+                    f"[vision] Fecha visible '{visible_date_str}' diverge del sistema "
+                    f"({days_left} días restantes) en {diff} días — posible error de datos"
+                )
+        except (ValueError, TypeError):
+            pass
+
+    # CO2 estimado en caso de retirada — la tabla _CO2_KG existe desde el inicio
+    # pero nunca se había usado en el resultado de análisis
+    co2_kg_wasted: float | None = None
+    if action == "retirar" and category:
+        weight_kg = 0.4  # peso medio estimado por unidad (400g) si no hay dato
+        co2_factor = _get_co2_factor(category)
+        co2_kg_wasted = round(weight_kg * co2_factor, 3)
+
     result = {
         "condition": structured.get("condition", "no_identificado"),
         "issues": structured.get("issues", []),
-        "action": structured.get("action", "revisar"),
+        "action": action,
         "urgency": structured.get("urgency", "normal"),
-        "visible_date": structured.get("visible_date") or None,
-        "date_matches": None,
+        "visible_date": visible_date_str,
+        "date_matches": date_matches,
         "confidence": structured.get("confidence", 50),
         "diagnosis": structured.get("diagnosis", ""),
         "full_analysis": structured.get("full_analysis", ""),
+        "co2_kg_wasted": co2_kg_wasted,
     }
 
     return result
@@ -234,34 +263,42 @@ def analyze_from_telegram_file(
 
 def format_vision_result(result: dict) -> str:
     """Formatea el resultado de visión para Telegram (texto limpio, sin markdown)."""
-    condition_emoji = {
+    # "danado" es el valor del enum (sin tilde — JSON normalizado), "dañado" es el display
+    condition_label = {
         "bueno": "VERDE",
         "deteriorado": "AMARILLO",
-        "dañado": "NARANJA",
+        "danado": "NARANJA",       # enum value sin tilde
+        "dañado": "NARANJA",       # por si Claude devuelve con tilde
         "posiblemente_expirado": "ROJO",
         "no_identificado": "GRIS",
     }
-    estado = condition_emoji.get(result["condition"], "GRIS")
+    estado = condition_label.get(result["condition"], "GRIS")
 
     lines = [
         f"ANALISIS VISUAL — {estado}",
         "",
         f"Estado: {result['condition'].upper().replace('_', ' ')}",
-        f"Acción recomendada: {result['action'].upper()}",
+        f"Accion recomendada: {result['action'].upper()}",
         f"Urgencia: {result['urgency'].upper()}",
     ]
 
-    if result["issues"]:
-        lines.append(f"Problemas detectados: {', '.join(result['issues'])}")
+    if result.get("issues"):
+        lines.append(f"Problemas: {', '.join(result['issues'])}")
 
-    if result["visible_date"]:
-        lines.append(f"Fecha visible en etiqueta: {result['visible_date']}")
+    if result.get("visible_date"):
+        date_ok = result.get("date_matches")
+        match_note = ""
+        if date_ok is True:
+            match_note = " (coincide con sistema)"
+        elif date_ok is False:
+            match_note = " — DISCREPANCIA CON SISTEMA"
+        lines.append(f"Fecha en etiqueta: {result['visible_date']}{match_note}")
 
-    lines += [
-        "",
-        result["diagnosis"],
-        "",
-        f"Confianza del análisis: {result['confidence']}%",
-    ]
+    lines += ["", result.get("diagnosis", ""), ""]
+
+    if result.get("co2_kg_wasted") is not None:
+        lines.append(f"CO2 estimado si se retira: {result['co2_kg_wasted']} kg CO2eq")
+
+    lines.append(f"Confianza: {result.get('confidence', 0)}%")
 
     return "\n".join(lines)
