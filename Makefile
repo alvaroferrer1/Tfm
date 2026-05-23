@@ -1,5 +1,5 @@
 # MermaOps — comandos de desarrollo
-.PHONY: install run seed test test-fast lint clean check migrate demo-ready hero
+.PHONY: install run seed test test-fast lint clean check migrate demo-ready hero create-users
 
 # Arrancar el sistema con guia de pruebas (verifica + arranca + guia)
 start:
@@ -63,6 +63,10 @@ clean:
 	find . -name "*.pyc" -delete 2>/dev/null || true
 	rm -rf .tmp/
 
+# Crear los 3 usuarios de demo en Supabase (encargado / supervisor / admin)
+create-users:
+	python scripts/create_demo_users.py
+
 # Ver logs del servidor en tiempo real
 logs:
 	tail -f .tmp/mermaops.log 2>/dev/null || echo "Sin archivo de log"
@@ -119,6 +123,13 @@ demo-defensa:
 # ─────────────────────────────────────────────────────────────────────────────
 demo-ready:
 	python scripts/start.py --seed
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DEMO — Un solo comando arranca TODO y abre la presentación:
+#   Backend en :8001 + demo.html en Chrome + guía de presentación impresa
+# ─────────────────────────────────────────────────────────────────────────────
+demo:
+	python scripts/launch_demo.py
 
 # Regenerar la imagen hero del README
 hero:

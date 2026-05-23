@@ -74,7 +74,10 @@ class _ActionsScreenState extends ConsumerState<ActionsScreen>
       body: TabBarView(
         controller: _tabs,
         children: [
-          _PendingTab(onComplete: _showCompleteDialog),
+          _PendingTab(
+            onComplete: _showCompleteDialog,
+            onDonate: _showDonateDialog,
+          ),
           const _HistorialTab(),
         ],
       ),
@@ -343,6 +346,8 @@ class _ActionsScreenState extends ConsumerState<ActionsScreen>
     final product = batch?['products'] as Map<String, dynamic>?;
     final productName = product?['name'] as String? ?? 'Producto';
     final maxQty = batch?['quantity'] as int? ?? 1;
+    final price = (product?['price'] as num?)?.toDouble() ?? 0.0;
+    final actionType = action['action_type'] as String? ?? '';
 
     const entities = [
       'Banco de Alimentos de Madrid',
@@ -363,99 +368,211 @@ class _ActionsScreenState extends ConsumerState<ActionsScreen>
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (_) => StatefulBuilder(
-        builder: (ctx, setModalState) => Padding(
-          padding: EdgeInsets.fromLTRB(
-            16, 16, 16, MediaQuery.of(ctx).viewInsets.bottom + 16,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFD1FAE5),
-                      borderRadius: BorderRadius.circular(8),
+        builder: (ctx, setModalState) {
+          final qty = int.tryParse(qtyCtrl.text) ?? maxQty;
+          final totalValue = price * qty;
+          // Ley 49/2002: deducción fiscal del 35% por donaciones a entidades sin ánimo de lucro
+          final fiscalDeduction = totalValue * 0.35;
+
+          return SingleChildScrollView(
+            padding: EdgeInsets.fromLTRB(
+              16, 20, 16, MediaQuery.of(ctx).viewInsets.bottom + 20,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Header
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFD1FAE5),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(Icons.volunteer_activism,
+                          color: Color(0xFF059669), size: 22),
                     ),
-                    child: const Icon(Icons.volunteer_activism,
-                        color: Color(0xFF059669), size: 20),
-                  ),
-                  const SizedBox(width: 10),
-                  const Text(
-                    'Registrar donación',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 4),
-              Text(
-                productName,
-                style: const TextStyle(fontSize: 13, color: Colors.grey),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'Banco de alimentos',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 6),
-              ...entities.map((e) => RadioListTile<String>(
-                    value: e,
-                    groupValue: selectedEntity,
-                    title: Text(e, style: const TextStyle(fontSize: 13)),
-                    contentPadding: EdgeInsets.zero,
-                    visualDensity: VisualDensity.compact,
-                    activeColor: const Color(0xFF059669),
-                    onChanged: (v) => setModalState(() => selectedEntity = v!),
-                  )),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: qtyCtrl,
-                      keyboardType: TextInputType.number,
-                      decoration: InputDecoration(
-                        labelText: 'Unidades (máx. $maxQty)',
-                        suffixText: 'uds',
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            actionType == 'rebajar'
+                                ? 'Donar en lugar de rebajar'
+                                : actionType == 'retirar'
+                                    ? 'Donar en lugar de retirar'
+                                    : 'Registrar donación',
+                            style: const TextStyle(
+                                fontSize: 17, fontWeight: FontWeight.w800),
+                          ),
+                          Text(
+                            productName,
+                            style: const TextStyle(
+                                fontSize: 13, color: Colors.grey),
+                          ),
+                        ],
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: TextField(
-                      controller: notesCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Notas (opcional)',
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              ElevatedButton.icon(
-                icon: const Icon(Icons.favorite_outline, size: 18),
-                label: const Text('Confirmar donación'),
-                onPressed: () async {
-                  Navigator.pop(context);
-                  final qty = int.tryParse(qtyCtrl.text) ?? maxQty;
-                  await _completeDonation(
-                    ref,
-                    action,
-                    entity: selectedEntity,
-                    quantity: qty,
-                    notes: notesCtrl.text,
-                  );
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF059669),
-                  foregroundColor: Colors.white,
+                  ],
                 ),
-              ),
-            ],
-          ),
-        ),
+                const SizedBox(height: 16),
+
+                // Beneficio fiscal highlight
+                if (price > 0)
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF0FDF4),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: const Color(0xFF6EE7B7)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.savings_outlined,
+                            color: Color(0xFF059669), size: 20),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Beneficio fiscal (Ley 49/2002)',
+                                style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                    color: Color(0xFF059669)),
+                              ),
+                              Text(
+                                'Deducción estimada: ${fiscalDeduction.toStringAsFixed(2)} € '
+                                '(35% de ${totalValue.toStringAsFixed(2)} €)',
+                                style: const TextStyle(
+                                    fontSize: 11, color: Color(0xFF065F46)),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                const SizedBox(height: 14),
+
+                // Cantidad
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: qtyCtrl,
+                        keyboardType: TextInputType.number,
+                        onChanged: (_) => setModalState(() {}),
+                        decoration: InputDecoration(
+                          labelText: 'Unidades (máx. $maxQty)',
+                          suffixText: 'uds',
+                          border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(10)),
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 12),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextField(
+                        controller: notesCtrl,
+                        decoration: InputDecoration(
+                          labelText: 'Notas (opcional)',
+                          border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(10)),
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 12),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+
+                // Entidad
+                const Text(
+                  'Entidad receptora',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  children: entities.map((e) {
+                    final selected = selectedEntity == e;
+                    return GestureDetector(
+                      onTap: () => setModalState(() => selectedEntity = e),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 7),
+                        decoration: BoxDecoration(
+                          color: selected
+                              ? const Color(0xFF059669)
+                              : const Color(0xFFF9FAFB),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: selected
+                                ? const Color(0xFF059669)
+                                : const Color(0xFFD1D5DB),
+                          ),
+                        ),
+                        child: Text(
+                          e,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: selected ? Colors.white : Colors.grey[700],
+                          ),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+                const SizedBox(height: 18),
+
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.favorite, size: 18),
+                  label: Text(
+                      'Confirmar donación — $qty uds a $selectedEntity'),
+                  onPressed: () async {
+                    Navigator.pop(context);
+                    await _completeDonation(
+                      ref,
+                      action,
+                      entity: selectedEntity,
+                      quantity: qty,
+                      notes: notesCtrl.text,
+                    );
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            '✓ Donados $qty uds de $productName a $selectedEntity'
+                            '${fiscalDeduction > 0 ? ' · Deducción fiscal: ${fiscalDeduction.toStringAsFixed(2)} €' : ''}',
+                          ),
+                          backgroundColor: const Color(0xFF059669),
+                          duration: const Duration(seconds: 5),
+                        ),
+                      );
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF059669),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
@@ -555,8 +672,9 @@ class _ActionsScreenState extends ConsumerState<ActionsScreen>
 
 class _PendingTab extends ConsumerWidget {
   final void Function(BuildContext, WidgetRef, Map<String, dynamic>) onComplete;
+  final void Function(BuildContext, WidgetRef, Map<String, dynamic>) onDonate;
 
-  const _PendingTab({required this.onComplete});
+  const _PendingTab({required this.onComplete, required this.onDonate});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -604,6 +722,7 @@ class _PendingTab extends ConsumerWidget {
               ...critical.map((a) => _ActionCard(
                     action: a,
                     onComplete: () => onComplete(context, ref, a),
+                    onDonate: () => onDonate(context, ref, a),
                   )),
               const SizedBox(height: 16),
             ],
@@ -612,6 +731,7 @@ class _PendingTab extends ConsumerWidget {
               ...others.map((a) => _ActionCard(
                     action: a,
                     onComplete: () => onComplete(context, ref, a),
+                    onDonate: () => onDonate(context, ref, a),
                   )),
             ],
           ],
@@ -893,8 +1013,13 @@ class _SectionHeader extends StatelessWidget {
 class _ActionCard extends StatelessWidget {
   final Map<String, dynamic> action;
   final VoidCallback onComplete;
+  final VoidCallback onDonate;
 
-  const _ActionCard({required this.action, required this.onComplete});
+  const _ActionCard({
+    required this.action,
+    required this.onComplete,
+    required this.onDonate,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1036,15 +1161,37 @@ class _ActionCard extends StatelessWidget {
               ),
               const SizedBox(height: 8),
             ],
+            if (actionType == 'rebajar' || actionType == 'retirar') ...[
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.volunteer_activism, size: 16),
+                  label: const Text('Donar en su lugar'),
+                  onPressed: onDonate,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF059669),
+                    side: const BorderSide(
+                        color: Color(0xFF059669), style: BorderStyle.solid),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    backgroundColor: const Color(0xFFF0FDF4),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
             SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
                 icon: const Icon(Icons.check, size: 16),
-                label: const Text('Marcar completada'),
+                label: Text(actionType == 'rebajar'
+                    ? 'Confirmar rebaja'
+                    : actionType == 'retirar'
+                        ? 'Confirmar retirada'
+                        : 'Marcar completada'),
                 onPressed: onComplete,
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xFF059669),
-                  side: const BorderSide(color: Color(0xFF059669)),
+                  foregroundColor: Colors.grey[700],
+                  side: BorderSide(color: Colors.grey[400]!),
                   padding: const EdgeInsets.symmetric(vertical: 10),
                 ),
               ),

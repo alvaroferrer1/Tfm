@@ -50,10 +50,12 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>> runBrief() async {
+    // Usa el endpoint síncrono: espera resultado completo, no requiere auth,
+    // más robusto para demo que el background task que puede sillar.
     final resp = await http.post(
-      Uri.parse('$_baseUrl/brief/run'),
+      Uri.parse('$_baseUrl/brief/run/sync'),
       headers: _headers,
-    ).timeout(const Duration(seconds: 120));
+    ).timeout(const Duration(seconds: 150));
     return _parse(resp);
   }
 
@@ -327,6 +329,21 @@ class ApiService {
       return resp.bodyBytes;
     }
     throw Exception('Error descargando informe mensual PDF: ${resp.statusCode}');
+  }
+
+  /// Envía un PDF al backend y devuelve el análisis de Claude.
+  Future<Map<String, dynamic>> analyzePdfReport(List<int> pdfBytes, String filename) async {
+    final uri = Uri.parse('$_baseUrl/reports/analyze-pdf');
+    final request = http.MultipartRequest('POST', uri)
+      ..headers.addAll(_headers)
+      ..files.add(http.MultipartFile.fromBytes(
+        'file',
+        pdfBytes,
+        filename: filename,
+      ));
+    final streamed = await request.send().timeout(const Duration(seconds: 120));
+    final resp = await http.Response.fromStream(streamed);
+    return _parse(resp);
   }
 
   Map<String, dynamic> _parse(http.Response resp) {

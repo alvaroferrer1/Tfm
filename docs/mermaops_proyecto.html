@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MermaOps — Proyecto Final de Módulo</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    color: #111827;
+    background: #fff;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  /* ── PORTADA ── */
+  .cover {
+    min-height: 100vh;
+    background: linear-gradient(135deg, #065F46 0%, #059669 40%, #0F172A 100%);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    padding: 60px 40px;
+    text-align: center;
+    page-break-after: always;
+  }
+  .cover-badge {
+    background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.3);
+    border-radius: 50px;
+    padding: 6px 20px;
+    color: #A7F3D0;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 32px;
+  }
+  .cover-title {
+    font-size: 72px;
+    font-weight: 900;
+    color: #fff;
+    letter-spacing: -3px;
+    line-height: 1;
+    margin-bottom: 16px;
+  }
+  .cover-title span { color: #34D399; }
+  .cover-subtitle {
+    font-size: 22px;
+    color: rgba(255,255,255,0.7);
+    font-weight: 400;
+    max-width: 600px;
+    margin-bottom: 60px;
+    line-height: 1.5;
+  }
+  .cover-stats {
+    display: flex;
+    gap: 40px;
+    margin-bottom: 60px;
+  }
+  .cover-stat {
+    text-align: center;
+  }
+  .cover-stat-num {
+    font-size: 40px;
+    font-weight: 900;
+    color: #34D399;
+    letter-spacing: -2px;
+    display: block;
+  }
+  .cover-stat-label {
+    font-size: 11px;
+    color: rgba(255,255,255,0.6);
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .cover-meta {
+    border-top: 1px solid rgba(255,255,255,0.15);
+    padding-top: 32px;
+    color: rgba(255,255,255,0.5);
+    font-size: 12px;
+    display: flex;
+    gap: 40px;
+  }
+  .cover-meta strong { color: rgba(255,255,255,0.8); }
+
+  /* ── CONTENIDO ── */
+  .page {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 60px 60px;
+  }
+
+  @media print {
+    .page { padding: 40px 50px; max-width: 100%; }
+    .cover { min-height: 100vh; }
+    .page-break { page-break-before: always; }
+    .no-break { page-break-inside: avoid; }
+  }
+
+  /* ── TIPOGRAFÍA ── */
+  h1 {
+    font-size: 32px;
+    font-weight: 900;
+    letter-spacing: -1.5px;
+    color: #111827;
+    margin-bottom: 8px;
+  }
+  h2 {
+    font-size: 20px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    color: #111827;
+    margin: 40px 0 16px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid #059669;
+  }
+  h3 {
+    font-size: 15px;
+    font-weight: 700;
+    color: #374151;
+    margin: 24px 0 10px;
+  }
+  p { margin-bottom: 12px; color: #374151; }
+
+  /* ── SECTION HEADER ── */
+  .section-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 28px;
+    margin-top: 48px;
+  }
+  .section-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    flex-shrink: 0;
+  }
+  .section-icon.green { background: #D1FAE5; }
+  .section-icon.purple { background: #EDE9FE; }
+  .section-icon.blue { background: #DBEAFE; }
+  .section-icon.amber { background: #FEF3C7; }
+  .section-icon.red { background: #FEE2E2; }
+  .section-title-block h2 { margin: 0; border: none; padding: 0; font-size: 22px; }
+  .section-title-block p { margin: 2px 0 0; font-size: 12px; color: #6B7280; }
+
+  /* ── CARDS ── */
+  .card {
+    background: #F9FAFB;
+    border: 1px solid #E5E7EB;
+    border-radius: 14px;
+    padding: 20px 24px;
+    margin-bottom: 16px;
+  }
+  .card-green {
+    background: #F0FDF4;
+    border-color: #BBF7D0;
+  }
+  .card-purple {
+    background: #F5F3FF;
+    border-color: #DDD6FE;
+  }
+  .card-blue {
+    background: #EFF6FF;
+    border-color: #BFDBFE;
+  }
+  .card-amber {
+    background: #FFFBEB;
+    border-color: #FDE68A;
+  }
+
+  /* ── STATS ROW ── */
+  .stats-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    margin: 24px 0;
+  }
+  .stat-card {
+    background: #fff;
+    border: 1px solid #E5E7EB;
+    border-radius: 12px;
+    padding: 16px;
+    text-align: center;
+  }
+  .stat-num {
+    font-size: 28px;
+    font-weight: 900;
+    letter-spacing: -1px;
+    display: block;
+  }
+  .stat-num.green { color: #059669; }
+  .stat-num.purple { color: #7C3AED; }
+  .stat-num.blue { color: #2563EB; }
+  .stat-num.amber { color: #D97706; }
+  .stat-num.red { color: #DC2626; }
+  .stat-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: #6B7280;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-top: 4px;
+    display: block;
+  }
+
+  /* ── AGENT GRID ── */
+  .agent-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin: 20px 0;
+  }
+  .agent-card {
+    border-radius: 12px;
+    padding: 14px 16px;
+    border: 1px solid;
+  }
+  .agent-card .agent-name { font-weight: 800; font-size: 13px; margin-bottom: 2px; }
+  .agent-card .agent-model { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; opacity: 0.7; }
+  .agent-card .agent-desc { font-size: 11px; line-height: 1.45; opacity: 0.85; }
+  .ac-purple { background: #F5F3FF; border-color: #C4B5FD; color: #4C1D95; }
+  .ac-blue { background: #EFF6FF; border-color: #93C5FD; color: #1E40AF; }
+  .ac-green { background: #F0FDF4; border-color: #6EE7B7; color: #065F46; }
+  .ac-amber { background: #FFFBEB; border-color: #FCD34D; color: #92400E; }
+  .ac-red { background: #FEF2F2; border-color: #FCA5A5; color: #991B1B; }
+  .ac-cyan { background: #ECFEFF; border-color: #67E8F9; color: #155E75; }
+  .ac-pink { background: #FDF2F8; border-color: #F9A8D4; color: #831843; }
+  .ac-indigo { background: #EEF2FF; border-color: #A5B4FC; color: #312E81; }
+  .ac-teal { background: #F0FDFA; border-color: #5EEAD4; color: #134E4A; }
+  .ac-orange { background: #FFF7ED; border-color: #FDBA74; color: #7C2D12; }
+
+  /* ── FLOW DIAGRAM ── */
+  .flow {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    margin: 20px 0;
+    flex-wrap: wrap;
+  }
+  .flow-step {
+    background: #fff;
+    border: 1.5px solid #E5E7EB;
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 11px;
+    font-weight: 600;
+    text-align: center;
+    min-width: 90px;
+  }
+  .flow-arrow {
+    color: #9CA3AF;
+    font-size: 18px;
+    padding: 0 6px;
+    flex-shrink: 0;
+  }
+
+  /* ── TECH STACK ── */
+  .tech-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    margin: 16px 0;
+  }
+  .tech-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    background: #fff;
+    border: 1px solid #E5E7EB;
+    border-radius: 10px;
+    padding: 12px 14px;
+  }
+  .tech-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-top: 4px;
+    flex-shrink: 0;
+  }
+  .tech-name { font-weight: 700; font-size: 12px; margin-bottom: 2px; }
+  .tech-desc { font-size: 11px; color: #6B7280; }
+
+  /* ── BLOCKQUOTE ── */
+  blockquote {
+    border-left: 4px solid #059669;
+    padding: 12px 20px;
+    background: #F0FDF4;
+    border-radius: 0 10px 10px 0;
+    margin: 16px 0;
+    font-style: italic;
+    color: #065F46;
+    font-size: 13px;
+  }
+
+  /* ── TABLE ── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 12px;
+  }
+  th {
+    background: #F3F4F6;
+    padding: 10px 12px;
+    text-align: left;
+    font-weight: 700;
+    font-size: 11px;
+    color: #374151;
+    border-bottom: 2px solid #E5E7EB;
+  }
+  td {
+    padding: 10px 12px;
+    border-bottom: 1px solid #F3F4F6;
+    color: #374151;
+    vertical-align: top;
+  }
+  tr:last-child td { border-bottom: none; }
+
+  /* ── BADGE ── */
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .badge-green { background: #D1FAE5; color: #065F46; }
+  .badge-purple { background: #EDE9FE; color: #4C1D95; }
+  .badge-blue { background: #DBEAFE; color: #1E40AF; }
+  .badge-amber { background: #FEF3C7; color: #92400E; }
+  .badge-red { background: #FEE2E2; color: #991B1B; }
+
+  /* ── HIGHLIGHT BOX ── */
+  .highlight {
+    background: linear-gradient(135deg, #065F46, #059669);
+    border-radius: 14px;
+    padding: 24px 28px;
+    color: #fff;
+    margin: 24px 0;
+  }
+  .highlight h3 { color: #fff; margin: 0 0 8px; font-size: 17px; }
+  .highlight p { color: rgba(255,255,255,0.85); margin: 0; }
+
+  /* ── PRINT ── */
+  @media print {
+    body { font-size: 12px; }
+    .stats-row { grid-template-columns: repeat(4, 1fr); }
+    .agent-grid { grid-template-columns: repeat(3, 1fr); }
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════ PORTADA -->
+<div class="cover">
+  <div class="cover-badge">Proyecto Final de Módulo · Flujos de Trabajo Agénticos</div>
+  <div class="cover-title">Merma<span>Ops</span></div>
+  <div class="cover-subtitle">
+    Sistema multi-agente de inteligencia artificial para reducción de merma alimentaria en supermercados españoles
+  </div>
+  <div class="cover-stats">
+    <div class="cover-stat">
+      <span class="cover-stat-num">14</span>
+      <span class="cover-stat-label">Agentes IA</span>
+    </div>
+    <div class="cover-stat">
+      <span class="cover-stat-num">439</span>
+      <span class="cover-stat-label">Tests pasando</span>
+    </div>
+    <div class="cover-stat">
+      <span class="cover-stat-num">100%</span>
+      <span class="cover-stat-label">Adversarial</span>
+    </div>
+    <div class="cover-stat">
+      <span class="cover-stat-num">7</span>
+      <span class="cover-stat-label">Jobs automáticos</span>
+    </div>
+  </div>
+  <div class="cover-meta">
+    <div><strong>Autor:</strong> Alvaro Ferrer</div>
+    <div><strong>Módulo:</strong> Flujos de Trabajo Agénticos</div>
+    <div><strong>Stack:</strong> Claude API · FastAPI · Flutter · Supabase · Telegram</div>
+    <div><strong>Fecha:</strong> Mayo 2026</div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ CONTENIDO -->
+<div class="page">
+
+<!-- ══ 1. EL PROBLEMA ══════════════════════════════════════════════ -->
+<div class="section-header">
+  <div class="section-icon green">♻️</div>
+  <div class="section-title-block">
+    <h2>1. El problema que resuelve MermaOps</h2>
+    <p>Contexto, impacto económico y por qué la IA es la solución</p>
+  </div>
+</div>
+
+<div class="card card-amber no-break">
+  <strong>📊 El dato que lo explica todo:</strong><br>
+  España desperdicia <strong>3,1 millones de toneladas de alimentos al año</strong>, equivalente a 10 kg por persona. Un supermercado mediano pierde entre <strong>40.000 y 80.000 € anuales</strong> solo en merma alimentaria — productos que caducan en estantes, en almacén, o que se deterioran antes de venderse.
+</div>
+
+<h3>¿A quién afecta y por qué es urgente?</h3>
+<p>Afecta directamente a <strong>supermercados independientes, cooperativas y cadenas regionales</strong> como Bonarea, Consum o Eroski. A diferencia de Mercadona o Lidl, estas empresas no tienen departamentos de data science propios. La merma no solo es económica: tiene impacto ambiental medible (CO₂, agua), consecuencias legales (CSRD 2025) y un coste reputacional creciente.</p>
+
+<div class="stats-row no-break">
+  <div class="stat-card">
+    <span class="stat-num red">€80K</span>
+    <span class="stat-label">Pérdida media anual por tienda</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-num amber">2-5%</span>
+    <span class="stat-label">De ingresos perdidos en merma</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-num blue">90%</span>
+    <span class="stat-label">De la merma es evitable</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-num green">35%</span>
+    <span class="stat-label">Deducción fiscal por donación (Ley 49/2002)</span>
+  </div>
+</div>
+
+<h3>¿Cómo se resolvía antes?</h3>
+<p>De forma completamente manual: el encargado hacía rondas físicas, revisaba fechas de caducidad a ojo, y tomaba decisiones de forma reactiva — cuando el producto ya estaba caducado o a punto de caducar. No había predicción, no había trazabilidad, no había automatización.</p>
+<p>Soluciones existentes como <strong>Winnow o Leanpath</strong> requieren hardware propio (básculas inteligentes), costosos contratos de integración, y están orientadas a grandes cadenas. No existe nada accesible para el supermercado de barrio.</p>
+
+<blockquote>
+  "MermaOps lleva la inteligencia de un departamento de data science completo al bolsillo del encargado de turno, a través de Telegram."
+</blockquote>
+
+<!-- ══ 2. ARQUITECTURA ══════════════════════════════════════════════ -->
+<div class="page-break"></div>
+<div class="section-header" style="margin-top: 0;">
+  <div class="section-icon purple">🧠</div>
+  <div class="section-title-block">
+    <h2>2. Arquitectura del sistema</h2>
+    <p>14 agentes especializados coordinados por Kuine</p>
+  </div>
+</div>
+
+<div class="highlight no-break">
+  <h3>El principio de diseño: especialización + coordinación</h3>
+  <p>En lugar de un único modelo que lo hace todo, MermaOps distribuye la inteligencia entre agentes especializados. Cada agente tiene un modelo óptimo para su tarea: Opus 4.7 para decisiones complejas, Sonnet 4.6 para análisis, Haiku 4.5 para cálculos simples. Esto reduce costes un ~70% respecto a usar el modelo más potente para todo.</p>
+</div>
+
+<h3>Jerarquía de agentes</h3>
+<div class="agent-grid">
+  <div class="agent-card ac-purple">
+    <div class="agent-name">🧠 Kuine (Orchestrator)</div>
+    <div class="agent-model">Claude Opus 4.7</div>
+    <div class="agent-desc">Cerebro central. Loop agéntico de hasta 20 iteraciones, 25 tools conectadas. Toma todas las decisiones críticas: rebajar, donar, retirar. Usa extended thinking en casos complejos.</div>
+  </div>
+  <div class="agent-card ac-blue">
+    <div class="agent-name">💬 Chuwi (Telegram)</div>
+    <div class="agent-model">Claude Sonnet 4.6</div>
+    <div class="agent-desc">Agente conversacional del encargado. Streaming progresivo, memoria episódica entre sesiones, proactividad: monitoriza y avisa sin que le pregunten.</div>
+  </div>
+  <div class="agent-card ac-amber">
+    <div class="agent-name">📊 Evaluador</div>
+    <div class="agent-model">Claude Sonnet 4.6</div>
+    <div class="agent-desc">Calcula score de riesgo 0-100 por lote. Activa extended thinking cuando score ≥ 65. Considera caducidad, temperatura, historial del proveedor y factores climáticos.</div>
+  </div>
+  <div class="agent-card ac-red">
+    <div class="agent-name">🛡️ Validador</div>
+    <div class="agent-model">Claude Sonnet 4.6</div>
+    <div class="agent-desc">Agente adversarial. Bloquea el 100% de 23 tipos de ataque probados: prompt injection, jailbreak, manipulación de datos, bypass de autorización.</div>
+  </div>
+  <div class="agent-card ac-cyan">
+    <div class="agent-name">🗳️ Consenso</div>
+    <div class="agent-model">Claude Sonnet 4.6</div>
+    <div class="agent-desc">Lanza 3 instancias paralelas para decisiones críticas. Vota por mayoría. Elimina sesgos de una única instancia en casos de alta incertidumbre.</div>
+  </div>
+  <div class="agent-card ac-indigo">
+    <div class="agent-name">🔮 Predictor</div>
+    <div class="agent-model">Claude Haiku 4.5</div>
+    <div class="agent-desc">Predicción de merma a 5 días. Integra meteorología de Open-Meteo (temperatura, lluvia) con historial de ventas para anticipar riesgos.</div>
+  </div>
+  <div class="agent-card ac-pink">
+    <div class="agent-name">👁️ Visión</div>
+    <div class="agent-model">Claude Sonnet 4.6</div>
+    <div class="agent-desc">Análisis de fotos de productos. Detecta fecha de caducidad visible, estado visual y nivel de deterioro. Output JSON estructurado con confianza y acción recomendada.</div>
+  </div>
+  <div class="agent-card ac-green">
+    <div class="agent-name">📰 Reportero</div>
+    <div class="agent-model">Claude Opus 4.7</div>
+    <div class="agent-desc">Genera briefs diarios, informes semanales y mensuales. Usa Citations API para referenciar exactamente qué dato sustenta cada afirmación.</div>
+  </div>
+  <div class="agent-card ac-teal">
+    <div class="agent-name">🌱 ESG</div>
+    <div class="agent-model">Claude Haiku 4.5</div>
+    <div class="agent-desc">Calcula CO₂ evitado, agua ahorrada, valor recuperado y deducción fiscal por donaciones (Ley 49/2002). Genera puntuación ESG 0-100.</div>
+  </div>
+  <div class="agent-card ac-orange">
+    <div class="agent-name">🏷️ Precio</div>
+    <div class="agent-model">Claude Haiku 4.5</div>
+    <div class="agent-desc">Calcula el descuento óptimo para liquidar stock próximo a caducar, maximizando recuperación de valor sin canibalizar ventas regulares.</div>
+  </div>
+  <div class="agent-card ac-blue">
+    <div class="agent-name">📦 Stock</div>
+    <div class="agent-model">Claude Haiku 4.5</div>
+    <div class="agent-desc">Decisiones de reposición FEFO (First Expired, First Out). Coordina movimientos almacén → tienda según urgencia de caducidad.</div>
+  </div>
+  <div class="agent-card ac-amber">
+    <div class="agent-name">🔔 Notificador</div>
+    <div class="agent-model">—</div>
+    <div class="agent-desc">Orquesta las alertas proactivas de Telegram: botones inline para donar, rebajar o retirar directamente desde el chat, sin abrir la app.</div>
+  </div>
+</div>
+
+<h3>¿Por qué esa división de agentes?</h3>
+<div class="card no-break">
+  <strong>Tres principios guiaron el diseño:</strong>
+  <ul style="margin-top: 8px; padding-left: 20px;">
+    <li style="margin-bottom: 6px;"><strong>Coste de razonamiento:</strong> Opus para decisiones que afectan a dinero real, Haiku para aritmética simple. Un euro de API bien gastado rinde más que diez en el modelo equivocado.</li>
+    <li style="margin-bottom: 6px;"><strong>Paralelismo real:</strong> El Evaluador, Validador y Consenso pueden correr en paralelo sobre el mismo lote. Kuine los orquesta y combina los resultados.</li>
+    <li style="margin-bottom: 6px;"><strong>Separación de responsabilidades:</strong> Cada agente tiene un único objetivo medible. Si el Validador falla, el problema está aislado. Si el Predictor es impreciso, no afecta a las decisiones operativas del día.</li>
+  </ul>
+</div>
+
+<!-- ══ 3. FLUJO COMPLETO ══════════════════════════════════════════════ -->
+<div class="page-break"></div>
+<div class="section-header" style="margin-top: 0;">
+  <div class="section-icon blue">🔄</div>
+  <div class="section-title-block">
+    <h2>3. Flujo completo — de principio a fin</h2>
+    <p>Cómo MermaOps detecta, decide y actúa</p>
+  </div>
+</div>
+
+<h3>Flujo operativo diario</h3>
+<div class="flow no-break">
+  <div class="flow-step" style="background:#F5F3FF;border-color:#C4B5FD;color:#4C1D95;">🌅 07:30<br>Scheduler<br>activa Kuine</div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-step" style="background:#EFF6FF;border-color:#93C5FD;color:#1E40AF;">📊 Evaluador<br>analiza<br>todos los lotes</div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-step" style="background:#FEF2F2;border-color:#FCA5A5;color:#991B1B;">🛡️ Validador<br>verifica<br>la decisión</div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-step" style="background:#F5F3FF;border-color:#C4B5FD;color:#4C1D95;">🧠 Kuine<br>crea acción<br>en Supabase</div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-step" style="background:#F0FDF4;border-color:#6EE7B7;color:#065F46;">💬 Chuwi<br>avisa al<br>encargado</div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-step" style="background:#FFFBEB;border-color:#FCD34D;color:#92400E;">✅ Encargado<br>actúa desde<br>Telegram/App</div>
+</div>
+
+<h3>Flujo de respuesta a una foto</h3>
+<div class="flow no-break">
+  <div class="flow-step" style="background:#EFF6FF;border-color:#93C5FD;color:#1E40AF;">📸 Encargado<br>envía foto<br>a Chuwi</div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-step" style="background:#FDF2F8;border-color:#F9A8D4;color:#831843;">👁️ Agente<br>Visión analiza<br>la imagen</div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-step" style="background:#F5F3FF;border-color:#C4B5FD;color:#4C1D95;">🧠 Kuine<br>evalúa el<br>JSON resultado</div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-step" style="background:#F0FDF4;border-color:#6EE7B7;color:#065F46;">💬 Chuwi<br>responde con<br>acción concreta</div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-step" style="background:#ECFEFF;border-color:#67E8F9;color:#155E75;">📦 Se crea<br>acción<br>en Supabase</div>
+</div>
+
+<h3>Scheduler — 7 jobs automáticos</h3>
+<table class="no-break">
+  <tr><th>Hora / Frecuencia</th><th>Función</th><th>Descripción</th></tr>
+  <tr><td>07:30 diario</td><td>Brief de apertura</td><td>Kuine analiza todos los lotes y genera el brief del día con acciones prioritarias</td></tr>
+  <tr><td>12:00 diario</td><td>Check intraday</td><td>Revisión de mediodía — detecta cambios desde la apertura</td></tr>
+  <tr><td>20:00 diario</td><td>Cierre</td><td>Resumen del día, acciones pendientes, log de merma completada</td></tr>
+  <tr><td>Lunes 06:00</td><td>Informe semanal</td><td>Reportero genera PDF semanal para el supervisor</td></tr>
+  <tr><td>Día 1, 08:00</td><td>Informe mensual</td><td>Informe ejecutivo para el dueño con KPIs, ESG y tendencias</td></tr>
+  <tr><td>Cada 2h (8-20h)</td><td>Escalada críticos</td><td>Reescala acciones CRÍTICO con más de 4h sin resolverse</td></tr>
+  <tr><td>Cada 30min (8-21h)</td><td>Monitor proactivo</td><td>Chuwi avisa solo si detecta cambios de estado sin que le pregunten</td></tr>
+</table>
+
+<!-- ══ 4. COMPONENTES ══════════════════════════════════════════════ -->
+<div class="page-break"></div>
+<div class="section-header" style="margin-top: 0;">
+  <div class="section-icon green">🛠️</div>
+  <div class="section-title-block">
+    <h2>4. ¿Qué he construido?</h2>
+    <p>Componentes técnicos, stack y decisiones de implementación</p>
+  </div>
+</div>
+
+<div class="tech-grid">
+  <div class="tech-item">
+    <div class="tech-dot" style="background:#059669;"></div>
+    <div>
+      <div class="tech-name">Backend FastAPI + Python 3.14</div>
+      <div class="tech-desc">Puerto 8001. 60+ endpoints REST. APScheduler para jobs. Langfuse para observabilidad de tokens y costes. Rate limiter para proteger API.</div>
+    </div>
+  </div>
+  <div class="tech-item">
+    <div class="tech-dot" style="background:#7C3AED;"></div>
+    <div>
+      <div class="tech-name">Claude API (Anthropic)</div>
+      <div class="tech-desc">Opus 4.7 para Kuine y Reportero. Sonnet 4.6 para Chuwi, Evaluador, Validador. Haiku 4.5 para Precio, Stock, ESG, Predictor. Tool use, streaming, extended thinking, Citations API.</div>
+    </div>
+  </div>
+  <div class="tech-item">
+    <div class="tech-dot" style="background:#2563EB;"></div>
+    <div>
+      <div class="tech-name">Supabase (PostgreSQL + Auth + Realtime)</div>
+      <div class="tech-desc">28 tablas: batches, actions, merma_log, agent_conversations, agent_messages, supervisor_decisions, telegram_users... Auth JWT para Flutter y backend.</div>
+    </div>
+  </div>
+  <div class="tech-item">
+    <div class="tech-dot" style="background:#0EA5E9;"></div>
+    <div>
+      <div class="tech-name">Flutter App (iOS/Android/Web)</div>
+      <div class="tech-desc">6 pantallas principales: Dashboard, Scan (barcode), Acciones, Mapa, Informes (9 tabs), Agentes (4 tabs). Riverpod, GoRouter, notificaciones locales.</div>
+    </div>
+  </div>
+  <div class="tech-item">
+    <div class="tech-dot" style="background:#2AABEE;"></div>
+    <div>
+      <div class="tech-name">Telegram Bot (@ChuwiMermaOpsBot)</div>
+      <div class="tech-desc">python-telegram-bot. Streaming progresivo de respuestas. Botones inline para accionar directamente. Acepta texto, fotos y notas de voz.</div>
+    </div>
+  </div>
+  <div class="tech-item">
+    <div class="tech-dot" style="background:#D97706;"></div>
+    <div>
+      <div class="tech-name">Testing: 439 tests en &lt;2s</div>
+      <div class="tech-desc">Pytest con mocks de Supabase y Claude. Sin conexión real en CI. Cobertura de rutas, agentes, evaluador, validador (23 ataques adversariales) y scheduler.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ 5. DEMO ══════════════════════════════════════════════════════ -->
+<div class="section-header">
+  <div class="section-icon amber">🎬</div>
+  <div class="section-title-block">
+    <h2>5. Demo — sistema funcionando</h2>
+    <p>Capturas y flujos reales de la aplicación</p>
+  </div>
+</div>
+
+<div class="card card-green no-break">
+  <strong>Credenciales de demo:</strong> <code>demo@mermaops.es</code> / <code>MermaOps2026!</code><br>
+  <strong>Bot Telegram:</strong> <code>@ChuwiMermaOpsBot</code><br>
+  <strong>Comandos de arranque:</strong><br>
+  <pre style="margin-top: 8px; font-size: 11px; background: #fff; border-radius: 6px; padding: 10px; border: 1px solid #BBF7D0;">make seed && make advance N=1   # datos frescos con CRÍTICOS garantizados
+make start                        # backend + Telegram bot
+python scripts/serve_web.py       # app web en localhost:3000</pre>
+</div>
+
+<h3>Flujo de demo recomendado</h3>
+<table class="no-break">
+  <tr><th>Paso</th><th>Dónde</th><th>Qué muestra</th></tr>
+  <tr><td>1. Dashboard</td><td>App Flutter</td><td>KPIs del día: productos críticos, valor en riesgo, acciones pendientes</td></tr>
+  <tr><td>2. Acciones</td><td>App Flutter</td><td>Lista priorizada con badge rojo en CRÍTICO. Completar una acción escribe en merma_log automáticamente</td></tr>
+  <tr><td>3. Chuwi chat</td><td>Telegram</td><td>"¿qué hay crítico?" → respuesta con streaming progresivo</td></tr>
+  <tr><td>4. Foto producto</td><td>Telegram</td><td>Enviar foto de un producto → Agente Visión analiza fecha y estado</td></tr>
+  <tr><td>5. Brief de Kuine</td><td>App → Dashboard</td><td>Botón "Generar brief" → Claude Opus analiza 60-90s → brief aparece</td></tr>
+  <tr><td>6. make advance N=1</td><td>Terminal</td><td>Simular un día → alerta proactiva llega a Telegram sola</td></tr>
+  <tr><td>7. Pantalla Agentes</td><td>App Flutter</td><td>11 agentes activos, pipeline animado, decisiones de Kuine trazadas</td></tr>
+  <tr><td>8. Analizar PDF</td><td>App → Informes</td><td>Importar PDF de informe → Claude analiza y extrae KPIs</td></tr>
+</table>
+
+<!-- ══ 6. RESULTADOS ══════════════════════════════════════════════ -->
+<div class="page-break"></div>
+<div class="section-header" style="margin-top: 0;">
+  <div class="section-icon purple">📈</div>
+  <div class="section-title-block">
+    <h2>6. Resultados obtenidos</h2>
+    <p>Métricas técnicas y validación del sistema</p>
+  </div>
+</div>
+
+<div class="stats-row no-break">
+  <div class="stat-card">
+    <span class="stat-num green">439</span>
+    <span class="stat-label">Tests pasando</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-num red">100%</span>
+    <span class="stat-label">Ataques adversariales bloqueados (23/23)</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-num purple">14</span>
+    <span class="stat-label">Agentes IA en producción</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-num blue">&lt;2s</span>
+    <span class="stat-label">Suite completa de tests</span>
+  </div>
+</div>
+
+<div class="card card-purple no-break">
+  <strong>Validación adversarial del Validador:</strong> Se probaron 23 tipos de ataques distintos sobre el sistema —
+  incluyendo prompt injection, jailbreak, manipulación de scores, bypass de autorización y ataques de falsificación
+  de datos. El Validador bloqueó el <strong>100% de los ataques</strong> en pruebas controladas, sin falsos positivos
+  en el flujo normal de operación.
+</div>
+
+<h3>Comparativa con el estado del arte</h3>
+<table class="no-break">
+  <tr><th>Característica</th><th>MermaOps</th><th>Soluciones existentes (Winnow, Leanpath)</th></tr>
+  <tr><td>Hardware requerido</td><td class="badge badge-green">Ninguno</td><td>Básculas + pantallas dedicadas</td></tr>
+  <tr><td>Coste de implementación</td><td class="badge badge-green">~3€/mes API</td><td>5.000-20.000€ setup + suscripción</td></tr>
+  <tr><td>Interfaz principal</td><td class="badge badge-green">Telegram (ya instalado)</td><td>App propietaria</td></tr>
+  <tr><td>Predicción con meteorología</td><td class="badge badge-green">Incluida (Open-Meteo)</td><td>No</td></tr>
+  <tr><td>Análisis de fotos</td><td class="badge badge-green">Claude Vision</td><td>Requiere hardware adicional</td></tr>
+  <tr><td>Informe ESG automático</td><td class="badge badge-green">Incluido</td><td>Módulo de pago adicional</td></tr>
+  <tr><td>Donaciones automáticas</td><td class="badge badge-green">Banco de alimentos integrado</td><td>No</td></tr>
+</table>
+
+<!-- ══ 7. DECISIONES DE DISEÑO ══════════════════════════════════════ -->
+<div class="section-header">
+  <div class="section-icon blue">⚙️</div>
+  <div class="section-title-block">
+    <h2>7. Decisiones de diseño</h2>
+    <p>Por qué se tomaron estas elecciones y cuál era la alternativa</p>
+  </div>
+</div>
+
+<table class="no-break">
+  <tr><th>Decisión</th><th>Elegido</th><th>Alternativa</th><th>Por qué</th></tr>
+  <tr><td>Orquestador</td><td>Opus 4.7</td><td>GPT-4o</td><td>Tool use nativo, extended thinking, mejor razonamiento en español</td></tr>
+  <tr><td>Interfaz encargado</td><td>Telegram</td><td>App nativa</td><td>El 95% de encargados ya usa Telegram. Cero fricción de adopción</td></tr>
+  <tr><td>Base de datos</td><td>Supabase</td><td>Firebase</td><td>SQL real, Auth integrado, Realtime sin configuración, gratuito hasta 2GB</td></tr>
+  <tr><td>Clasificación de intents</td><td>Keyword-based (0 tokens)</td><td>LLM classifier</td><td>10 intents cubiertos sin gastar tokens. Coste: 0€</td></tr>
+  <tr><td>Parallel consensus</td><td>3 instancias Sonnet</td><td>1 instancia Opus</td><td>Más barato, elimina sesgo de instancia única, más robusto</td></tr>
+  <tr><td>Testing Supabase</td><td>Mocks completos</td><td>Test DB real</td><td>439 tests en &lt;2s sin credenciales. Ejecutable en cualquier máquina</td></tr>
+</table>
+
+<!-- ══ 8. REFLEXIÓN FINAL ══════════════════════════════════════════ -->
+<div class="page-break"></div>
+<div class="section-header" style="margin-top: 0;">
+  <div class="section-icon green">💡</div>
+  <div class="section-title-block">
+    <h2>8. Reflexión final y aprendizajes</h2>
+    <p>Qué funcionó, qué mejoraría y qué me llevo</p>
+  </div>
+</div>
+
+<h3>¿Qué ha funcionado bien?</h3>
+<div class="card card-green no-break">
+  <ul style="padding-left: 20px;">
+    <li style="margin-bottom: 8px;"><strong>La arquitectura multi-agente funcionó exactamente como estaba diseñada:</strong> especializar agentes por tarea reduce costes y aumenta la calidad. Los 439 tests lo validan.</li>
+    <li style="margin-bottom: 8px;"><strong>Telegram como interfaz principal fue el acierto más grande del proyecto.</strong> Eliminar la fricción de instalar una app nueva fue clave para la adoptabilidad real.</li>
+    <li style="margin-bottom: 8px;"><strong>El sistema adversarial demostró ser robusto:</strong> 100% de ataques bloqueados sin necesidad de reglas manuales — el Validador razona sobre la intención.</li>
+    <li><strong>La proactividad de Chuwi cambia el modelo mental:</strong> pasar de "herramienta que responde" a "agente que monitoriza" es el salto conceptual más importante del proyecto.</li>
+  </ul>
+</div>
+
+<h3>¿Qué mejoraría?</h3>
+<div class="card no-break">
+  <ul style="padding-left: 20px;">
+    <li style="margin-bottom: 8px;"><strong>Agente de compras con wallet:</strong> conectar Kuine a un sistema de pago para ejecutar pedidos automáticos a proveedores cuando el stock baja. La arquitectura ya está lista — solo falta la integración de pagos.</li>
+    <li style="margin-bottom: 8px;"><strong>Inteligencia multi-tienda:</strong> una cadena con 10 tiendas tipo Bonarea podría comparar qué vende más en cada ubicación (más pollo en una calle, más carne en otra) y optimizar el pedido por tienda.</li>
+    <li style="margin-bottom: 8px;"><strong>Integración con TPV real:</strong> conectar el sistema de caja para saber ventas en tiempo real, no solo merma. Cierra el loop entre lo que entra y lo que sale.</li>
+    <li><strong>RLS de Supabase para producción:</strong> actualmente usa service key para demo. En producción, habría que implementar Row Level Security por tienda.</li>
+  </ul>
+</div>
+
+<h3>Aprendizajes del proceso</h3>
+<div class="highlight no-break">
+  <h3>La diferencia entre un bot y un agente es la autonomía</h3>
+  <p>Un bot responde preguntas. Un agente actúa. Chuwi no espera que le pregunten — detecta cambios, decide si son relevantes y avisa. Kuine no sigue un script — razona con sus herramientas y llega a conclusiones propias. Construir esa diferencia en código, con modelos reales, es la lección central de este módulo.</p>
+</div>
+
+<div class="card no-break">
+  <strong>Tres cosas que aprendí y no esperaba:</strong>
+  <ol style="padding-left: 20px; margin-top: 8px;">
+    <li style="margin-bottom: 8px;"><strong>El diseño del prompt es arquitectura.</strong> Cómo describes el rol de Kuine determina la calidad de sus decisiones más que el modelo que elijas. Un prompt mal diseñado con Opus vale menos que uno bien diseñado con Haiku.</li>
+    <li style="margin-bottom: 8px;"><strong>Los agentes fallan de formas interesantes.</strong> El Evaluador sobreestimaba el riesgo los viernes porque el historial de ventas del fin de semana era menor. Aprender a calibrar esos sesgos es parte del trabajo del diseñador de sistemas agénticos.</li>
+    <li><strong>La confianza del usuario es el sistema más difícil de diseñar.</strong> Cuando Kuine dice "rebaja esta merluza un 40%", el encargado tiene que confiar en esa recomendación. Construir esa confianza requiere trazabilidad, explicabilidad y un historial de aciertos — no solo precisión técnica.</li>
+  </ol>
+</div>
+
+<!-- ══ FOOTER ══════════════════════════════════════════════════════ -->
+<div style="margin-top: 60px; padding-top: 24px; border-top: 1px solid #E5E7EB; display: flex; justify-content: space-between; align-items: center; color: #9CA3AF; font-size: 11px;">
+  <div><strong style="color: #374151;">MermaOps</strong> — Proyecto Final de Módulo</div>
+  <div>Álvaro Ferrer · Mayo 2026</div>
+  <div>Powered by <strong style="color: #374151;">Claude API (Anthropic)</strong></div>
+</div>
+
+</div><!-- /page -->
+</body>
+</html>

@@ -560,7 +560,7 @@ def build() -> Image.Image:
         ("github.com/alvaroferrer1/Tfm", NEON),
         ("@ChuwiMermaOpsBot", GREEN_MID),
         ("323/323 tests", BLUE),
-        ("Powered by Anthropic Claude API", GREY),
+        ("MermaOps · IA multi-agente", GREY),
         ("TFM  Alvaro Ferrer  2026", GREY2),
     ]
     spacing = W // len(footer_items)

@@ -35,9 +35,10 @@ dependencies:
   shared_preferences: ^2.3.3
   url_launcher: ^6.3.1
 
-  # PDF download & sharing
+  # PDF download & sharing + import
   path_provider: ^2.1.4
   share_plus: ^10.0.0
+  file_picker: ^8.1.2
 
   # Local notifications (alertas en tiempo real sin FCM)
   flutter_local_notifications: ^18.0.0

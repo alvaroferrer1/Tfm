@@ -3,6 +3,9 @@
 # AI
 anthropic>=0.40.0
 
+# PDF parsing (for analyze-pdf endpoint)
+pypdf>=4.0.0
+
 # Backend API
 fastapi>=0.115.0
 uvicorn[standard]>=0.32.0

@@ -5,17 +5,30 @@ import 'package:go_router/go_router.dart';
 import '../../core/api_service.dart';
 import '../../core/notification_service.dart';
 import '../../core/supabase_client.dart';
+import '../../core/user_role_provider.dart';
 import '../dashboard/dashboard_screen.dart' show dashboardProvider;
 import '../actions/actions_provider.dart';
 
-class DemoControlScreen extends ConsumerStatefulWidget {
+class DemoControlScreen extends ConsumerWidget {
   const DemoControlScreen({super.key});
 
   @override
-  ConsumerState<DemoControlScreen> createState() => _DemoControlScreenState();
+  Widget build(BuildContext context, WidgetRef ref) {
+    return RoleGate(
+      requiredRole: UserRole.admin,
+      child: const _DemoContent(),
+    );
+  }
 }
 
-class _DemoControlScreenState extends ConsumerState<DemoControlScreen> {
+class _DemoContent extends ConsumerStatefulWidget {
+  const _DemoContent();
+
+  @override
+  ConsumerState<_DemoContent> createState() => _DemoControlScreenState();
+}
+
+class _DemoControlScreenState extends ConsumerState<_DemoContent> {
   int _daysToAdvance = 1;
   bool _loading = false;
   Map<String, dynamic>? _lastResult;

@@ -111,6 +111,17 @@ class _LoginScreenState extends State<LoginScreen>
     }
   }
 
+  void _quickLogin(String email, String password) {
+    _emailCtrl.text = email;
+    _passCtrl.text = password;
+    setState(() {
+      _isRegister = false;
+      _error = null;
+      _success = null;
+    });
+    _submit();
+  }
+
   Future<void> _login() async {
     try {
       await supabase.auth.signInWithPassword(
@@ -118,7 +129,20 @@ class _LoginScreenState extends State<LoginScreen>
         password: _passCtrl.text,
       );
       api.notifyAppLogin();
-      if (mounted) context.go('/');
+      // Detectar rol y mostrar bienvenida antes de navegar
+      String roleLabel = 'usuario';
+      try {
+        final profile = await api.getCurrentUser();
+        final role = profile['role'] as String? ?? 'staff';
+        roleLabel = {'manager': 'Supervisor', 'admin': 'Admin'}[role] ?? 'Encargado';
+      } catch (_) {}
+      if (mounted) {
+        setState(() {
+          _success = 'Sesión iniciada como $roleLabel. Cargando...';
+        });
+        await Future.delayed(const Duration(milliseconds: 1100));
+        if (mounted) context.go('/');
+      }
     } on AuthException catch (e) {
       setState(() => _error = _translateError(e.message));
     } catch (_) {
@@ -435,7 +459,61 @@ class _LoginScreenState extends State<LoginScreen>
                     ],
                   ),
 
-                  const SizedBox(height: 32),
+                  const SizedBox(height: 28),
+
+                  // ── Acceso rápido demo TFM ────────────────────────────────
+                  if (!_isRegister) ...[
+                    Row(
+                      children: [
+                        Expanded(child: Divider(color: Colors.grey[300])),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 10),
+                          child: Text(
+                            'Acceso rápido — Demo',
+                            style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                          ),
+                        ),
+                        Expanded(child: Divider(color: Colors.grey[300])),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _QuickLoginButton(
+                            label: 'Encargado',
+                            icon: Icons.store_outlined,
+                            color: const Color(0xFF059669),
+                            onTap: () => _quickLogin(
+                                'encargado@mermaops.es', 'Encargado2024!'),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _QuickLoginButton(
+                            label: 'Supervisor',
+                            icon: Icons.manage_accounts_outlined,
+                            color: const Color(0xFF2563EB),
+                            onTap: () => _quickLogin(
+                                'supervisor@mermaops.es', 'Supervisor2024!'),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _QuickLoginButton(
+                            label: 'Admin',
+                            icon: Icons.admin_panel_settings_outlined,
+                            color: const Color(0xFF7C3AED),
+                            onTap: () => _quickLogin(
+                                'admin@mermaops.es', 'Admin2024!'),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+
+                  const SizedBox(height: 16),
 
                   // ── Footer ────────────────────────────────────────────────
                   Center(
@@ -467,7 +545,7 @@ class _LoginScreenState extends State<LoginScreen>
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          'Powered by Anthropic Claude',
+                          'MermaOps · IA para reducción de merma',
                           style: TextStyle(
                               fontSize: 10, color: Colors.grey[400]),
                         ),
@@ -618,6 +696,50 @@ class _PasswordStrength extends StatelessWidget {
             style: TextStyle(
                 fontSize: 11, color: color, fontWeight: FontWeight.w600)),
       ],
+    );
+  }
+}
+
+class _QuickLoginButton extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _QuickLoginButton({
+    required this.label,
+    required this.icon,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.07),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: color.withValues(alpha: 0.3)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 20, color: color),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: color,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

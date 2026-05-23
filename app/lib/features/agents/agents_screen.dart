@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/api_service.dart';
 import '../../core/supabase_client.dart';
+import '../../core/user_role_provider.dart';
 
 // provider accesible desde otros widgets
 final agentStatusRefreshProvider = StateProvider<int>((ref) => 0);
@@ -70,14 +71,26 @@ IconData _agentIcon(String type) =>
 
 // ── Screen ────────────────────────────────────────────────────────────────────
 
-class AgentsScreen extends ConsumerStatefulWidget {
+class AgentsScreen extends ConsumerWidget {
   const AgentsScreen({super.key});
 
   @override
-  ConsumerState<AgentsScreen> createState() => _AgentsScreenState();
+  Widget build(BuildContext context, WidgetRef ref) {
+    return RoleGate(
+      requiredRole: UserRole.manager,
+      child: const _AgentsContent(),
+    );
+  }
 }
 
-class _AgentsScreenState extends ConsumerState<AgentsScreen>
+class _AgentsContent extends ConsumerStatefulWidget {
+  const _AgentsContent();
+
+  @override
+  ConsumerState<_AgentsContent> createState() => _AgentsScreenState();
+}
+
+class _AgentsScreenState extends ConsumerState<_AgentsContent>
     with SingleTickerProviderStateMixin {
   late TabController _tabs;
 
@@ -129,6 +142,9 @@ class _AgentsScreenState extends ConsumerState<AgentsScreen>
           controller: _tabs,
           isScrollable: true,
           tabAlignment: TabAlignment.start,
+          labelColor: Colors.white,
+          unselectedLabelColor: Colors.white60,
+          indicatorColor: Colors.white,
           labelStyle:
               const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
           unselectedLabelStyle:

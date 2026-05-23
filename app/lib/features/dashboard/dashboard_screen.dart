@@ -450,51 +450,42 @@ class _DashboardBodyState extends State<_DashboardBody>
           SizedBox(
               width: 16,
               height: 16,
-              child:
-                  CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
+              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
           SizedBox(width: 12),
-          Expanded(child: Text('Kuine analizando… (30–90 segundos)')),
+          Expanded(child: Text('Kuine analizando… puede tardar 60–90 segundos')),
         ]),
-        duration: Duration(seconds: 120),
+        duration: Duration(seconds: 180),
         backgroundColor: Color(0xFF7C3AED),
       ),
     );
 
     try {
-      await api.runBrief();
-      final today = DateTime.now().toIso8601String().substring(0, 10);
-      bool found = false;
-      for (int i = 0; i < 18 && !found; i++) {
-        await Future.delayed(const Duration(seconds: 5));
-        try {
-          final r = await supabase
-              .from('daily_briefs')
-              .select('id')
-              .eq('store_id', storeId)
-              .eq('date', today)
-              .maybeSingle();
-          if (r != null) found = true;
-        } catch (_) {}
-      }
+      final result = await api.runBrief();
       messenger.hideCurrentSnackBar();
-      if (found) {
-        ref.invalidate(dashboardProvider);
+      // El endpoint síncrono devuelve {"brief": "..."} directamente
+      final briefText = result['brief'] as String? ?? '';
+      ref.invalidate(dashboardProvider);
+      if (briefText.isNotEmpty) {
         messenger.showSnackBar(const SnackBar(
-            content: Text('Brief generado. Dashboard actualizado.'),
+            content: Text('Brief de Kuine generado. Dashboard actualizado.'),
             backgroundColor: Color(0xFF059669),
             duration: Duration(seconds: 4)));
       } else {
+        // Si el brief ya existía hoy, también está bien
         messenger.showSnackBar(const SnackBar(
-            content: Text('Brief en proceso. Actualiza en un minuto.'),
-            backgroundColor: Color(0xFFF59E0B),
-            duration: Duration(seconds: 5)));
+            content: Text('Dashboard actualizado con el último brief de Kuine.'),
+            backgroundColor: Color(0xFF059669),
+            duration: Duration(seconds: 4)));
       }
     } catch (e) {
       messenger.hideCurrentSnackBar();
+      final errMsg = e.toString().contains('TimeoutException')
+          ? 'Kuine tardó demasiado. Inténtalo de nuevo o usa "make brief" en terminal.'
+          : 'Error generando brief: $e';
       messenger.showSnackBar(SnackBar(
-          content: Text('Error: $e'),
+          content: Text(errMsg),
           backgroundColor: const Color(0xFFEF4444),
-          duration: const Duration(seconds: 5)));
+          duration: const Duration(seconds: 6)));
     }
   }
 }

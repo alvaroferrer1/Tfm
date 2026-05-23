@@ -3,7 +3,7 @@ Endpoints REST — usados por la app Flutter y por Chuwi para acciones en BD.
 """
 import logging
 import os
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request, UploadFile, File
 from pydantic import BaseModel
 
 from backend.core import database
@@ -616,6 +616,58 @@ def get_weekly_pdf(week_start: str = "", _auth: dict = Depends(verify_token)):
         )
     except Exception as e:
         logger.error(f"weekly pdf error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/reports/analyze-pdf")
+async def analyze_pdf_report(file: UploadFile = File(...)):
+    """Recibe un PDF (informe supervisor, etc.) y lo analiza con Claude."""
+    try:
+        import io
+        from pypdf import PdfReader
+        from backend.core.llm import call_claude
+
+        pdf_bytes = await file.read()
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        text_pages = []
+        for page in reader.pages:
+            t = page.extract_text()
+            if t:
+                text_pages.append(t)
+        pdf_text = "\n".join(text_pages)
+
+        if not pdf_text.strip():
+            raise HTTPException(status_code=422, detail="El PDF no contiene texto extraíble.")
+
+        # Truncar a 40k chars para no exceder ventana de contexto
+        if len(pdf_text) > 40000:
+            pdf_text = pdf_text[:40000] + "\n[...documento truncado...]"
+
+        from backend.core.llm import get_client, MODEL
+        response = get_client().messages.create(
+            model=MODEL,
+            max_tokens=2048,
+            system=(
+                "Eres un analista experto en gestión de supermercados y reducción de merma alimentaria. "
+                "Analiza el documento que te proporciona el usuario y extrae:\n"
+                "1. Resumen ejecutivo (3-5 frases)\n"
+                "2. KPIs clave identificados (merma €, %, unidades, si aparecen)\n"
+                "3. Problemas detectados\n"
+                "4. Recomendaciones concretas para reducir merma\n"
+                "5. Próximas acciones prioritarias\n"
+                "Responde en español, con formato claro y directo."
+            ),
+            messages=[{
+                "role": "user",
+                "content": f"Analiza este documento:\n\n{pdf_text}"
+            }],
+        )
+        analysis = response.content[0].text if response.content else ""
+        return {"analysis": analysis, "pages": len(reader.pages), "chars": len(pdf_text)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"analyze-pdf error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

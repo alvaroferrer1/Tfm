@@ -286,7 +286,7 @@ def s01_portada(d: Deck):
     d.set_font("Helvetica", "", 7)
     d.set_text_color(*_GREY2)
     d.set_xy(0, H - 12)
-    d.cell(W, 6, "Powered by Anthropic Claude API  |  FastAPI  |  Flutter  |  Supabase", align="C")
+    d.cell(W, 6, "MermaOps  |  FastAPI  |  Flutter  |  Supabase  |  Telegram", align="C")
 
     # Linea inferior neon
     d.panel(0, H - 3, W, 3, _NEON)

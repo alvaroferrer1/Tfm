@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/api_service.dart';
 import '../../core/supabase_client.dart';
+import '../../core/user_role_provider.dart';
 
 final _userProfileProvider = FutureProvider<Map<String, dynamic>>((ref) async {
   return api.getCurrentUser();
@@ -77,21 +78,32 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                     style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
                   ),
                   const SizedBox(height: 4),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFD1FAE5),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      (profile['role'] as String? ?? 'staff').toUpperCase(),
-                      style: const TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF059669),
+                  Consumer(builder: (context, r, _) {
+                    final role = r.watch(userRoleProvider).valueOrNull ?? UserRole.staff;
+                    return Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: role.color.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: role.color.withValues(alpha: 0.3)),
                       ),
-                    ),
-                  ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(role.icon, size: 13, color: role.color),
+                          const SizedBox(width: 5),
+                          Text(
+                            role.label.toUpperCase(),
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: role.color,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
                 ],
               ),
             ),

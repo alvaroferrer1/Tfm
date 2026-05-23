@@ -3,10 +3,12 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:file_picker/file_picker.dart';
 
 import '../../core/api_service.dart';
 import '../../core/supabase_client.dart';
 import '../../core/theme.dart';
+import '../../core/user_role_provider.dart';
 
 import 'dart:io' show File;
 
@@ -59,21 +61,33 @@ final _orderSuggestionsProvider = FutureProvider<List<Map<String, dynamic>>>((re
   return api.getOrderSuggestions();
 });
 
-class ReportsScreen extends ConsumerStatefulWidget {
+class ReportsScreen extends ConsumerWidget {
   const ReportsScreen({super.key});
 
   @override
-  ConsumerState<ReportsScreen> createState() => _ReportsScreenState();
+  Widget build(BuildContext context, WidgetRef ref) {
+    return RoleGate(
+      requiredRole: UserRole.manager,
+      child: const _ReportsContent(),
+    );
+  }
 }
 
-class _ReportsScreenState extends ConsumerState<ReportsScreen>
+class _ReportsContent extends ConsumerStatefulWidget {
+  const _ReportsContent();
+
+  @override
+  ConsumerState<_ReportsContent> createState() => _ReportsScreenState();
+}
+
+class _ReportsScreenState extends ConsumerState<_ReportsContent>
     with SingleTickerProviderStateMixin {
   late TabController _tabs;
 
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 8, vsync: this);
+    _tabs = TabController(length: 9, vsync: this);
   }
 
   @override
@@ -102,6 +116,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen>
             Tab(text: 'Pedidos'),
             Tab(text: 'ESG 🌱'),
             Tab(text: 'Predicciones 🔮'),
+            Tab(text: 'Analizar PDF 🤖'),
           ],
         ),
       ),
@@ -116,6 +131,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen>
           const _OrderSuggestionsTab(),
           const _EsgTab(),
           const _PredictionsTab(),
+          const _AnalyzePdfTab(),
         ],
       ),
     );
@@ -1956,6 +1972,296 @@ class _PredChip extends StatelessWidget {
                 fontSize: 10,
                 color: color,
                 fontWeight: FontWeight.w600)),
+      ],
+    );
+  }
+}
+
+// ── Analizar PDF Tab ──────────────────────────────────────────────────────────
+
+class _AnalyzePdfTab extends StatefulWidget {
+  const _AnalyzePdfTab();
+
+  @override
+  State<_AnalyzePdfTab> createState() => _AnalyzePdfTabState();
+}
+
+class _AnalyzePdfTabState extends State<_AnalyzePdfTab> {
+  bool _loading = false;
+  String? _fileName;
+  String? _analysis;
+  String? _error;
+  int? _pages;
+
+  Future<void> _pickAndAnalyze() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+      _analysis = null;
+      _fileName = null;
+      _pages = null;
+    });
+
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf'],
+        withData: true,
+      );
+
+      if (result == null || result.files.isEmpty) {
+        setState(() => _loading = false);
+        return;
+      }
+
+      final file = result.files.single;
+      final bytes = file.bytes;
+      if (bytes == null) {
+        setState(() {
+          _error = 'No se pudieron leer los bytes del archivo.';
+          _loading = false;
+        });
+        return;
+      }
+
+      setState(() => _fileName = file.name);
+
+      final data = await api.analyzePdfReport(bytes, file.name);
+      setState(() {
+        _analysis = data['analysis'] as String? ?? '';
+        _pages = data['pages'] as int?;
+        _loading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _error = 'Error analizando PDF: $e';
+        _loading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        // Header card
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF1E1B4B), Color(0xFF4C1D95)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Row(children: [
+                Icon(Icons.auto_awesome, color: Colors.white, size: 22),
+                SizedBox(width: 10),
+                Text('Analizar PDF con IA',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800)),
+              ]),
+              const SizedBox(height: 8),
+              const Text(
+                'Importa cualquier informe del supervisor, brief mensual o '
+                'documento de merma. Claude lo analiza y extrae KPIs, '
+                'problemas y recomendaciones concretas.',
+                style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.5),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _loading ? null : _pickAndAnalyze,
+                  icon: _loading
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Color(0xFF4C1D95)))
+                      : const Icon(Icons.upload_file_rounded, size: 20),
+                  label: Text(_loading
+                      ? 'Analizando con Claude...'
+                      : 'Seleccionar PDF e importar'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    foregroundColor: const Color(0xFF4C1D95),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10)),
+                    textStyle: const TextStyle(
+                        fontWeight: FontWeight.w700, fontSize: 15),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // File info pill
+        if (_fileName != null) ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF5F3FF),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFFDDD6FE)),
+            ),
+            child: Row(children: [
+              const Icon(Icons.picture_as_pdf_rounded,
+                  color: Color(0xFF7C3AED), size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(_fileName!,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 13,
+                            color: Color(0xFF4C1D95))),
+                    if (_pages != null)
+                      Text('$_pages páginas extraídas',
+                          style: const TextStyle(
+                              fontSize: 11, color: Color(0xFF7C3AED))),
+                  ],
+                ),
+              ),
+              if (_loading)
+                const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Color(0xFF7C3AED))),
+            ]),
+          ),
+        ],
+
+        // Error
+        if (_error != null) ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFEF2F2),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFFFECACA)),
+            ),
+            child: Row(children: [
+              const Icon(Icons.error_outline_rounded,
+                  size: 16, color: Color(0xFFEF4444)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(_error!,
+                    style: const TextStyle(
+                        fontSize: 12, color: Color(0xFFDC2626))),
+              ),
+            ]),
+          ),
+        ],
+
+        // Analysis result
+        if (_analysis != null && _analysis!.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xFFE0E7FF)),
+              boxShadow: [
+                BoxShadow(
+                    color: const Color(0xFF6D28D9).withValues(alpha: 0.07),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4)),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(children: [
+                  Icon(Icons.auto_awesome,
+                      size: 16, color: Color(0xFF7C3AED)),
+                  SizedBox(width: 6),
+                  Text('Análisis de Claude',
+                      style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF4C1D95))),
+                ]),
+                const SizedBox(height: 12),
+                SelectableText(
+                  _analysis!,
+                  style: const TextStyle(
+                      fontSize: 13, height: 1.65, color: Color(0xFF374151)),
+                ),
+                const SizedBox(height: 14),
+                OutlinedButton.icon(
+                  onPressed: () {
+                    Clipboard.setData(ClipboardData(text: _analysis!));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                          content: Text('Análisis copiado al portapapeles'),
+                          backgroundColor: Color(0xFF059669)),
+                    );
+                  },
+                  icon: const Icon(Icons.copy_rounded, size: 14),
+                  label: const Text('Copiar análisis'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF7C3AED),
+                    side: const BorderSide(color: Color(0xFF7C3AED)),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    textStyle: const TextStyle(fontSize: 12),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+
+        // Empty state
+        if (_analysis == null && !_loading && _error == null) ...[
+          const SizedBox(height: 32),
+          Center(
+            child: Column(
+              children: [
+                Container(
+                  width: 72,
+                  height: 72,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF5F3FF),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: const Icon(Icons.description_outlined,
+                      size: 36, color: Color(0xFF7C3AED)),
+                ),
+                const SizedBox(height: 14),
+                const Text('Importa un PDF para analizarlo',
+                    style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                        color: Color(0xFF374151))),
+                const SizedBox(height: 6),
+                const Text(
+                  'Informes mensuales, briefs del supervisor,\ndocumentos de merma o cualquier PDF relevante.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Color(0xFF9CA3AF), fontSize: 13),
+                ),
+              ],
+            ),
+          ),
+        ],
       ],
     );
   }

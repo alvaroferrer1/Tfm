@@ -1,0 +1,250 @@
+================================================================================
+  MERMAOPS — GUIÓN VÍDEO 8 MINUTOS
+  Respuestas a las 12 preguntas del módulo + arquitectura + demo
+================================================================================
+
+GRABACIÓN GRATUITA: OBS Studio (obs.obsproject.com) — sin límite de tiempo,
+sin marca de agua, gratis. Descárgalo, selecciona "Captura de pantalla completa"
+y pulsa "Iniciar grabación". También funciona Win+Alt+R (Xbox Game Bar, integrado
+en Windows 10/11, sin límite de 8 min si activas el modo de grabación, no clip).
+
+================================================================================
+[00:00 – 00:40]  INTRO — EL PROBLEMA (Pregunta 1, 2 y 3)
+================================================================================
+
+NARRACIÓN:
+"Voy a presentar MermaOps, un sistema multi-agente de inteligencia artificial
+que resuelve un problema muy concreto: la merma alimentaria en supermercados.
+
+En España se desperdician 10,4 kilos de alimentos por persona y año. Para un
+supermercado mediano, eso equivale a perder entre el dos y el cinco por ciento
+de los ingresos anuales — productos que caducan en la estantería, sin que nadie
+los detecte a tiempo.
+
+¿A quién afecta? Al encargado de tienda, que pierde una hora al día revisando
+fechas a mano. Al supervisor, que toma decisiones de compra sin datos agregados.
+A la dirección, que no puede auditar la merma porque está mezclada con otras pérdidas.
+Y al medio ambiente: cada kilo de alimento en vertedero genera 2,5 kilos de CO₂.
+
+¿Cómo se resolvía antes? O con inspección manual — lenta y reactiva —, o con
+Excel desconectado del inventario real, o con soluciones como Winnow que cuestan
+más de veinte mil euros al año y requieren hardware especializado. La mayoría de
+supermercados medianos simplemente no lo resolvía."
+
+================================================================================
+[00:40 – 02:00]  ARQUITECTURA — LOS AGENTES (Pregunta 4 y 5)
+================================================================================
+
+NARRACIÓN:
+"MermaOps tiene catorce agentes de inteligencia artificial. La pregunta es:
+¿por qué catorce? ¿No sería más simple usar uno?
+
+La respuesta es que un agente único tiene un punto único de fallo, no permite
+right-sizing de modelos, y mezcla responsabilidades que no deben mezclarse.
+
+El cerebro es Kuine — el agente orquestador, basado en Claude Opus, el modelo
+más potente de Anthropic. Kuine coordina el análisis de todos los lotes de
+inventario, ejecuta hasta veinte iteraciones de razonamiento, y toma las decisiones
+finales: rebajar precio, donar al banco de alimentos, o retirar el producto.
+
+Para razonamiento específico, usa agentes Sonnet: el Evaluador puntúa el riesgo
+de cada lote de cero a cien; el Validador detecta ataques adversariales — inputs
+diseñados para manipular al sistema; el Consenso lanza tres instancias en paralelo
+y solo actúa si las tres coinciden.
+
+Para tareas simples, usa Haiku: el agente de Precio calcula el descuento óptimo,
+el de Stock decide si reponer desde el almacén.
+
+Y Chuwi — el agente conversacional, basado en Sonnet — es la interfaz con el
+encargado de tienda. Lo hace por Telegram: monitoriza la tienda cada treinta
+minutos y avisa él solo cuando algo cambia. No es un bot que espera preguntas:
+es un agente que trabaja en segundo plano."
+
+[MOSTRAR: pantalla Agentes de la app Flutter — tabla de agentes con modelos]
+
+================================================================================
+[02:00 – 02:30]  DECISIONES DE DISEÑO (Pregunta 6)
+================================================================================
+
+NARRACIÓN:
+"Tres decisiones de diseño que quiero destacar:
+
+Primera: right-sizing de modelos. No tiene sentido usar el modelo más potente
+para calcular un porcentaje de descuento. Opus solo para orquestación, Sonnet
+para razonamiento, Haiku para tareas simples. Esto redujo el consumo de tokens
+en un setenta por ciento sin perder calidad.
+
+Segunda: el Validador adversarial. Los modelos de lenguaje son susceptibles a
+prompt injection y datos falsos. Antes de ejecutar cualquier acción, el Validador
+verifica que la decisión no fue manipulada. Ha superado veintitrés ataques
+diseñados para engañar al sistema, con cien por cien de éxito.
+
+Tercera: Telegram como interfaz de tienda. El encargado ya tiene Telegram
+instalado. Sin app nueva, sin formación, sin mantenimiento. Y el streaming
+visual — el texto que crece en tiempo real — da la sensación de que el sistema
+está pensando, que es exactamente lo que diferencia a un agente de un formulario."
+
+================================================================================
+[02:30 – 03:30]  QUÉ SE HA CONSTRUIDO (Pregunta 7)
+================================================================================
+
+NARRACIÓN:
+"¿Qué se ha construido exactamente?
+
+El backend en FastAPI con Python, corriendo en el puerto 8001. Cuarenta
+endpoints REST, y un scheduler con siete jobs automáticos: el brief diario
+a las siete y media, monitoreo proactivo cada treinta minutos, escalación cada
+dos horas si hay acciones críticas sin respuesta.
+
+La base de datos en Supabase, con más de quince tablas. Cuatro nuevas para los
+agentes: conversaciones, mensajes, sesiones, y registro de usuarios de Telegram.
+
+La app Flutter con ocho pantallas y sistema de roles. Encargado, Supervisor y
+Admin tienen acceso diferente. El supervisor ve los informes y el panel de
+agentes. El encargado ve el dashboard y las acciones pendientes.
+
+Y cuatrocientos treinta y siete tests automatizados que pasan en menos de
+dos segundos, sin conexión real a Supabase ni a la API de Claude."
+
+================================================================================
+[03:30 – 05:00]  DEMO TELEGRAM — FLUJO COMPLETO (Preguntas 8 y 9)
+================================================================================
+
+NARRACIÓN:
+"Voy a mostrar el flujo completo de principio a fin.
+
+El encargado abre Telegram y escribe al agente Chuwi."
+
+[ACCIÓN: Abrir Telegram, chat con Chuwi]
+[ESCRIBE: "¿Qué productos están en estado crítico ahora mismo?"]
+
+NARRACIÓN:
+"Chuwi primero clasifica el intent del mensaje sin gastar tokens — por keywords
+detecta que es una consulta de inventario y pre-carga el contexto relevante.
+Luego invoca a Kuine, que analiza los lotes activos. Fíjate cómo el texto
+aparece progresivamente — esto es streaming real desde el modelo de lenguaje."
+
+[ESPERA RESPUESTA — LEE EN VOZ ALTA UN PRODUCTO CRÍTICO]
+
+NARRACIÓN:
+"Cada producto que aparece en la respuesta fue evaluado por el Evaluador,
+verificado por el Validador, y la decisión fue consensuada por tres instancias
+del Evaluador en paralelo. Todo en segundos."
+
+[ACCIÓN: Envía una foto de un producto]
+
+NARRACIÓN:
+"Le envío una foto. El agente de Visión lee la fecha impresa en la etiqueta,
+evalúa el estado visual del producto, y devuelve una recomendación estructurada.
+El encargado recibe una respuesta concreta en lenguaje natural."
+
+================================================================================
+[05:00 – 06:30]  DEMO APP FLUTTER (Preguntas 8 y 9 continuación)
+================================================================================
+
+NARRACIÓN:
+"La app Flutter es la interfaz del supervisor. Inicio sesión."
+
+[ACCIÓN: Login con supervisor@mermaops.es / Supervisor2024!
+         Aparece "Sesión iniciada como Supervisor. Cargando..."]
+
+NARRACIÓN:
+"El sistema detecta el rol y muestra un mensaje de bienvenida. Un encargado
+vería el dashboard operativo. El supervisor tiene además acceso a informes
+y al panel de agentes."
+
+[ACCIÓN: Dashboard → Acciones]
+
+NARRACIÓN:
+"Las acciones son las recomendaciones de Kuine pendientes de ejecutar.
+Cada tarjeta tiene el producto, la urgencia, la acción propuesta y la razón.
+Aquí en rojo: crítico, Kuine recomienda donar. Tengo también la opción de
+donar en lugar de rebajar — el sistema calcula automáticamente la deducción
+fiscal del treinta y cinco por ciento según la Ley 49/2002."
+
+[ACCIÓN: Navega a Informes → Brief diario]
+
+NARRACIÓN:
+"El brief diario lo genera Kuine automáticamente a las siete y media.
+La pantalla de Agentes muestra el estado de los catorce agentes, las
+conversaciones de Chuwi, los runs de Kuine con trazabilidad completa
+—cuánto tardó, cuántas iteraciones, qué herramientas usó— y cada decisión
+individual con la puntuación de riesgo."
+
+[ACCIÓN: Navega a Agentes IA → tab Decisiones]
+
+================================================================================
+[06:30 – 07:20]  RESULTADOS (Pregunta 7 continuación)
+================================================================================
+
+NARRACIÓN:
+"Los números."
+
+[ACCIÓN: Terminal — python -m pytest backend/tests/ -q]
+
+NARRACIÓN:
+"437 tests en menos de dos segundos. Sin conexión real. El Validador supera
+23 ataques adversariales con cien por cien de éxito. El sistema de Consenso
+exige que tres instancias coincidan antes de actuar. Y el extended thinking
+del Evaluador se activa solo cuando el score está en zona de ambigüedad —
+entre cincuenta y noventa —, no siempre. Eso reduce el coste de tokens en
+un sesenta por ciento sin perder precisión.
+
+Comparado con el baseline sin IA: de un 16,7% de precisión en decisiones —
+una de cada seis acciones correctas — a un cien por cien en la suite de tests.
+Ochenta y tres puntos porcentuales de mejora."
+
+================================================================================
+[07:20 – 08:00]  REFLEXIÓN Y CIERRE (Preguntas 10, 11 y 12)
+================================================================================
+
+NARRACIÓN:
+"¿Qué ha funcionado bien? El right-sizing de modelos fue la decisión con
+mayor impacto. El Validador adversarial fue la sorpresa positiva: sin él,
+el sistema parece que funciona pero no es seguro. Y Telegram validó la
+hipótesis de interfaz: sin instalar nada, el encargado lo usa desde el
+primer día.
+
+¿Qué mejoraría? El siguiente paso concreto es el Agente Comprador: un
+agente que no solo gestione la merma existente, sino que prediga qué stock
+pedir por tienda para la semana siguiente, cerrando el ciclo completo.
+También falta poblar la tabla multi-tienda para comparativas por zona geográfica.
+
+¿Qué aprendizajes me llevo? Que los agentes multi-modelo superan a los agentes
+únicos cuando las tareas son heterogéneas. Que las pruebas adversariales no son
+opcionales en producción. Y que la interfaz define la adopción: la IA más
+inteligente del mundo no sirve si el usuario tiene que aprender a usarla.
+
+MermaOps no es un chatbot con cara de IA. Es un sistema operativo para la
+gestión de merma: percibe, razona, decide y actúa."
+
+================================================================================
+FIN — ~8 MINUTOS
+================================================================================
+
+ACCESOS PARA LA DEMO:
+  Supervisor:  supervisor@mermaops.es  /  Supervisor2024!
+  Encargado:   encargado@mermaops.es   /  Encargado2024!
+  Admin:       admin@mermaops.es       /  Admin2024!
+  (Si no funcionan, usa make create-users para crearlos)
+
+COMANDOS ANTES DE GRABAR:
+  Backend:  python -m uvicorn backend.main:app --port 8001 (ya en marcha)
+  Tests:    python -m pytest backend/tests/ -q
+  App web:  cd app && flutter run -d chrome \
+             --dart-define=SUPABASE_URL=https://bfbfykjwvuwgdylmapnt.supabase.co \
+             --dart-define=SUPABASE_ANON_KEY=sb_publishable_EAi2G-XXUd5UhuyVrWnjAw_HMdE5FPQ \
+             --dart-define=API_URL=http://localhost:8001/api/v1
+
+GRABACIÓN GRATUITA (elige uno):
+  1. OBS Studio — obs.obsproject.com — gratis, sin límite, sin marca de agua.
+     Instala → Fuente: "Captura de pantalla" → Iniciar grabación.
+  2. Xbox Game Bar — Win+Alt+R (integrado en Windows, sin instalar nada).
+     Solo graba la ventana activa, no todo el escritorio.
+  3. Clipchamp — busca "Clipchamp" en el menú inicio (viene con Windows 11).
+     Grabación web + cámara si quieres salir en pantalla.
+
+  RECOMENDACIÓN: OBS si tienes 5 min para instalarlo. Xbox Game Bar si quieres
+  empezar ahora mismo.
+
+================================================================================

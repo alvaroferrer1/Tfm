@@ -1752,7 +1752,7 @@ async def _action_tour(update_or_query, context, user: Optional[dict], is_callba
         "- Agente conversacional disponible 24h en Telegram\n\n"
         "TECNOLOGÍA:\n"
         "- 11 agentes especializados coordinados por Kuine\n"
-        "- Claude (Anthropic) con extended thinking para productos críticos\n"
+        "- IA con extended thinking para productos críticos\n"
         "- Consenso de 3 agentes en paralelo para casos extremos\n"
         "- Memoria episódica: recuerda qué pasó la semana anterior\n"
         "- App Flutter + Backend FastAPI + Supabase + Telegram\n\n"
