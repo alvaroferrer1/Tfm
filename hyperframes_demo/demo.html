@@ -227,6 +227,19 @@ canvas#bg{position:fixed;inset:0;z-index:0;pointer-events:none}
   background:linear-gradient(135deg,var(--green),var(--blue));
   -webkit-background-clip:text;-webkit-text-fill-color:transparent;line-height:1}
 
+/* ── S10 DUAL PHONE ── */
+.phone-dark{background:#0D0D1A;border-radius:34px;border:2px solid rgba(255,255,255,.12);padding:12px;
+  box-shadow:0 24px 60px rgba(0,0,0,.7),0 0 60px rgba(0,200,150,.08);width:195px;flex-shrink:0}
+.notch-sm{width:60px;height:6px;background:#000;border-radius:4px;margin:0 auto 8px;border:1px solid rgba(255,255,255,.08)}
+.hub-node{border-radius:10px;padding:7px 13px;text-align:center;font-family:monospace}
+@keyframes flowPulse{0%,100%{opacity:.4;transform:scale(.9)}50%{opacity:1;transform:scale(1)}}
+
+/* ── SAGENTS NETWORK ── */
+.agent-net-row{display:flex;gap:7px;justify-content:center;flex-wrap:wrap}
+.agent-net-card{border-radius:10px;padding:8px 14px;text-align:center;border:1px solid}
+.net-tier{font-size:10px;letter-spacing:2px;color:var(--g);text-align:center;margin:4px 0}
+.net-arrow{font-size:12px;text-align:center;margin:2px 0}
+
 </style>
 </head>
 <body>
@@ -632,60 +645,211 @@ canvas#bg{position:fixed;inset:0;z-index:0;pointer-events:none}
   </div>
 </div>
 
-<!-- S10 — DASHBOARD APP -->
-<div class="scene" id="s10" style="flex-direction:row;gap:40px;align-items:center">
-  <div class="phone scale-in" id="s10phone">
-    <div class="notch"></div>
-    <div class="phone-screen">
-      <div class="phone-hdr">🏪 MermaOps — Super Martínez</div>
-      <div class="phone-body">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:6px">
-          <div style="background:#fff;border-radius:7px;padding:7px;border-left:3px solid #EF4444">
-            <div style="font-size:20px;font-weight:900;color:#111" id="app_k1">—</div>
-            <div style="font-size:8px;color:#6B7280">Críticos</div>
+<!-- S10 — APP + TELEGRAM JUNTOS -->
+<div class="scene" id="s10" style="flex-direction:column;gap:10px;align-items:center;justify-content:center">
+  <div class="label fade" id="s10lbl" style="margin-bottom:2px">app flutter + telegram — sistema completo en tiempo real</div>
+  <div style="display:flex;gap:20px;align-items:center;justify-content:center">
+
+    <!-- LEFT: Telegram phone -->
+    <div class="tg-phone scale-in" id="s10tg" style="width:195px">
+      <div class="tg-statusbar"><span id="s10clk">18:44</span><span>●●● WiFi 🔋</span></div>
+      <div class="tg-header">
+        <div class="tg-avatar">🤖</div>
+        <div class="tg-hinfo"><div class="tg-hname">Chuwi · MermaOps</div><div class="tg-honline">en línea</div></div>
+        <div style="margin-left:auto;font-size:16px;color:rgba(255,255,255,.3)">⋮</div>
+      </div>
+      <div class="tg-body" id="s10tgMsgs" style="min-height:250px;max-height:250px"></div>
+    </div>
+
+    <!-- CENTER: Connection hub -->
+    <div class="fade" id="s10hub" style="display:flex;flex-direction:column;align-items:center;gap:5px;min-width:90px">
+      <div class="hub-node" style="background:rgba(124,58,237,.12);border:1px solid rgba(124,58,237,.35)">
+        <div style="font-size:9px;font-weight:700;color:var(--purple)">⚡ KUINE</div>
+        <div style="font-size:7px;color:var(--g)">Opus 4.7</div>
+      </div>
+      <div style="font-size:11px;color:rgba(124,58,237,.4)">↕</div>
+      <div class="hub-node" style="background:rgba(0,200,150,.1);border:1px solid rgba(0,200,150,.3)">
+        <div style="font-size:9px;font-weight:700;color:var(--green)">FastAPI</div>
+        <div style="font-size:7px;color:var(--g)">:8001</div>
+      </div>
+      <div style="font-size:11px;color:rgba(0,200,150,.4)">↕</div>
+      <div class="hub-node" style="background:rgba(42,171,238,.08);border:1px solid rgba(42,171,238,.25)">
+        <div style="font-size:9px;font-weight:700;color:var(--blue)">Supabase</div>
+        <div style="font-size:7px;color:var(--g)">Realtime</div>
+      </div>
+      <div style="display:flex;gap:5px;margin-top:4px">
+        <div style="width:6px;height:6px;border-radius:50%;background:var(--green);animation:flowPulse 1s infinite"></div>
+        <div style="width:6px;height:6px;border-radius:50%;background:var(--blue);animation:flowPulse 1.4s infinite"></div>
+        <div style="width:6px;height:6px;border-radius:50%;background:var(--purple);animation:flowPulse 1.8s infinite"></div>
+      </div>
+    </div>
+
+    <!-- RIGHT: Flutter app (dark dashboard) -->
+    <div class="phone-dark scale-in" id="s10appphone">
+      <div class="notch-sm"></div>
+      <div style="background:linear-gradient(160deg,#0f1f0f 0%,#0a0a14 100%);border-radius:10px;overflow:hidden">
+        <!-- Header dark -->
+        <div style="padding:9px 10px 7px;border-bottom:1px solid rgba(255,255,255,.06)">
+          <div style="display:flex;align-items:center;gap:5px;margin-bottom:3px">
+            <span style="width:5px;height:5px;border-radius:50%;background:var(--green);display:inline-block;animation:flowPulse 1.4s infinite"></span>
+            <span style="font-size:7px;font-weight:700;color:var(--green);letter-spacing:1px">KUINE MONITORIZANDO</span>
           </div>
-          <div style="background:#fff;border-radius:7px;padding:7px;border-left:3px solid #F59E0B">
-            <div style="font-size:20px;font-weight:900;color:#111" id="app_k2">—</div>
-            <div style="font-size:8px;color:#6B7280">Valor en riesgo</div>
+          <div style="font-size:11px;font-weight:900;color:#fff">Super Martínez</div>
+          <div style="font-size:7px;color:rgba(255,255,255,.35)">Dashboard · Tiempo real</div>
+        </div>
+        <!-- KPI grid -->
+        <div style="padding:7px;display:grid;grid-template-columns:1fr 1fr;gap:4px">
+          <div style="background:rgba(239,68,68,.1);border-radius:7px;padding:6px 8px;border-left:2px solid #EF4444">
+            <div style="font-size:16px;font-weight:900;color:#fff;font-family:monospace" id="s10k1">—</div>
+            <div style="font-size:7px;color:#EF4444;font-weight:700">CRÍTICOS</div>
           </div>
-          <div style="background:#fff;border-radius:7px;padding:7px;border-left:3px solid #059669">
-            <div style="font-size:20px;font-weight:900;color:#111" id="app_k3">—</div>
-            <div style="font-size:8px;color:#6B7280">Caducan 7 días</div>
+          <div style="background:rgba(245,158,11,.08);border-radius:7px;padding:6px 8px;border-left:2px solid #F59E0B">
+            <div style="font-size:16px;font-weight:900;color:#fff;font-family:monospace" id="s10k2">—</div>
+            <div style="font-size:7px;color:#F59E0B;font-weight:700">EN RIESGO</div>
           </div>
-          <div style="background:#fff;border-radius:7px;padding:7px;border-left:3px solid #3B82F6">
-            <div style="font-size:20px;font-weight:900;color:#111" id="app_k4">—</div>
-            <div style="font-size:8px;color:#6B7280">Acciones</div>
+          <div style="background:rgba(0,200,150,.08);border-radius:7px;padding:6px 8px;border-left:2px solid #00C896">
+            <div style="font-size:16px;font-weight:900;color:#fff;font-family:monospace" id="s10k3">—</div>
+            <div style="font-size:7px;color:#00C896;font-weight:700">7 DÍAS</div>
+          </div>
+          <div style="background:rgba(59,130,246,.08);border-radius:7px;padding:6px 8px;border-left:2px solid #3B82F6">
+            <div style="font-size:16px;font-weight:900;color:#fff;font-family:monospace" id="s10k4">—</div>
+            <div style="font-size:7px;color:#3B82F6;font-weight:700">ACCIONES</div>
           </div>
         </div>
-        <div style="background:#fff;border-radius:8px;padding:8px;border:1px solid #D1FAE5">
-          <div style="font-size:8px;font-weight:700;color:#059669;margin-bottom:3px">📋 Brief de Kuine — hoy</div>
-          <div style="font-size:8px;color:#374151;line-height:1.5" id="app_brief">Analizando...</div>
+        <!-- Critical spotlight -->
+        <div style="margin:0 7px 6px;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:7px;padding:6px 8px">
+          <div style="font-size:7px;color:#EF4444;font-weight:700;letter-spacing:1px;margin-bottom:2px">🔴 MÁS URGENTE</div>
+          <div style="font-size:9px;font-weight:700;color:#fff">Merluza fresca · Pasillo 4</div>
+          <div style="font-size:7px;color:rgba(255,255,255,.45)">Caduca HOY · 3 uds · 14.97€ → RETIRAR</div>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin-top:5px">
-          <div style="background:#F0FDF4;border-radius:7px;padding:7px;text-align:center;border:1px solid #D1FAE5">
-            <div style="font-size:9px;color:#059669">📷 Escanear</div>
-          </div>
-          <div style="background:#EFF6FF;border-radius:7px;padding:7px;text-align:center;border:1px solid #BFDBFE">
-            <div style="font-size:9px;color:#3B82F6">🗺️ Pasillos</div>
-          </div>
-          <div style="background:#F5F3FF;border-radius:7px;padding:7px;text-align:center;border:1px solid #DDD6FE">
-            <div style="font-size:9px;color:#7C3AED">📊 Informes</div>
-          </div>
+        <!-- Kuine brief -->
+        <div style="margin:0 7px 8px;background:rgba(124,58,237,.08);border-radius:7px;padding:6px 8px">
+          <div style="font-size:7px;color:var(--purple);font-weight:700;margin-bottom:2px">⚡ KUINE — brief de hoy</div>
+          <div style="font-size:7.5px;color:rgba(255,255,255,.5);line-height:1.5" id="s10brief">18 acciones · 847€ riesgo · 3 donaciones</div>
         </div>
       </div>
     </div>
   </div>
-  <div style="flex:1;max-width:400px">
-    <div class="label slide-right" id="s10lbl">app flutter — 6 pantallas</div>
-    <div class="med slide-right" id="s10h">Dashboard · Escaneo · Acciones<br>Mapa · Informes · Agentes<br><span style="color:var(--green)">Datos reales. En tiempo real.</span></div>
-    <div class="sub slide-right" id="s10p">Supabase Realtime · PDF compartible · CSV exportable · Foto de producto → análisis IA · QR codes para pasillos · ESG report · Predicciones meteoro</div>
-    <div style="margin-top:16px;display:flex;flex-wrap:wrap;gap:6px" class="fade" id="s10pills">
-      <span class="pill" style="color:var(--green);border-color:rgba(0,200,150,.3)">Flutter 3</span>
-      <span class="pill" style="color:var(--blue);border-color:rgba(42,171,238,.3)">Riverpod</span>
-      <span class="pill" style="color:var(--purple);border-color:rgba(124,58,237,.3)">go_router</span>
-      <span class="pill" style="color:var(--orange);border-color:rgba(245,158,11,.3)">share_plus</span>
-      <span class="pill" style="color:var(--green);border-color:rgba(0,200,150,.3)">mobile_scanner</span>
-      <span class="pill" style="color:var(--red);border-color:rgba(239,68,68,.3)">image_picker</span>
+
+  <!-- Caption pills -->
+  <div class="fade" id="s10caption" style="display:flex;flex-direction:column;align-items:center;gap:6px;margin-top:4px">
+    <div style="font-size:11px;color:rgba(255,255,255,.28);text-align:center">Telegram + App Flutter conectados al mismo backend en tiempo real · mismo Kuine · mismo Supabase</div>
+    <div style="display:flex;gap:7px;justify-content:center;flex-wrap:wrap">
+      <span class="pill" style="color:var(--green);border-color:rgba(0,200,150,.3);font-size:10px">Flutter 3 · Riverpod</span>
+      <span class="pill" style="color:var(--blue);border-color:rgba(42,171,238,.3);font-size:10px">Telegram Bot API</span>
+      <span class="pill" style="color:var(--purple);border-color:rgba(124,58,237,.3);font-size:10px">Supabase Realtime</span>
+      <span class="pill" style="color:var(--orange);border-color:rgba(245,158,11,.3);font-size:10px">FastAPI :8001</span>
+    </div>
+  </div>
+</div>
+
+<!-- SAGENTS — RED DE 11 AGENTES -->
+<div class="scene" id="sAgents" style="flex-direction:column;gap:8px;align-items:center;justify-content:center">
+  <div class="label fade" id="sagLbl" style="margin-bottom:4px">red de 11 agentes especializados — activos 24h</div>
+
+  <!-- KUINE orchestrator -->
+  <div class="slide-up" id="sagKuine" style="text-align:center">
+    <div style="background:rgba(124,58,237,.14);border:2px solid rgba(124,58,237,.6);border-radius:14px;padding:11px 44px;display:inline-block;box-shadow:0 0 60px rgba(124,58,237,.2)">
+      <div style="color:var(--purple);font-size:17px;font-weight:900;letter-spacing:-.3px">⚡ KUINE — Orquestador</div>
+      <div style="color:rgba(200,160,255,.65);font-size:9px;font-family:monospace;margin-top:4px">Claude Opus 4.7 · 25 tools · adaptive thinking · hasta 20 iter · prompt caching · 7 jobs autónomos</div>
+    </div>
+  </div>
+
+  <div class="net-arrow fade" id="sagArr1" style="color:rgba(124,58,237,.4)">↓ coordina en paralelo ↓</div>
+
+  <!-- Row 1: 5 agents Sonnet -->
+  <div class="agent-net-row slide-up" id="sagRow1">
+    <div class="agent-net-card" style="background:rgba(42,171,238,.1);border-color:rgba(42,171,238,.35);min-width:95px">
+      <div style="font-size:11px;font-weight:700;color:var(--blue)">🔬 Evaluador</div>
+      <div style="font-size:8px;color:var(--g);font-family:monospace;margin-top:2px">Sonnet 4.6</div>
+      <div style="font-size:8px;color:rgba(42,171,238,.65);margin-top:1px">score 0–100<br>extended thinking</div>
+    </div>
+    <div class="agent-net-card" style="background:rgba(239,68,68,.1);border-color:rgba(239,68,68,.35);min-width:95px">
+      <div style="font-size:11px;font-weight:700;color:var(--red)">🛡️ Validador</div>
+      <div style="font-size:8px;color:var(--g);font-family:monospace;margin-top:2px">Sonnet 4.6</div>
+      <div style="font-size:8px;color:rgba(239,68,68,.65);margin-top:1px">23/23 ataques<br>bloqueados</div>
+    </div>
+    <div class="agent-net-card" style="background:rgba(107,114,128,.12);border-color:rgba(107,114,128,.35);min-width:95px">
+      <div style="font-size:11px;font-weight:700;color:var(--w)">🗳️ Consenso</div>
+      <div style="font-size:8px;color:var(--g);font-family:monospace;margin-top:2px">Sonnet 4.6 ×3</div>
+      <div style="font-size:8px;color:rgba(255,255,255,.4);margin-top:1px">votación paralela<br>score ≥ 90</div>
+    </div>
+    <div class="agent-net-card" style="background:rgba(124,58,237,.1);border-color:rgba(124,58,237,.35);min-width:95px">
+      <div style="font-size:11px;font-weight:700;color:var(--purple)">📋 Reportero</div>
+      <div style="font-size:8px;color:var(--g);font-family:monospace;margin-top:2px">Sonnet 4.6</div>
+      <div style="font-size:8px;color:rgba(124,58,237,.65);margin-top:1px">briefs · PDF<br>resúmenes</div>
+    </div>
+    <div class="agent-net-card" style="background:rgba(239,68,68,.08);border-color:rgba(239,68,68,.3);min-width:95px">
+      <div style="font-size:11px;font-weight:700;color:var(--red)">🔔 Notificador</div>
+      <div style="font-size:8px;color:var(--g);font-family:monospace;margin-top:2px">Sonnet 4.6</div>
+      <div style="font-size:8px;color:rgba(239,68,68,.65);margin-top:1px">alertas Telegram<br>proactivas</div>
+    </div>
+  </div>
+
+  <div class="net-arrow fade" id="sagArr2" style="color:rgba(255,255,255,.1)">↓ herramientas especializadas ↓</div>
+
+  <!-- Row 2: 4 agents Haiku/Sonnet -->
+  <div class="agent-net-row slide-up" id="sagRow2">
+    <div class="agent-net-card" style="background:rgba(0,200,150,.1);border-color:rgba(0,200,150,.35);min-width:110px">
+      <div style="font-size:11px;font-weight:700;color:var(--green)">🔮 Predictor</div>
+      <div style="font-size:8px;color:var(--g);font-family:monospace;margin-top:2px">Haiku 4.5</div>
+      <div style="font-size:8px;color:rgba(0,200,150,.65);margin-top:1px">Open-Meteo · 5d<br>historial 30 días</div>
+    </div>
+    <div class="agent-net-card" style="background:rgba(0,200,150,.1);border-color:rgba(0,200,150,.35);min-width:110px">
+      <div style="font-size:11px;font-weight:700;color:var(--green)">👁️ Visión</div>
+      <div style="font-size:8px;color:var(--g);font-family:monospace;margin-top:2px">Sonnet 4.6</div>
+      <div style="font-size:8px;color:rgba(0,200,150,.65);margin-top:1px">foto → JSON<br>estructurado</div>
+    </div>
+    <div class="agent-net-card" style="background:rgba(245,158,11,.1);border-color:rgba(245,158,11,.35);min-width:110px">
+      <div style="font-size:11px;font-weight:700;color:var(--orange)">💰 Precio</div>
+      <div style="font-size:8px;color:var(--g);font-family:monospace;margin-top:2px">Haiku 4.5</div>
+      <div style="font-size:8px;color:rgba(245,158,11,.65);margin-top:1px">descuento óptimo<br>margen vs urgencia</div>
+    </div>
+    <div class="agent-net-card" style="background:rgba(245,158,11,.1);border-color:rgba(245,158,11,.35);min-width:110px">
+      <div style="font-size:11px;font-weight:700;color:var(--orange)">📦 Stock</div>
+      <div style="font-size:8px;color:var(--g);font-family:monospace;margin-top:2px">Haiku 4.5</div>
+      <div style="font-size:8px;color:rgba(245,158,11,.65);margin-top:1px">warehouse → tienda<br>reposición FEFO</div>
+    </div>
+  </div>
+
+  <div class="net-arrow fade" id="sagArr3" style="color:rgba(42,171,238,.35)">↓ interfaz conversacional ↓</div>
+
+  <!-- Chuwi -->
+  <div class="slide-up" id="sagChuwi" style="text-align:center">
+    <div style="background:rgba(42,171,238,.1);border:2px solid rgba(42,171,238,.5);border-radius:14px;padding:10px 36px;display:inline-flex;align-items:center;gap:20px;box-shadow:0 0 50px rgba(42,171,238,.15)">
+      <div>
+        <div style="color:var(--blue);font-size:16px;font-weight:900">💬 CHUWI</div>
+        <div style="color:rgba(42,171,238,.6);font-size:9px;font-family:monospace;margin-top:3px">Sonnet 4.6 · streaming · memoria episódica · proactividad · intent classification · 10 intents</div>
+      </div>
+      <div style="background:rgba(42,171,238,.15);border:1px solid rgba(42,171,238,.3);border-radius:20px;padding:5px 14px;font-size:11px;color:var(--blue);font-weight:600">@ChuwiMermaOpsBot</div>
+    </div>
+  </div>
+
+  <!-- Stats row -->
+  <div class="fade" id="sagStats" style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center">
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:4px 13px;text-align:center">
+      <div style="font-size:14px;font-weight:900;color:var(--purple);font-family:monospace">25</div>
+      <div style="font-size:8px;color:var(--g)">tools Kuine</div>
+    </div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:4px 13px;text-align:center">
+      <div style="font-size:14px;font-weight:900;color:var(--green);font-family:monospace">439</div>
+      <div style="font-size:8px;color:var(--g)">tests · 100%</div>
+    </div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:4px 13px;text-align:center">
+      <div style="font-size:14px;font-weight:900;color:var(--red);font-family:monospace">23/23</div>
+      <div style="font-size:8px;color:var(--g)">adversarial</div>
+    </div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:4px 13px;text-align:center">
+      <div style="font-size:14px;font-weight:900;color:var(--blue);font-family:monospace">7</div>
+      <div style="font-size:8px;color:var(--g)">jobs autónomos</div>
+    </div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:4px 13px;text-align:center">
+      <div style="font-size:14px;font-weight:900;color:var(--orange);font-family:monospace">3</div>
+      <div style="font-size:8px;color:var(--g)">modelos LLM</div>
+    </div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:4px 13px;text-align:center">
+      <div style="font-size:14px;font-weight:900;color:var(--green);font-family:monospace">90%</div>
+      <div style="font-size:8px;color:var(--g)">ahorro tokens</div>
     </div>
   </div>
 </div>
@@ -916,9 +1080,10 @@ const SCENES=[
   {id:'s6', dur:14000, label:'Consenso — 3 instancias votando'},
   {id:'s7', dur:13000, label:'Predictor — Open-Meteo'},
   {id:'s8', dur:14000, label:'Visión IA'},
-  {id:'s9', dur:16000, label:'Chuwi — streaming + memoria'},
-  {id:'s10',dur:13000, label:'App Flutter'},
-  {id:'s11',dur:15000, label:'Simulador temporal'},
+  {id:'s9',      dur:16000, label:'Chuwi — streaming + memoria'},
+  {id:'s10',     dur:15000, label:'App + Telegram — sistema completo'},
+  {id:'sAgents', dur:14000, label:'Red de 11 agentes activos'},
+  {id:'s11',     dur:15000, label:'Simulador temporal'},
   {id:'s12',dur:13000, label:'ESG — impacto social'},
   {id:'s13',dur:14000, label:'Evaluación cuantitativa'},
   {id:'s14',dur:10000, label:'Fin'},
@@ -1235,23 +1400,81 @@ function triggerAnims(id){
     streamBotMsg('Esta semana en Super Martínez:\n\n✅ 23 productos salvados\n💰 187€ recuperados\n🌱 8.4 kg CO₂ evitados\n❤️  3 donaciones al Banco de Alimentos\n\nDeducción fiscal: +35% (Ley 49/2002) 🏛️',12400,14);}
 
   if(id==='s10'){
-    T(()=>{vis('s10lbl');vis('s10h');vis('s10p');vis('s10pills');},200);
-    T(()=>vis('s10phone'),400);
+    // Hub + phones appear
+    T(()=>vis('s10lbl'),200);
+    T(()=>vis('s10hub'),400);
+    T(()=>vis('s10tg'),600);
+    T(()=>vis('s10appphone'),800);
+
+    // Telegram conversation
+    const tgBox=document.getElementById('s10tgMsgs');
+    if(tgBox)tgBox.innerHTML='';
+
+    function _s10addMsg(text,delay,isBot){
+      T(()=>{
+        const w=document.createElement('div');
+        w.style.cssText=`display:flex;flex-direction:column;align-items:${isBot?'flex-start':'flex-end'};align-self:${isBot?'flex-start':'flex-end'};max-width:90%`;
+        const d=document.createElement('div');
+        d.className=isBot?'tg-msg-bot':'tg-msg-me';
+        d.style.whiteSpace='pre-wrap';
+        d.textContent=text;
+        const meta=document.createElement('div');meta.className='tg-meta';
+        meta.innerHTML='<span class="tg-time">18:44</span>';
+        w.appendChild(d);w.appendChild(meta);
+        if(tgBox){tgBox.appendChild(w);tgBox.scrollTop=tgBox.scrollHeight;}
+      },delay);}
+
+    // Chuwi proactive alert (nobody asked)
+    T(()=>{
+      const typing=document.createElement('div');
+      typing.className='tg-typing-ind';typing.innerHTML='<span></span><span></span><span></span>';
+      if(tgBox)tgBox.appendChild(typing);
+      setTimeout(()=>{
+        if(tgBox&&typing.parentNode)tgBox.removeChild(typing);
+        _s10addMsg('🔴 NUEVO CRÍTICO\nMerluza fresca · Pasillo 4\nCaduca HOY · 3 uds · 14.97€\n\nKuine recomienda retirar antes de las 14h. ¿Confirmas?',0,true);
+      },800);
+    },1000);
+
+    // User reply
+    _s10addMsg('sí, confirmo retirada',5000,false);
+    T(()=>{
+      const typing2=document.createElement('div');
+      typing2.className='tg-typing-ind';typing2.innerHTML='<span></span><span></span><span></span>';
+      if(tgBox)tgBox.appendChild(typing2);
+      setTimeout(()=>{
+        if(tgBox&&typing2.parentNode)tgBox.removeChild(typing2);
+        _s10addMsg('✅ Acción creada y guardada\nMerluza fresca — RETIRAR\nKuine notificó al personal del Pasillo 4\n\n💰 187€ recuperados esta semana\n🌱 8.4 kg CO₂ evitados',0,true);
+      },700);
+    },6200);
+
+    // App phone KPIs
     T(()=>{
       if(_liveData&&_liveData.critical_count!==undefined){
-        // Real data available — skip countUp animation
-        _injectLiveS10();
+        document.getElementById('s10k1').textContent=_liveData.critical_count;
+        const k2e=document.getElementById('s10k2');if(k2e)k2e.textContent=Math.round(_liveData.value_at_risk||847)+'€';
+        document.getElementById('s10k3').textContent=_liveData.batches_expiring||12;
+        document.getElementById('s10k4').textContent=_liveData.pending_count||18;
+        if(_liveData.brief_summary){const br=document.getElementById('s10brief');if(br)br.textContent=_liveData.brief_summary.slice(0,60)+'...';}
       } else {
-        countUp('app_k1',4,700);
-        const el2=document.getElementById('app_k2');
-        let v=0;const iv=setInterval(()=>{v=Math.min(847,v+13);el2.textContent=Math.round(v)+'€';if(v>=847)clearInterval(iv);},16);
-        countUp('app_k3',12,700);countUp('app_k4',18,700);
+        countUp('s10k1',4,700);
+        const k2e=document.getElementById('s10k2');let v=0;
+        const iv=setInterval(()=>{v=Math.min(847,v+14);if(k2e)k2e.textContent=Math.round(v)+'€';if(v>=847)clearInterval(iv);},16);
+        countUp('s10k3',12,700);countUp('s10k4',18,700);
       }
-    },700);
-    T(()=>{
-      if(!_liveData){
-        document.getElementById('app_brief').textContent='18 acciones · 847€ en riesgo · 3 donaciones propuestas · Score medio 74/100';}
-    },1200);}
+    },900);
+
+    T(()=>vis('s10caption'),3000);}
+
+  if(id==='sAgents'){
+    T(()=>vis('sagLbl'),200);
+    T(()=>vis('sagKuine'),500);
+    T(()=>vis('sagArr1'),1200);
+    T(()=>vis('sagRow1'),1500);
+    T(()=>vis('sagArr2'),3000);
+    T(()=>vis('sagRow2'),3300);
+    T(()=>vis('sagArr3'),4600);
+    T(()=>vis('sagChuwi'),5000);
+    T(()=>vis('sagStats'),6500);}
 
   if(id==='s11'){
     T(()=>vis('s11lbl'),200);

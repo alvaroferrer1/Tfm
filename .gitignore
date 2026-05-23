@@ -47,6 +47,7 @@ app/ios/Pods/
 app/ios/Flutter/Flutter.framework
 app/ios/Flutter/Flutter.podspec
 app/ios/Runner/GeneratedPluginRegistrant.*
+app/macos/Flutter/GeneratedPluginRegistrant.*
 
 # ── IDEs ────────────────────────────────────────────────────────────────────
 .idea/
