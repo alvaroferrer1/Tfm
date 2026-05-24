@@ -1459,11 +1459,30 @@ async def _action_brief(update_or_query, context, user: Optional[dict], is_callb
         ])
 
     if is_callback:
-        await update_or_query.edit_message_text(
-            text, parse_mode=ParseMode.HTML, reply_markup=keyboard
-        )
+        if brief:
+            # Edit menu message with compact card (always <4096 chars)
+            card = _fmt.format_brief_card(
+                brief_date=brief.get("date", ""),
+                value_at_risk=float(brief.get("value_at_risk", 0.0) or 0.0),
+                actions_count=brief.get("actions_count", 0),
+                critical_count=critical_count,
+                high_count=high_count,
+            )
+            await update_or_query.edit_message_text(
+                card, parse_mode=ParseMode.HTML, reply_markup=keyboard
+            )
+            # Send full summary as new message(s) if there is one
+            summary = brief.get("summary", "")
+            if summary:
+                full_text = "📋 <b>Análisis Kuine — completo</b>\n\n" + _fmt._e(summary)
+                chunks = [full_text[i:i+4096] for i in range(0, len(full_text), 4096)]
+                for chunk in chunks:
+                    await update_or_query.message.reply_text(chunk, parse_mode=ParseMode.HTML)
+        else:
+            await update_or_query.edit_message_text(
+                text, parse_mode=ParseMode.HTML, reply_markup=keyboard
+            )
     else:
-        chat_id = update_or_query.effective_chat.id if hasattr(update_or_query, "effective_chat") else update_or_query.message.chat_id
         chunks = [text[i:i+4096] for i in range(0, len(text), 4096)]
         for i, chunk in enumerate(chunks):
             await update_or_query.message.reply_text(

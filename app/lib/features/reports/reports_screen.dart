@@ -13,13 +13,7 @@ import '../../core/user_role_provider.dart';
 import 'dart:io' show File;
 
 final _dailyBriefsProvider = FutureProvider<List<Map<String, dynamic>>>((ref) async {
-  final data = await supabase
-      .from('daily_briefs')
-      .select()
-      .eq('store_id', storeId)
-      .order('date', ascending: false)
-      .limit(14);
-  return List<Map<String, dynamic>>.from(data);
+  return api.getDailyBriefsList(limit: 14);
 });
 
 final _weeklyReportsProvider = FutureProvider<List<Map<String, dynamic>>>((ref) async {

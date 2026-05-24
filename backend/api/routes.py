@@ -153,6 +153,13 @@ def get_daily_brief():
     return brief
 
 
+@router.get("/reports/daily-list")
+def get_daily_briefs_list(limit: int = 14):
+    """Últimos N briefs diarios. Usado por la app Flutter (evita RLS de Supabase)."""
+    briefs = database.get_daily_briefs_list(STORE_ID, limit=min(limit, 30))
+    return {"briefs": briefs}
+
+
 @router.post("/reports/weekly")
 def trigger_weekly_report(background_tasks: BackgroundTasks):
     """Dispara el informe semanal en background."""

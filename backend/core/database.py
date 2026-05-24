@@ -214,6 +214,18 @@ def get_latest_brief(store_id: str) -> dict | None:
     return result.data[0] if result.data else None
 
 
+def get_daily_briefs_list(store_id: str, limit: int = 14) -> list[dict]:
+    result = (
+        get_db().table("daily_briefs")
+        .select("id, store_id, date, value_at_risk, actions_count, summary")
+        .eq("store_id", store_id)
+        .order("date", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    return result.data or []
+
+
 # ── Agent memory (episodic) ───────────────────────────────────────────────────
 
 def get_memory(store_id: str, pattern_key: str) -> str | None:

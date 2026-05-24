@@ -25,6 +25,29 @@ def _semaforo_emoji(semaforo: str) -> str:
 
 # ── Brief del día ─────────────────────────────────────────────────────────────
 
+def format_brief_card(
+    brief_date: str = "",
+    value_at_risk: float = 0.0,
+    actions_count: int = 0,
+    critical_count: int = 0,
+    high_count: int = 0,
+) -> str:
+    """Compact card: stats only, no full summary. Safe for edit_message_text (≤4096)."""
+    fecha = brief_date or _date.today().isoformat()
+    semaforo = "🔴 ALERTA" if critical_count >= 3 else "🟡 ATENCIÓN" if critical_count >= 1 else "🟢 NORMAL"
+    lines = [
+        f"┌{'─' * 32}┐",
+        f"│  📋  <b>BRIEF — {_e(fecha)}</b>",
+        f"└{'─' * 32}┘",
+        "",
+        f"{semaforo}  <b>{critical_count} crítico(s)</b> · {high_count} alto(s) · {actions_count} acciones",
+        f"💰 Valor en riesgo: <b>{value_at_risk:.2f} €</b>",
+        "",
+        "El análisis completo aparece a continuación ↓",
+    ]
+    return "\n".join(lines)
+
+
 def format_brief(
     summary: str,
     brief_date: str = "",

@@ -89,6 +89,15 @@ class ApiService {
     }
   }
 
+  Future<List<Map<String, dynamic>>> getDailyBriefsList({int limit = 14}) async {
+    final resp = await http.get(
+      Uri.parse('$_baseUrl/reports/daily-list?limit=$limit'),
+      headers: _headers,
+    ).timeout(const Duration(seconds: 15));
+    final data = _parse(resp);
+    return List<Map<String, dynamic>>.from(data['briefs'] ?? []);
+  }
+
   Future<List<Map<String, dynamic>>> getSupplierStats() async {
     final resp = await http.get(
       Uri.parse('$_baseUrl/stats/suppliers'),
