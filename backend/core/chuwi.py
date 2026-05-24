@@ -508,6 +508,147 @@ def _route_action_keyboard(action_id: str, remaining: int) -> InlineKeyboardMark
     return InlineKeyboardMarkup(rows)
 
 
+def _format_action_card(action: dict, index: int = 0, total: int = 0) -> str:
+    """Tarjeta rica por producto: ubicación, urgencia, precio, razonamiento, qué hacer."""
+    batch = action.get("batches") or {}
+    product = (batch.get("products") or {}) if batch else {}
+    name = product.get("name", "Producto")
+    pasillo = product.get("pasillo", "?")
+    estanteria = product.get("estanteria", "?")
+    nivel = product.get("nivel", "?")
+    atype = action.get("action_type", "revisar")
+    score = action.get("priority_score", 0)
+    notes = action.get("notes", "")
+    new_price = action.get("new_price")
+    price_adj = action.get("price_adjustment_pct")
+    expiry = batch.get("expiry_date", "")
+    current_price = float(product.get("price") or 0)
+    cost = float(product.get("cost") or 0)
+    qty = int(batch.get("quantity") or 0)
+
+    urgency_icon = "🔴" if score >= 85 else "🟡" if score >= 65 else "🟢"
+    action_label = {
+        "rebajar": "💰 REBAJAR PRECIO",
+        "donar":   "❤️  DONAR",
+        "retirar": "🗑 RETIRAR",
+        "revisar": "🔍 REVISAR",
+        "mover":   "📦 MOVER A TIENDA",
+    }.get(atype, atype.upper())
+
+    header = f"{urgency_icon} <b>{name}</b>"
+    if index and total:
+        header = f"Acción {index}/{total} · {header}"
+
+    lines = [
+        header,
+        f"📍 Pasillo {pasillo} · Est. {estanteria} · Nivel {nivel}",
+        "",
+        f"<b>Acción recomendada:</b> {action_label}",
+    ]
+
+    if expiry:
+        try:
+            days = (date.fromisoformat(expiry) - date.today()).days
+            if days < 0:
+                lines.append(f"⛔ <b>CADUCADO hace {abs(days)} día(s)</b> — {expiry}")
+            elif days == 0:
+                lines.append(f"⚠️ <b>Caduca HOY</b> — {expiry}")
+            elif days == 1:
+                lines.append(f"⏰ Caduca <b>mañana</b> — {expiry}")
+            else:
+                lines.append(f"📅 Caduca en <b>{days} días</b> — {expiry}")
+        except Exception:
+            lines.append(f"📅 Caduca: {expiry}")
+
+    if qty:
+        lines.append(f"📦 Unidades en tienda: <b>{qty}</b>")
+
+    lines.append("")
+
+    if atype == "rebajar" and new_price and current_price:
+        recuperacion = round(new_price * qty, 2)
+        pct = int(price_adj) if price_adj else int((1 - new_price / current_price) * 100)
+        lines += [
+            f"💶 Precio actual: {current_price:.2f}€",
+            f"💰 <b>Nuevo precio: {new_price:.2f}€  (−{abs(pct)}%)</b>",
+            f"✓ Coste unitario: {cost:.2f}€ — sigues en positivo",
+            f"✓ Si vendes todo: recuperas <b>{recuperacion:.2f}€</b>",
+            f"   (vs perder {round(qty * cost, 2):.2f}€ si no haces nada)",
+        ]
+    elif atype == "donar":
+        coste_total = round(qty * cost, 2)
+        deduccion = round(coste_total * 0.35, 2)
+        lines += [
+            f"❤️  Donación: {qty} unidades",
+            f"💶 Valor a coste: {coste_total:.2f}€",
+            f"🏛 Deducción fiscal 35% (Ley 49/2002): <b>{deduccion:.2f}€</b>",
+            "   Mejor que tirarlo: impacto social + ahorro fiscal",
+        ]
+    elif atype == "retirar":
+        coste_total = round(qty * cost, 2)
+        lines += [
+            f"🗑 Unidades a retirar: {qty}",
+            f"💸 Pérdida inevitable: {coste_total:.2f}€ a coste",
+            "⚠️  Normativa sanitaria: prohibido vender o donar producto caducado",
+            "   Registrar en albarán de merma + contenedor residuos orgánicos",
+        ]
+    elif atype == "mover":
+        lines += [
+            "📦 Trasladar del almacén a la estantería de tienda",
+            "   Reponer el lineal para que sea visible al cliente",
+        ]
+
+    if notes and atype not in ("rebajar", "donar", "retirar", "mover"):
+        lines += ["", f"<i>{notes[:180]}</i>"]
+
+    return "\n".join(lines)
+
+
+def _action_card_keyboard(action: dict, remaining: int = 0) -> InlineKeyboardMarkup:
+    """Botones específicos por tipo de acción. El empleado decide con un toque."""
+    action_id = action.get("id", "")
+    atype = action.get("action_type", "revisar")
+    new_price = action.get("new_price")
+    rows = []
+
+    if atype == "rebajar":
+        price_label = f"✅ Confirmar {new_price:.2f}€" if new_price else "✅ Confirmar rebaja"
+        rows.append([
+            InlineKeyboardButton(price_label, callback_data=f"action_confirm:{action_id}"),
+            InlineKeyboardButton("❤️ Donar en vez", callback_data=f"action_donate:{action_id}"),
+        ])
+    elif atype == "donar":
+        rows.append([
+            InlineKeyboardButton("❤️ Banco Alimentos", callback_data=f"action_donate_entity:{action_id}:banco_alimentos"),
+            InlineKeyboardButton("🕊 Cáritas", callback_data=f"action_donate_entity:{action_id}:caritas"),
+        ])
+        rows.append([
+            InlineKeyboardButton("💰 Rebajar en vez", callback_data=f"action_rebajar_instead:{action_id}"),
+        ])
+    elif atype == "retirar":
+        rows.append([
+            InlineKeyboardButton("🗑 Confirmar retirada", callback_data=f"action_confirm:{action_id}"),
+            InlineKeyboardButton("❤️ Donar si válido", callback_data=f"action_donate:{action_id}"),
+        ])
+    elif atype == "mover":
+        rows.append([
+            InlineKeyboardButton("✅ Ya está en tienda", callback_data=f"action_confirm:{action_id}"),
+        ])
+    else:  # revisar
+        rows.append([
+            InlineKeyboardButton("✅ Revisado, todo OK", callback_data=f"action_confirm:{action_id}"),
+            InlineKeyboardButton("🔴 Necesita acción", callback_data=f"action_escalate:{action_id}"),
+        ])
+
+    nav = []
+    if remaining > 0:
+        nav.append(InlineKeyboardButton(f"⏭ Siguiente ({remaining} más)", callback_data="cmd:acciones"))
+    nav.append(InlineKeyboardButton("📋 Ver todas", callback_data="cmd:acciones"))
+    rows.append(nav)
+    rows.append([InlineKeyboardButton("↩ Menú", callback_data="cmd:menu")])
+    return InlineKeyboardMarkup(rows)
+
+
 # ── Herramientas del agente Chuwi ── Claude decide cuál usar, no if/else ──────
 # Esta es la diferencia entre un agente real y un bot: Claude razona sobre
 # qué información necesita y llama las herramientas que corresponden.
@@ -1359,13 +1500,11 @@ async def _start_route_mode(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     })
 
     first = actions[0]
-    text = (
-        f"🗺 MODO RUTA ACTIVA — {len(actions)} acciones pendientes\n\n"
-        + _format_route_action(first, 1, len(actions))
-        + "\n\n¿Listo para empezar?"
-    )
-    keyboard = _route_action_keyboard(first.get("id", ""), len(actions))
-    await update.message.reply_text(_md_to_html(text), parse_mode=ParseMode.HTML, reply_markup=keyboard)
+    total = len(actions)
+    header = f"🗺 <b>MODO RUTA — {total} acciones pendientes</b>\n\n"
+    card = _format_action_card(first, index=1, total=total)
+    keyboard = _action_card_keyboard(first, remaining=total - 1)
+    await update.message.reply_text(header + card, parse_mode=ParseMode.HTML, reply_markup=keyboard)
 
 
 # ── Completar acción desde Telegram ──────────────────────────────────────────
@@ -1495,16 +1634,29 @@ async def _action_brief(update_or_query, context, user: Optional[dict], is_callb
 async def _action_acciones(update_or_query, context, user: Optional[dict], is_callback=False):
     pending = database.get_pending_actions(STORE_ID)
     text = _fmt.format_actions(pending)
+
     if not pending:
         keyboard = _back_keyboard()
     else:
-        keyboard = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("🗺 Iniciar ruta", callback_data="cmd:iniciar_ruta"),
-                InlineKeyboardButton("✅ Marcar hecha", callback_data="cmd:marcar_hecha"),
-            ],
-            [InlineKeyboardButton("↩ Menú", callback_data="cmd:menu")],
+        rows = []
+        # Botón directo a tarjeta de detalle para cada acción (máx 5)
+        _ICON = {"rebajar": "💰", "donar": "❤️", "retirar": "🗑", "revisar": "🔍", "mover": "📦"}
+        for a in pending[:5]:
+            batch = a.get("batches") or {}
+            product = (batch.get("products") or {}) if batch else {}
+            name = product.get("name", "Producto")[:22]
+            icon = _ICON.get(a.get("action_type", ""), "⚡")
+            score = a.get("priority_score", 0)
+            urgency = "🔴" if score >= 85 else "🟡" if score >= 65 else "🟢"
+            rows.append([InlineKeyboardButton(
+                f"{urgency}{icon} {name}",
+                callback_data=f"action_detail:{a['id']}"
+            )])
+        rows.append([
+            InlineKeyboardButton("🗺 Modo ruta", callback_data="cmd:iniciar_ruta"),
+            InlineKeyboardButton("↩ Menú", callback_data="cmd:menu"),
         ])
+        keyboard = InlineKeyboardMarkup(rows)
 
     if is_callback:
         await update_or_query.edit_message_text(
@@ -2397,7 +2549,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await _safe_edit(query.message, result, reply_markup=keyboard)
         return
 
-    # ── Marcar acción completada ──
+    # ── Marcar acción completada (legacy) ──
     if data.startswith("complete_action:"):
         action_id = data[16:]
         try:
@@ -2413,6 +2565,217 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 f"Error al marcar la acción: {e}",
                 reply_markup=_back_keyboard()
             )
+        return
+
+    # ── Ver tarjeta de detalle de una acción ──
+    if data.startswith("action_detail:"):
+        action_id = data[14:]
+        pending = database.get_pending_actions(STORE_ID)
+        action = next((a for a in pending if a.get("id") == action_id), None)
+        if not action:
+            await query.edit_message_text("Esta acción ya no está pendiente.", reply_markup=_back_keyboard())
+            return
+        idx = pending.index(action) + 1
+        card = _format_action_card(action, index=idx, total=len(pending))
+        keyboard = _action_card_keyboard(action, remaining=len(pending) - idx)
+        await query.edit_message_text(card, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+        return
+
+    # ── Confirmar acción (rebajar / retirar / mover / revisar OK) ──
+    if data.startswith("action_confirm:"):
+        action_id = data[15:]
+        u_id = user.get("id", "") if user else ""
+        u_name = (user.get("email") or "empleado").split("@")[0] if user else "empleado"
+        try:
+            # Recuperar info antes de completar
+            pending = database.get_pending_actions(STORE_ID)
+            action = next((a for a in pending if a.get("id") == action_id), None)
+            database.complete_action(action_id, u_id)
+
+            # Resumen de lo que se hizo
+            if action:
+                batch = action.get("batches") or {}
+                product = (batch.get("products") or {}) if batch else {}
+                name = product.get("name", "Producto")
+                atype = action.get("action_type", "completar")
+                new_price = action.get("new_price")
+                qty = int(batch.get("quantity") or 0)
+                atype_text = {
+                    "rebajar": f"Precio actualizado a {new_price:.2f}€ — etiqueta el estante",
+                    "retirar": f"{qty} unidades retiradas — registra en albarán de merma",
+                    "mover": f"{qty} unidades trasladadas del almacén a tienda",
+                    "revisar": "Revisado y conforme",
+                }.get(atype, "Completada")
+                summary = f"✅ <b>{name}</b>\n{atype_text}"
+            else:
+                summary = "✅ Acción completada"
+
+            # Mostrar siguiente acción pendiente
+            remaining = database.get_pending_actions(STORE_ID)
+            if remaining:
+                next_a = remaining[0]
+                next_batch = next_a.get("batches") or {}
+                next_prod = (next_batch.get("products") or {}) if next_batch else {}
+                next_name = next_prod.get("name", "siguiente producto")
+                score = next_a.get("priority_score", 0)
+                icon = "🔴" if score >= 85 else "🟡"
+                text = (
+                    f"{summary}\n\n"
+                    f"Quedan <b>{len(remaining)}</b> acciones pendientes.\n"
+                    f"Siguiente {icon}: <b>{next_name}</b>"
+                )
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("▶️ Ver siguiente", callback_data=f"action_detail:{next_a['id']}")],
+                    [InlineKeyboardButton("📋 Ver todas", callback_data="cmd:acciones"),
+                     InlineKeyboardButton("↩ Menú", callback_data="cmd:menu")],
+                ])
+            else:
+                text = f"{summary}\n\n🏆 <b>¡Sin acciones pendientes!</b>\nTodo gestionado por hoy."
+                keyboard = _main_menu_keyboard(_is_manager(user))
+
+            await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+        except Exception as e:
+            await query.edit_message_text(f"Error al completar la acción: {e}", reply_markup=_back_keyboard())
+        return
+
+    # ── Donar desde tarjeta de acción (selección de entidad) ──
+    if data.startswith("action_donate:"):
+        action_id = data[14:]
+        pending = database.get_pending_actions(STORE_ID)
+        action = next((a for a in pending if a.get("id") == action_id), None)
+        if not action:
+            await query.edit_message_text("Acción no encontrada.", reply_markup=_back_keyboard())
+            return
+        batch = action.get("batches") or {}
+        product = (batch.get("products") or {}) if batch else {}
+        name = product.get("name", "Producto")
+        qty = int(batch.get("quantity") or 0)
+        cost = float(product.get("cost") or 0)
+        deduccion = round(qty * cost * 0.35, 2)
+        text = (
+            f"❤️ <b>Donar: {name}</b>\n\n"
+            f"{qty} unidades · Deducción fiscal: {deduccion:.2f}€\n\n"
+            "¿A qué entidad?"
+        )
+        bid = action.get("batch_id", "")
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🏛 Banco de Alimentos", callback_data=f"action_donate_entity:{action_id}:banco_alimentos"),
+             InlineKeyboardButton("🕊 Cáritas", callback_data=f"action_donate_entity:{action_id}:caritas")],
+            [InlineKeyboardButton("🔴 Cruz Roja", callback_data=f"action_donate_entity:{action_id}:cruz_roja"),
+             InlineKeyboardButton("↩ Volver", callback_data=f"action_detail:{action_id}")],
+        ])
+        await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+        return
+
+    # ── Confirmar donación con entidad elegida ──
+    if data.startswith("action_donate_entity:"):
+        parts = data.split(":", 2)
+        action_id = parts[1] if len(parts) > 1 else ""
+        entity_key = parts[2] if len(parts) > 2 else "banco_alimentos"
+        entity_names = {
+            "banco_alimentos": "Banco de Alimentos",
+            "caritas": "Cáritas",
+            "cruz_roja": "Cruz Roja",
+        }
+        entity_display = entity_names.get(entity_key, entity_key)
+        u_id = user.get("id", "") if user else ""
+        u_name = (user.get("email") or "empleado").split("@")[0] if user else "empleado"
+        try:
+            pending = database.get_pending_actions(STORE_ID)
+            action = next((a for a in pending if a.get("id") == action_id), None)
+            batch = (action.get("batches") or {}) if action else {}
+            product = (batch.get("products") or {}) if batch else {}
+            name = product.get("name", "Producto")
+            qty = int(batch.get("quantity") or 0)
+            cost = float(product.get("cost") or 0)
+            batch_id = (action or {}).get("batch_id", "")
+
+            database.log_donation({
+                "store_id": STORE_ID,
+                "batch_id": batch_id or None,
+                "entity": entity_display,
+                "quantity": qty,
+                "value_donated": round(qty * cost, 2),
+                "donated_at": datetime.now(timezone.utc).isoformat(),
+                "donated_by": u_name,
+            })
+            database.complete_action(action_id, u_id, notes=f"Donado a {entity_display}")
+
+            deduccion = round(qty * cost * 0.35, 2)
+            remaining = database.get_pending_actions(STORE_ID)
+            text = (
+                f"❤️ <b>Donación registrada</b>\n\n"
+                f"Producto: <b>{name}</b>\n"
+                f"Entidad: {entity_display}\n"
+                f"Cantidad: {qty} unidades\n"
+                f"Valor donado: {round(qty * cost, 2):.2f}€\n"
+                f"Deducción fiscal: <b>{deduccion:.2f}€</b>\n\n"
+                f"Quedan {len(remaining)} acciones pendientes."
+            )
+            if remaining:
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("▶️ Siguiente acción", callback_data=f"action_detail:{remaining[0]['id']}")],
+                    [InlineKeyboardButton("📋 Ver todas", callback_data="cmd:acciones"),
+                     InlineKeyboardButton("↩ Menú", callback_data="cmd:menu")],
+                ])
+            else:
+                keyboard = _main_menu_keyboard(_is_manager(user))
+            await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+        except Exception as e:
+            await query.edit_message_text(f"Error al registrar donación: {e}", reply_markup=_back_keyboard())
+        return
+
+    # ── Escalar revisión a acción urgente ──
+    if data.startswith("action_escalate:"):
+        action_id = data[16:]
+        u_id = user.get("id", "") if user else ""
+        try:
+            database.get_db().table("actions").update({
+                "action_type": "rebajar",
+                "priority_score": 85,
+                "notes": "Escalado desde revisión — necesita acción urgente",
+            }).eq("id", action_id).execute()
+            pending = database.get_pending_actions(STORE_ID)
+            action = next((a for a in pending if a.get("id") == action_id), None)
+            if action:
+                card = _format_action_card(action)
+                keyboard = _action_card_keyboard(action, remaining=len(pending) - 1)
+                await query.edit_message_text(
+                    "🔴 Escalado a CRÍTICO. Nueva tarjeta:\n\n" + card,
+                    parse_mode=ParseMode.HTML, reply_markup=keyboard
+                )
+            else:
+                await query.edit_message_text("Actualizado.", reply_markup=_back_keyboard())
+        except Exception as e:
+            await query.edit_message_text(f"Error: {e}", reply_markup=_back_keyboard())
+        return
+
+    # ── Rebajar en vez de donar ──
+    if data.startswith("action_rebajar_instead:"):
+        action_id = data[23:]
+        try:
+            pending = database.get_pending_actions(STORE_ID)
+            action = next((a for a in pending if a.get("id") == action_id), None)
+            if action:
+                batch = action.get("batches") or {}
+                product = (batch.get("products") or {}) if batch else {}
+                current_price = float(product.get("price") or 0)
+                new_price = round(current_price * 0.5, 2)
+                database.get_db().table("actions").update({
+                    "action_type": "rebajar",
+                    "new_price": new_price,
+                    "price_adjustment_pct": -50,
+                    "notes": "Cambiado de donación a rebaja de precio",
+                }).eq("id", action_id).execute()
+                updated = database.get_pending_actions(STORE_ID)
+                action = next((a for a in updated if a.get("id") == action_id), action)
+                card = _format_action_card(action)
+                keyboard = _action_card_keyboard(action, remaining=len(updated) - 1)
+                await query.edit_message_text(card, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+            else:
+                await query.edit_message_text("Acción no encontrada.", reply_markup=_back_keyboard())
+        except Exception as e:
+            await query.edit_message_text(f"Error: {e}", reply_markup=_back_keyboard())
         return
 
     # ── Modo ruta: confirmar acción completada ──
@@ -2437,34 +2800,26 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 completed = len(state["data"].get("completed", []))
                 skipped = len(state["data"].get("skipped", []))
                 await query.edit_message_text(
-                    f"🏁 RUTA COMPLETADA\n\n"
+                    f"🏁 <b>RUTA COMPLETADA</b>\n\n"
                     f"✅ {completed} acciones completadas\n"
                     f"⏭ {skipped} saltadas\n\n"
                     "Buen trabajo. Las acciones saltadas siguen pendientes en la app.",
-                    reply_markup=_back_keyboard()
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=_main_menu_keyboard(_is_manager(user))
                 )
             else:
-                # Siguiente acción
                 _set_conv_state(user_id, "route_active", state["data"])
                 actions = _get_route_actions()
                 remaining_actions = [a for a in actions if a.get("id") in action_ids[current_idx:]]
                 if remaining_actions:
                     next_action = remaining_actions[0]
                     total = len(action_ids)
-                    text = (
-                        f"✅ Hecho. Siguiente:\n\n"
-                        + _format_route_action(next_action, current_idx + 1, total)
-                    )
-                    keyboard = _route_action_keyboard(next_action.get("id", ""), total - current_idx - 1)
-                    await query.edit_message_text(
-                        _md_to_html(text), parse_mode=ParseMode.HTML, reply_markup=keyboard
-                    )
+                    card = _format_action_card(next_action, index=current_idx + 1, total=total)
+                    keyboard = _action_card_keyboard(next_action, remaining=total - current_idx - 1)
+                    await query.edit_message_text(card, parse_mode=ParseMode.HTML, reply_markup=keyboard)
                 else:
                     _clear_conv_state(user_id)
-                    await query.edit_message_text(
-                        "✅ Ruta completada.",
-                        reply_markup=_back_keyboard()
-                    )
+                    await query.edit_message_text("✅ Ruta completada.", reply_markup=_main_menu_keyboard(_is_manager(user)))
         return
 
     # ── Modo ruta: saltar acción ──
@@ -2482,8 +2837,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             if current_idx >= len(action_ids):
                 _clear_conv_state(user_id)
                 await query.edit_message_text(
-                    "Ruta terminada. Tienes acciones saltadas pendientes en la app.",
-                    reply_markup=_back_keyboard()
+                    "Ruta terminada. Tienes acciones saltadas pendientes.",
+                    reply_markup=_main_menu_keyboard(_is_manager(user))
                 )
             else:
                 actions = _get_route_actions()
@@ -2491,17 +2846,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 if remaining:
                     next_action = remaining[0]
                     total = len(action_ids)
-                    text = (
-                        f"⏭ Saltada. Siguiente:\n\n"
-                        + _format_route_action(next_action, current_idx + 1, total)
-                    )
-                    keyboard = _route_action_keyboard(next_action.get("id", ""), total - current_idx - 1)
-                    await query.edit_message_text(
-                        _md_to_html(text), parse_mode=ParseMode.HTML, reply_markup=keyboard
-                    )
+                    card = _format_action_card(next_action, index=current_idx + 1, total=total)
+                    keyboard = _action_card_keyboard(next_action, remaining=total - current_idx - 1)
+                    await query.edit_message_text(card, parse_mode=ParseMode.HTML, reply_markup=keyboard)
                 else:
                     _clear_conv_state(user_id)
-                    await query.edit_message_text("Ruta terminada.", reply_markup=_back_keyboard())
+                    await query.edit_message_text("Ruta terminada.", reply_markup=_main_menu_keyboard(_is_manager(user)))
         return
 
     # ── Donación proactiva sugerida por Kuine ── empleado elige entidad con un toque ──
@@ -2768,14 +3118,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         })
 
         first = actions[0]
-        text = (
-            f"🗺 MODO RUTA ACTIVA — {len(actions)} acciones pendientes\n\n"
-            + _format_route_action(first, 1, len(actions))
-        )
-        keyboard = _route_action_keyboard(first.get("id", ""), len(actions))
-        await query.edit_message_text(
-            _md_to_html(text), parse_mode=ParseMode.HTML, reply_markup=keyboard
-        )
+        total = len(actions)
+        header = f"🗺 <b>MODO RUTA — {total} acciones pendientes</b>\n\n"
+        card = _format_action_card(first, index=1, total=total)
+        keyboard = _action_card_keyboard(first, remaining=total - 1)
+        await query.edit_message_text(header + card, parse_mode=ParseMode.HTML, reply_markup=keyboard)
         return
 
     # ── Demo callbacks (avanzar días / reset) ──

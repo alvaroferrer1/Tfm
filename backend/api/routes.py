@@ -160,6 +160,8 @@ def get_daily_briefs_list(limit: int = 14):
     return {"briefs": briefs}
 
 
+
+
 @router.post("/reports/weekly")
 def trigger_weekly_report(background_tasks: BackgroundTasks):
     """Dispara el informe semanal en background."""
