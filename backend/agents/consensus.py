@@ -391,13 +391,31 @@ def reach_consensus(
             f"{v['perspective']}→{v['action']}({v['confidence']}%)" for v in votes
         )
 
+        # Sintetizar en lenguaje cotidiano para que Chuwi lo transmita directamente al empleado
+        _name = product.get("name", "el producto")
+        _days_str = "hoy" if days_left == 0 else f"en {days_left} días" if days_left > 0 else "ya caducado"
+        _action_text = {
+            "rebajar": f"ponle el fleje amarillo de -{'%d%%' % weighted_discount}",
+            "donar": "prepáralo para donación (Cáritas/Banco de Alimentos)",
+            "retirar": "retíralo del lineal y pica merma",
+            "revisar": "dale un vistazo antes de decidir",
+            "reponer": "baja más del almacén (FEFO)",
+            "ok": "todo bien, no hace falta hacer nada",
+        }.get(winner_action, winner_action)
+        human_reasoning = (
+            f"Hemos revisado el lote de {_name} (caduca {_days_str}, {qty} uds). "
+            f"Lo mejor es {_action_text}."
+            + (f" ¿Te parece bien?" if winner_count < 3 else "")
+        )
+
         return _build_result(
             action=winner_action,
             confidence=avg_confidence,
             price_adjustment_pct=weighted_discount,
-            reasoning=winning[0]["reasoning"] + dissent_note,
+            reasoning=human_reasoning,
             thinking_summary=(
-                f"Consenso {winner_count}/3 ponderado por confianza — {vote_trace}"
+                f"Consenso {winner_count}/3 — " +
+                " | ".join(f"{v['perspective']}→{v['action']}" for v in votes)
             ),
             days_left=days_left,
             total_value_at_risk=round(qty * float(product.get("price", 0)), 2),

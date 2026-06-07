@@ -2,20 +2,21 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'api_service.dart';
+import 'theme.dart' show ShimmerList;
 
 enum UserRole { staff, manager, admin }
 
 extension UserRoleX on UserRole {
   String get label => switch (this) {
-        UserRole.staff => 'Encargado',
-        UserRole.manager => 'Supervisor',
+        UserRole.staff => 'Empleado',       // empleado de tienda
+        UserRole.manager => 'Encargado',    // responsable / manager
         UserRole.admin => 'Admin',
       };
 
   String get description => switch (this) {
-        UserRole.staff => 'Acceso a operaciones de tienda',
-        UserRole.manager => 'Acceso a informes y agentes',
-        UserRole.admin => 'Acceso completo',
+        UserRole.staff => 'Acceso a operaciones del día (escanear, completar acciones)',
+        UserRole.manager => 'Acceso completo: informes, agentes, pedidos, ESG',
+        UserRole.admin => 'Acceso total incluyendo demo y configuración',
       };
 
   IconData get icon => switch (this) {
@@ -67,7 +68,7 @@ class RoleGate extends ConsumerWidget {
     final roleAsync = ref.watch(userRoleProvider);
 
     return roleAsync.when(
-      loading: () => const Center(child: CircularProgressIndicator()),
+      loading: () => const ShimmerList(count: 2, itemHeight: 60),
       error: (_, __) => child,
       data: (role) {
         if (role.index >= requiredRole.index) return child;

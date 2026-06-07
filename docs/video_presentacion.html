@@ -1,0 +1,1434 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MermaOps — Presentación TFM</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0F172A;
+    --surface: #1E293B;
+    --surface2: #334155;
+    --green: #10B981;
+    --green-light: #34D399;
+    --green-dark: #059669;
+    --text: #F1F5F9;
+    --text-muted: #94A3B8;
+    --yellow: #F59E0B;
+    --orange: #F97316;
+    --red: #EF4444;
+    --blue: #3B82F6;
+    --purple: #8B5CF6;
+  }
+
+  html, body {
+    width: 100vw; height: 100vh;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  }
+
+  /* ─── PARTICLE BACKGROUND ─── */
+  .particles {
+    position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    overflow: hidden;
+  }
+  .particle {
+    position: absolute;
+    border-radius: 50%;
+    background: var(--green);
+    opacity: 0;
+    animation: particleFloat linear infinite;
+  }
+  @keyframes particleFloat {
+    0%   { transform: translateY(100vh) scale(0); opacity: 0; }
+    10%  { opacity: 0.15; }
+    90%  { opacity: 0.08; }
+    100% { transform: translateY(-10vh) scale(1); opacity: 0; }
+  }
+
+  /* ─── SLIDE CONTAINER ─── */
+  #slides {
+    position: relative; width: 100vw; height: 100vh; z-index: 1;
+  }
+
+  .slide {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    padding: 48px 80px;
+    opacity: 0;
+    transform: translateY(24px);
+    transition: opacity 0.8s ease, transform 0.8s ease;
+    pointer-events: none;
+  }
+  .slide.active {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: all;
+  }
+  .slide.exiting {
+    opacity: 0;
+    transform: translateY(-24px);
+    transition: opacity 0.6s ease, transform 0.6s ease;
+  }
+
+  /* ─── HUD ─── */
+  #hud {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    z-index: 100;
+    padding: 0 0 0 0;
+  }
+  #progress-bar-bg {
+    width: 100%; height: 4px;
+    background: var(--surface2);
+  }
+  #progress-bar {
+    height: 4px;
+    background: linear-gradient(90deg, var(--green-dark), var(--green), var(--green-light));
+    width: 0%;
+    transition: width 0.5s linear;
+    box-shadow: 0 0 12px var(--green);
+  }
+  #hud-info {
+    display: flex; justify-content: flex-end; align-items: center;
+    padding: 8px 24px;
+    background: rgba(15,23,42,0.85);
+  }
+  #slide-counter {
+    font-size: 13px; color: var(--text-muted); letter-spacing: 0.08em;
+    font-variant-numeric: tabular-nums;
+  }
+  #slide-counter span { color: var(--green); font-weight: 700; }
+
+  /* ─── UTILITY ─── */
+  .tag {
+    display: inline-block;
+    background: rgba(16,185,129,0.15);
+    border: 1px solid rgba(16,185,129,0.4);
+    color: var(--green-light);
+    font-size: 12px; font-weight: 600; letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 4px 14px; border-radius: 999px;
+    margin-bottom: 20px;
+  }
+  .h1 { font-size: clamp(36px,5vw,72px); font-weight: 900; line-height: 1.05; letter-spacing: -0.03em; }
+  .h2 { font-size: clamp(24px,3vw,44px); font-weight: 800; line-height: 1.15; letter-spacing: -0.02em; }
+  .h3 { font-size: clamp(18px,2.2vw,32px); font-weight: 700; line-height: 1.2; }
+  .sub { font-size: clamp(14px,1.4vw,20px); color: var(--text-muted); line-height: 1.6; }
+  .green { color: var(--green); }
+  .green-light { color: var(--green-light); }
+  .yellow { color: var(--yellow); }
+  .orange { color: var(--orange); }
+  .red-c { color: var(--red); }
+  .muted { color: var(--text-muted); }
+
+  /* glow text */
+  .glow {
+    text-shadow: 0 0 40px rgba(16,185,129,0.6), 0 0 80px rgba(16,185,129,0.3);
+  }
+
+  /* card */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--surface2);
+    border-radius: 16px;
+    padding: 24px 32px;
+  }
+  .card-green {
+    background: rgba(16,185,129,0.08);
+    border: 1px solid rgba(16,185,129,0.3);
+    border-radius: 16px;
+    padding: 24px 32px;
+  }
+
+  /* ─────────────────────────────────────────
+     SLIDE 1 — TITLE
+  ───────────────────────────────────────── */
+  #s1 { text-align: center; gap: 0; }
+  .s1-pulse {
+    position: absolute;
+    width: 600px; height: 600px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(16,185,129,0.12) 0%, transparent 70%);
+    animation: pulse 3s ease-in-out infinite;
+    pointer-events: none;
+  }
+  .s1-pulse2 {
+    position: absolute;
+    width: 900px; height: 900px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(16,185,129,0.06) 0%, transparent 70%);
+    animation: pulse 3s ease-in-out infinite 1.5s;
+    pointer-events: none;
+  }
+  @keyframes pulse {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.12); opacity: 0.7; }
+  }
+  .s1-logo {
+    font-size: clamp(64px,8vw,120px);
+    font-weight: 900;
+    letter-spacing: -0.04em;
+    color: var(--green);
+    line-height: 1;
+    margin-bottom: 16px;
+    position: relative;
+  }
+  .s1-logo span { color: var(--text); }
+  .s1-sub {
+    font-size: clamp(16px,2vw,26px);
+    color: var(--text-muted);
+    max-width: 700px;
+    line-height: 1.5;
+    margin-bottom: 12px;
+  }
+  .s1-footer {
+    position: absolute; bottom: 80px; left: 0; right: 0;
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 0 80px;
+    font-size: 14px; color: var(--text-muted);
+  }
+  .s1-name {
+    font-weight: 700; color: var(--text); font-size: 16px;
+  }
+  .dot-divider {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--green); display: inline-block; margin: 0 10px; vertical-align: middle;
+  }
+
+  /* ─────────────────────────────────────────
+     SLIDE 2 — EL PROBLEMA
+  ───────────────────────────────────────── */
+  #s2 { gap: 32px; align-items: flex-start; }
+  .stat-hero {
+    font-size: clamp(48px,6vw,88px);
+    font-weight: 900;
+    color: var(--red);
+    line-height: 1;
+    letter-spacing: -0.04em;
+  }
+  .stat-hero-label { font-size: 18px; color: var(--text-muted); margin-top: 6px; }
+  .problem-grid {
+    display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; width: 100%;
+  }
+  .problem-card {
+    background: var(--surface);
+    border: 1px solid var(--surface2);
+    border-radius: 16px;
+    padding: 28px 24px;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .problem-icon {
+    width: 48px; height: 48px; border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 24px;
+  }
+  .icon-red { background: rgba(239,68,68,0.15); }
+  .icon-yellow { background: rgba(245,158,11,0.15); }
+  .icon-blue { background: rgba(59,130,246,0.15); }
+  .problem-num {
+    font-size: clamp(22px,2.5vw,36px);
+    font-weight: 800;
+    line-height: 1;
+  }
+  .problem-desc { font-size: 14px; color: var(--text-muted); line-height: 1.5; }
+
+  /* ─────────────────────────────────────────
+     SLIDE 3 — LA SOLUCIÓN
+  ───────────────────────────────────────── */
+  #s3 { gap: 28px; align-items: flex-start; }
+  .sol-cost {
+    display: inline-flex; align-items: center; gap: 12px;
+    background: rgba(16,185,129,0.12);
+    border: 1px solid var(--green);
+    border-radius: 12px;
+    padding: 12px 28px;
+  }
+  .sol-cost-num {
+    font-size: 48px; font-weight: 900; color: var(--green); line-height: 1;
+  }
+  .sol-cost-label { font-size: 14px; color: var(--text-muted); line-height: 1.4; }
+  .sol-channels {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 20px; width: 100%;
+  }
+  .sol-channel {
+    background: var(--surface);
+    border: 1px solid var(--surface2);
+    border-radius: 16px;
+    padding: 28px;
+    display: flex; align-items: center; gap: 20px;
+  }
+  .channel-icon {
+    width: 56px; height: 56px; border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 28px;
+    flex-shrink: 0;
+  }
+  .tg-icon { background: rgba(59,130,246,0.15); }
+  .fl-icon { background: rgba(139,92,246,0.15); }
+  .tagline-box {
+    background: rgba(16,185,129,0.08);
+    border-left: 3px solid var(--green);
+    border-radius: 0 12px 12px 0;
+    padding: 16px 24px;
+    font-size: clamp(14px,1.3vw,18px);
+    color: var(--text-muted);
+    line-height: 1.6;
+  }
+
+  /* ─────────────────────────────────────────
+     SLIDE 4 — ARQUITECTURA
+  ───────────────────────────────────────── */
+  #s4 { gap: 24px; }
+  .arch-diagram { width: 100%; display: flex; flex-direction: column; gap: 16px; }
+  .arch-row { display: flex; justify-content: center; gap: 12px; }
+  .arch-box {
+    background: var(--surface);
+    border: 1px solid var(--surface2);
+    border-radius: 12px;
+    padding: 12px 18px;
+    text-align: center;
+    min-width: 110px;
+    opacity: 0;
+    transform: translateY(12px);
+    transition: opacity 0.4s ease, transform 0.4s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+  }
+  .arch-box.visible {
+    opacity: 1; transform: translateY(0);
+  }
+  .arch-box.top {
+    background: rgba(16,185,129,0.12);
+    border-color: var(--green);
+    box-shadow: 0 0 24px rgba(16,185,129,0.25);
+    min-width: 160px;
+  }
+  .arch-name { font-size: 13px; font-weight: 800; color: var(--text); letter-spacing: 0.05em; }
+  .arch-model { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+  .arch-connector {
+    width: 2px; height: 20px; background: var(--surface2);
+    margin: 0 auto;
+  }
+  .arch-connector-h {
+    height: 2px; flex: 1; max-width: 40px;
+    background: var(--surface2);
+    align-self: center;
+  }
+  .connector-wrap {
+    display: flex; justify-content: center; align-items: center; gap: 0;
+    width: 100%;
+  }
+  /* lines from top box to middle row */
+  .arch-lines {
+    position: relative; width: 100%; height: 20px;
+    display: flex; justify-content: center;
+  }
+  .arch-lines::before {
+    content: '';
+    position: absolute;
+    top: 0; bottom: 0;
+    left: 50%; width: 2px;
+    background: var(--surface2);
+    transform: translateX(-50%);
+  }
+  .arch-lines-h {
+    position: relative; width: 85%; height: 20px;
+  }
+  .arch-lines-h::before {
+    content: '';
+    position: absolute;
+    top: 50%; left: 0; right: 0;
+    height: 2px;
+    background: var(--surface2);
+    transform: translateY(-50%);
+  }
+
+  /* ─────────────────────────────────────────
+     SLIDE 5 — RIGHT-SIZING
+  ───────────────────────────────────────── */
+  #s5 { gap: 28px; align-items: flex-start; }
+  .model-table { width: 100%; border-collapse: separate; border-spacing: 0 8px; }
+  .model-table th {
+    text-align: left; font-size: 12px; text-transform: uppercase;
+    letter-spacing: 0.1em; color: var(--text-muted);
+    padding: 0 16px 8px;
+  }
+  .model-table td {
+    padding: 16px;
+    background: var(--surface);
+    font-size: clamp(13px,1.2vw,16px);
+  }
+  .model-table td:first-child { border-radius: 12px 0 0 12px; }
+  .model-table td:last-child { border-radius: 0 12px 12px 0; }
+  .model-badge {
+    display: inline-block;
+    padding: 4px 12px; border-radius: 999px;
+    font-size: 12px; font-weight: 700; letter-spacing: 0.05em;
+  }
+  .badge-purple { background: rgba(139,92,246,0.2); color: #A78BFA; }
+  .badge-blue { background: rgba(59,130,246,0.2); color: #93C5FD; }
+  .badge-green { background: rgba(16,185,129,0.2); color: var(--green-light); }
+  .badge-gray { background: rgba(148,163,184,0.2); color: var(--text-muted); }
+  .savings-box {
+    width: 100%;
+    background: rgba(16,185,129,0.08);
+    border: 1px solid rgba(16,185,129,0.3);
+    border-radius: 14px;
+    padding: 20px 28px;
+    display: flex; align-items: center; gap: 20px;
+  }
+  .savings-num { font-size: 48px; font-weight: 900; color: var(--green); }
+
+  /* ─────────────────────────────────────────
+     SLIDE 6 — EXTENDED THINKING
+  ───────────────────────────────────────── */
+  #s6 { gap: 28px; align-items: flex-start; }
+  .score-bar-wrap {
+    width: 100%;
+    background: var(--surface);
+    border-radius: 14px;
+    padding: 24px 28px;
+  }
+  .score-bar-label {
+    display: flex; justify-content: space-between;
+    margin-bottom: 10px;
+    font-size: 13px; color: var(--text-muted);
+  }
+  .score-bar-bg {
+    width: 100%; height: 24px; border-radius: 12px;
+    background: var(--surface2);
+    position: relative; overflow: hidden;
+  }
+  .score-bar-fill {
+    height: 100%; border-radius: 12px;
+    background: linear-gradient(90deg,
+      var(--green) 0% 40%,
+      var(--yellow) 40% 65%,
+      var(--orange) 65% 80%,
+      var(--red) 80% 100%
+    );
+    width: 0%;
+    transition: width 1.5s ease;
+  }
+  .score-bar-marker {
+    position: absolute; top: -6px;
+    width: 4px; height: 36px;
+    background: white;
+    border-radius: 2px;
+    box-shadow: 0 0 8px rgba(255,255,255,0.5);
+  }
+  .score-zones {
+    display: flex; justify-content: space-between; margin-top: 8px;
+    font-size: 11px;
+  }
+  .thinking-box {
+    width: 100%;
+    background: rgba(245,158,11,0.08);
+    border: 1px solid rgba(245,158,11,0.3);
+    border-radius: 14px;
+    padding: 20px 28px;
+  }
+  .thinking-title {
+    font-size: 13px; text-transform: uppercase; letter-spacing: 0.1em;
+    color: var(--yellow); font-weight: 700; margin-bottom: 8px;
+  }
+  .thinking-content { font-size: clamp(13px,1.2vw,16px); color: var(--text-muted); line-height: 1.6; }
+
+  /* ─────────────────────────────────────────
+     SLIDE 7 — VALIDADOR
+  ───────────────────────────────────────── */
+  #s7 { gap: 24px; align-items: flex-start; }
+  .shield {
+    position: absolute; right: 80px; top: 50%; transform: translateY(-50%);
+    width: 160px; height: 190px;
+  }
+  .shield-svg { width: 100%; height: 100%; }
+  .attacks-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; width: 100%; max-width: 700px; }
+  .attack-item {
+    display: flex; align-items: center; gap: 12px;
+    background: var(--surface);
+    border: 1px solid var(--surface2);
+    border-radius: 12px;
+    padding: 14px 18px;
+    opacity: 0;
+    transform: translateX(-12px);
+    transition: opacity 0.3s ease, transform 0.3s ease;
+  }
+  .attack-item.visible { opacity: 1; transform: translateX(0); }
+  .check-icon {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: rgba(16,185,129,0.2);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; flex-shrink: 0;
+    color: var(--green);
+  }
+  .attack-text { font-size: clamp(12px,1.1vw,15px); color: var(--text-muted); }
+  .attack-text strong { color: var(--text); display: block; margin-bottom: 2px; }
+  .stat-100 {
+    font-size: clamp(48px,5vw,80px); font-weight: 900; color: var(--green); line-height: 1;
+  }
+
+  /* ─────────────────────────────────────────
+     SLIDE 8 — CHUWI & TELEGRAM
+  ───────────────────────────────────────── */
+  #s8 { gap: 24px; flex-direction: row; align-items: center; }
+  .tg-mockup {
+    width: 320px; flex-shrink: 0;
+    background: #17212B;
+    border-radius: 20px;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  }
+  .tg-header {
+    background: #232E3C;
+    padding: 16px 20px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .tg-avatar {
+    width: 40px; height: 40px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--green-dark), var(--green));
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; font-weight: 800; color: white;
+  }
+  .tg-header-info {}
+  .tg-name { font-size: 15px; font-weight: 700; color: var(--text); }
+  .tg-status { font-size: 12px; color: #4DC97E; }
+  .tg-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; min-height: 280px; }
+  .tg-msg {
+    max-width: 85%;
+    border-radius: 12px;
+    padding: 10px 14px;
+    font-size: 13px; line-height: 1.5;
+  }
+  .tg-user { background: #2B5278; align-self: flex-end; color: var(--text); border-radius: 12px 12px 2px 12px; }
+  .tg-bot { background: #232E3C; align-self: flex-start; color: var(--text); border-radius: 2px 12px 12px 12px; }
+  .tg-typing { display: flex; gap: 4px; align-items: center; padding: 8px 12px; background: #232E3C; border-radius: 2px 12px 12px 12px; align-self: flex-start; }
+  .typing-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); animation: typingDot 1.2s infinite; }
+  .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+  .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes typingDot { 0%,80%,100% { opacity: 0.3; transform: scale(0.8); } 40% { opacity: 1; transform: scale(1); } }
+  .typewriter {
+    overflow: hidden;
+    white-space: pre-line;
+    border-right: 2px solid var(--green);
+    animation: typing 3s steps(80) forwards, blink 0.5s step-end infinite alternate;
+  }
+  @keyframes typing { from { max-height: 0; } to { max-height: 200px; } }
+  @keyframes blink { 50% { border-color: transparent; } }
+  .tg-info { flex: 1; display: flex; flex-direction: column; gap: 20px; }
+  .streaming-badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.3);
+    border-radius: 10px; padding: 10px 18px; width: fit-content;
+  }
+  .stream-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); animation: pulse 1s infinite; }
+
+  /* ─────────────────────────────────────────
+     SLIDE 9 — DATOS REALES
+  ───────────────────────────────────────── */
+  #s9 { gap: 24px; }
+  .metrics-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; width: 100%; }
+  .metric-card {
+    background: var(--surface);
+    border: 1px solid var(--surface2);
+    border-radius: 16px;
+    padding: 24px 20px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  .metric-card::before {
+    content: '';
+    position: absolute; bottom: 0; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--green-dark), var(--green-light));
+  }
+  .metric-num {
+    font-size: clamp(28px,3vw,44px);
+    font-weight: 900;
+    color: var(--green);
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  .metric-unit { font-size: 18px; color: var(--green-light); }
+  .metric-label { font-size: 13px; color: var(--text-muted); margin-top: 8px; line-height: 1.4; }
+
+  /* ─────────────────────────────────────────
+     SLIDE 10 — COMPARATIVA
+  ───────────────────────────────────────── */
+  #s10 { gap: 28px; }
+  .comp-table { width: 100%; border-collapse: separate; border-spacing: 0; }
+  .comp-table th {
+    padding: 14px 20px;
+    text-align: center;
+    font-size: 14px; font-weight: 800;
+  }
+  .comp-table th.hl {
+    background: rgba(16,185,129,0.15);
+    color: var(--green-light);
+    border-top: 2px solid var(--green);
+    border-left: 2px solid var(--green);
+    border-right: 2px solid var(--green);
+    border-radius: 12px 12px 0 0;
+  }
+  .comp-table th.nm { color: var(--text-muted); }
+  .comp-table td {
+    padding: 12px 20px;
+    text-align: center;
+    border-bottom: 1px solid var(--surface2);
+    font-size: clamp(12px,1.1vw,15px);
+  }
+  .comp-table td:first-child { color: var(--text-muted); text-align: left; padding-left: 0; font-size: 13px; }
+  .comp-table td.hl {
+    background: rgba(16,185,129,0.08);
+    border-left: 2px solid var(--green);
+    border-right: 2px solid var(--green);
+    color: var(--text);
+    font-weight: 600;
+  }
+  .comp-table tr:last-child td.hl {
+    border-bottom: 2px solid var(--green);
+    border-radius: 0 0 0 0;
+  }
+  .chk { color: var(--green); font-size: 18px; }
+  .cross { color: var(--red); font-size: 18px; }
+
+  /* ─────────────────────────────────────────
+     SLIDE 11 — TERMINAL
+  ───────────────────────────────────────── */
+  #s11 { gap: 28px; align-items: flex-start; }
+  .terminal {
+    width: 100%;
+    background: #0D1117;
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    font-family: 'Cascadia Code', 'Fira Code', 'Consolas', 'Courier New', monospace;
+  }
+  .term-titlebar {
+    background: #21262D;
+    padding: 12px 16px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .term-dot { width: 12px; height: 12px; border-radius: 50%; }
+  .term-title { font-size: 13px; color: #8B949E; margin-left: 8px; letter-spacing: 0.03em; }
+  .term-body { padding: 24px 28px; }
+  .term-line {
+    font-size: clamp(13px,1.2vw,16px);
+    line-height: 1.8;
+    white-space: pre;
+  }
+  .term-prompt { color: var(--green); }
+  .term-cmd { color: var(--text); }
+  .term-out { color: #8B949E; }
+  .term-success { color: var(--green); font-weight: 700; }
+  .term-cursor {
+    display: inline-block; width: 10px; height: 18px;
+    background: var(--green); vertical-align: middle;
+    animation: termBlink 1s infinite;
+  }
+  @keyframes termBlink { 50% { opacity: 0; } }
+  .code-stats { display: flex; gap: 28px; flex-wrap: wrap; }
+  .code-stat { text-align: center; }
+  .code-stat-num { font-size: clamp(28px,3vw,44px); font-weight: 900; color: var(--green); line-height: 1; }
+  .code-stat-label { font-size: 12px; color: var(--text-muted); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.08em; }
+
+  /* ─────────────────────────────────────────
+     SLIDE 12 — CIERRE
+  ───────────────────────────────────────── */
+  #s12 { gap: 24px; text-align: center; }
+  .closing-statement {
+    font-size: clamp(22px,2.8vw,42px);
+    font-weight: 800;
+    line-height: 1.3;
+    color: var(--text);
+    max-width: 800px;
+  }
+  .closing-statement em { color: var(--green); font-style: normal; }
+  .three-cols { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; width: 100%; }
+  .col-box {
+    background: var(--surface);
+    border: 1px solid var(--surface2);
+    border-radius: 16px;
+    padding: 28px 20px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  .col-box::after {
+    content: '';
+    position: absolute; bottom: 0; left: 0; right: 0; height: 3px;
+  }
+  .col-box:nth-child(1)::after { background: var(--blue); }
+  .col-box:nth-child(2)::after { background: var(--purple); }
+  .col-box:nth-child(3)::after { background: var(--green); }
+  .col-icon { font-size: 32px; margin-bottom: 12px; }
+  .col-title {
+    font-size: 14px; text-transform: uppercase; letter-spacing: 0.12em;
+    font-weight: 800; margin-bottom: 8px;
+  }
+  .col-title:nth-child(1) { color: var(--blue); }
+  .col-desc { font-size: clamp(12px,1.1vw,15px); color: var(--text-muted); line-height: 1.5; }
+  .closing-footer {
+    display: flex; gap: 32px; align-items: center; justify-content: center;
+    flex-wrap: wrap;
+  }
+  .footer-link {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--surface);
+    border: 1px solid var(--surface2);
+    border-radius: 10px;
+    padding: 10px 20px;
+    font-size: 14px; color: var(--text-muted);
+  }
+  .footer-link span { color: var(--green); font-weight: 600; }
+  /* fade to black */
+  #fade-out {
+    position: fixed; inset: 0; background: black;
+    opacity: 0; pointer-events: none;
+    transition: opacity 2s ease;
+    z-index: 200;
+  }
+  #fade-out.active { opacity: 1; }
+
+  /* ─── TERM LINES ANIMATION ─── */
+  .term-line { opacity: 0; animation: termAppear 0.3s ease forwards; }
+  .term-line:nth-child(1) { animation-delay: 0.5s; }
+  .term-line:nth-child(2) { animation-delay: 1.2s; }
+  .term-line:nth-child(3) { animation-delay: 2.0s; }
+  .term-line:nth-child(4) { animation-delay: 2.8s; }
+  .term-line:nth-child(5) { animation-delay: 3.6s; }
+  .term-line:nth-child(6) { animation-delay: 4.4s; }
+  @keyframes termAppear { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: none; } }
+</style>
+</head>
+<body>
+
+<!-- PARTICLE BACKGROUND -->
+<div class="particles" id="particles"></div>
+
+<!-- SLIDES -->
+<div id="slides">
+
+  <!-- ═══════════════════════════════════════
+       SLIDE 1 — TÍTULO
+  ════════════════════════════════════════ -->
+  <section class="slide" id="s1">
+    <div class="s1-pulse"></div>
+    <div class="s1-pulse2"></div>
+    <div class="tag">TFM · MÁSTER IA GENERATIVA 2026</div>
+    <div class="s1-logo glow">Merma<span>Ops</span></div>
+    <div class="s1-sub">Sistema Multi-Agente de IA para la<br>Reducción de Merma Alimentaria</div>
+    <div class="s1-sub" style="font-size:clamp(13px,1.3vw,18px); margin-top: 4px; color: var(--green-light);">
+      Máster IA Generativa &amp; Innovation · EVOLVE Madrid 2026
+    </div>
+    <div style="margin-top: 32px; display: flex; gap: 16px; align-items: center;">
+      <div style="width: 40px; height: 2px; background: linear-gradient(90deg, transparent, var(--green));"></div>
+      <div style="font-size: 15px; color: var(--text-muted);">Claude API · Supabase · Flutter · FastAPI</div>
+      <div style="width: 40px; height: 2px; background: linear-gradient(90deg, var(--green), transparent);"></div>
+    </div>
+    <div class="s1-footer">
+      <div>
+        <div class="s1-name">Álvaro Ferrer Muro</div>
+        <div style="font-size: 13px; color: var(--text-muted);">@ChuwiMermaOpsBot</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <div style="width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); animation: pulse 2s infinite;"></div>
+        <span style="font-size: 13px;">Sistema en producción</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════
+       SLIDE 2 — EL PROBLEMA
+  ════════════════════════════════════════ -->
+  <section class="slide" id="s2">
+    <div class="tag">EL PROBLEMA</div>
+    <div style="width:100%; display:flex; align-items: flex-end; gap: 32px; margin-bottom: 8px;">
+      <div>
+        <div class="stat-hero" id="s2-num">0</div>
+        <div class="stat-hero-label">kg de comida desperdiciados por persona y año en España</div>
+      </div>
+      <div style="flex:1; height:1px; background: linear-gradient(90deg, var(--red), transparent); margin-bottom: 20px;"></div>
+    </div>
+    <div class="problem-grid">
+      <div class="problem-card">
+        <div class="problem-icon icon-red">💸</div>
+        <div class="problem-num" style="color: var(--red);">2–5%</div>
+        <div style="font-size: 14px; font-weight: 700;">de ingresos</div>
+        <div class="problem-desc">15.000–40.000 €/año en merma directa por tienda mediana</div>
+      </div>
+      <div class="problem-card">
+        <div class="problem-icon icon-yellow">🗑️</div>
+        <div class="problem-num" style="color: var(--yellow);">Manual</div>
+        <div style="font-size: 14px; font-weight: 700;">100% gestión humana</div>
+        <div class="problem-desc">Sin alertas automáticas, sin visibilidad en tiempo real</div>
+      </div>
+      <div class="problem-card">
+        <div class="problem-icon icon-blue">🏷️</div>
+        <div class="problem-num" style="color: var(--blue);">&gt;20k€</div>
+        <div style="font-size: 14px; font-weight: 700;">coste entrada</div>
+        <div class="problem-desc">Winnow y Leanpath requieren hardware especializado y consultores</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════
+       SLIDE 3 — LA SOLUCIÓN
+  ════════════════════════════════════════ -->
+  <section class="slide" id="s3">
+    <div class="tag">LA SOLUCIÓN</div>
+    <div class="h2" style="width:100%;">
+      MermaOps: <span class="green">IA multi-agente</span><br>sin hardware, desde Telegram
+    </div>
+    <div class="sol-cost">
+      <div>
+        <div class="sol-cost-num">0,80 €</div>
+      </div>
+      <div class="sol-cost-label">
+        coste medio<br><strong style="color:var(--green-light)">por mes</strong>
+      </div>
+    </div>
+    <div class="sol-channels">
+      <div class="sol-channel">
+        <div class="channel-icon tg-icon">✈️</div>
+        <div>
+          <div style="font-weight: 800; margin-bottom: 4px;">Telegram Bot</div>
+          <div style="font-size: 13px; color: var(--text-muted);">@ChuwiMermaOpsBot — Chuwi responde en lenguaje natural, 6 tools, streaming</div>
+        </div>
+      </div>
+      <div class="sol-channel">
+        <div class="channel-icon fl-icon">📱</div>
+        <div>
+          <div style="font-weight: 800; margin-bottom: 4px;">Flutter App</div>
+          <div style="font-size: 13px; color: var(--text-muted);">iOS + Android + Web — dashboard, mapa, agentes, escáner de productos</div>
+        </div>
+      </div>
+    </div>
+    <div class="tagline-box" style="width:100%;">
+      💬 <strong style="color:var(--text);">"El encargado ya tiene Telegram."</strong>
+      Sin apps nuevas. Sin formación. Sin hardware. Operativo en 5 minutos.
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════
+       SLIDE 4 — ARQUITECTURA 12 AGENTES
+  ════════════════════════════════════════ -->
+  <section class="slide" id="s4">
+    <div class="tag">ARQUITECTURA</div>
+    <div class="h3" style="width:100%; text-align:center; margin-bottom: 8px;">
+      12 agentes <span class="green">orquestados</span> · Claude API
+    </div>
+    <div class="arch-diagram" id="arch">
+      <!-- Row 0: Kuine -->
+      <div class="arch-row">
+        <div class="arch-box top" id="ab0">
+          <div class="arch-name green">KUINE</div>
+          <div class="arch-model">Opus 4.7 — Orquestador</div>
+        </div>
+      </div>
+      <!-- connector -->
+      <div class="arch-lines"></div>
+      <div class="arch-lines-h" style="margin: 0 auto;"></div>
+      <!-- Row 1: supervisory agents -->
+      <div class="arch-row" style="gap: 10px;">
+        <div class="arch-box" id="ab1"><div class="arch-name">Evaluador</div><div class="arch-model">Sonnet 4.6</div></div>
+        <div class="arch-box" id="ab2"><div class="arch-name">ForkMerge</div><div class="arch-model">3× Sonnet + Opus</div></div>
+        <div class="arch-box" id="ab3"><div class="arch-name">Consenso</div><div class="arch-model">3× Sonnet</div></div>
+        <div class="arch-box" id="ab4"><div class="arch-name">Validador</div><div class="arch-model">Sonnet 4.6</div></div>
+      </div>
+      <!-- connector -->
+      <div class="arch-lines"></div>
+      <div class="arch-lines-h" style="margin: 0 auto; width: 90%;"></div>
+      <!-- Row 2: execution agents -->
+      <div class="arch-row" style="gap: 8px; flex-wrap: wrap;">
+        <div class="arch-box" id="ab5"><div class="arch-name">Chuwi</div><div class="arch-model">Sonnet 4.6</div></div>
+        <div class="arch-box" id="ab6"><div class="arch-name">Predictor</div><div class="arch-model">Haiku 4.5</div></div>
+        <div class="arch-box" id="ab7"><div class="arch-name">Visión</div><div class="arch-model">Haiku 4.5</div></div>
+        <div class="arch-box" id="ab8"><div class="arch-name">Reportero</div><div class="arch-model">Sonnet 4.6</div></div>
+        <div class="arch-box" id="ab9"><div class="arch-name">Precio</div><div class="arch-model">Heurístico</div></div>
+        <div class="arch-box" id="ab10"><div class="arch-name">Stock</div><div class="arch-model">FEFO</div></div>
+        <div class="arch-box" id="ab11"><div class="arch-name">Notificador</div><div class="arch-model">Telegram</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════
+       SLIDE 5 — RIGHT-SIZING
+  ════════════════════════════════════════ -->
+  <section class="slide" id="s5">
+    <div class="tag">OPTIMIZACIÓN DE COSTES</div>
+    <div class="h2" style="width:100%;">El modelo <span class="green">correcto</span> para cada tarea</div>
+    <table class="model-table">
+      <thead>
+        <tr>
+          <th style="width:120px">Modelo</th>
+          <th>Uso en MermaOps</th>
+          <th style="text-align:right">Coste relativo</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="model-badge badge-purple">Opus 4.7</span></td>
+          <td>Orquestación compleja — Kuine decide en ambigüedad alta</td>
+          <td style="text-align:right; color: var(--red);">●●●●●</td>
+        </tr>
+        <tr>
+          <td><span class="model-badge badge-blue">Sonnet 4.6</span></td>
+          <td>Razonamiento — Chuwi, Evaluador, ForkMerge, Validador, Reportero</td>
+          <td style="text-align:right; color: var(--yellow);">●●●○○</td>
+        </tr>
+        <tr>
+          <td><span class="model-badge badge-green">Haiku 4.5</span></td>
+          <td>Tareas simples — Predictor meteorológico, análisis de fotos</td>
+          <td style="text-align:right; color: var(--green);">●○○○○</td>
+        </tr>
+        <tr>
+          <td><span class="model-badge badge-gray">Sin LLM</span></td>
+          <td>Cálculos deterministas — Precio (descuentos), Stock (FEFO)</td>
+          <td style="text-align:right; color: var(--green);">0 €</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="savings-box">
+      <div class="savings-num">~70%</div>
+      <div>
+        <div style="font-size: 18px; font-weight: 700; margin-bottom: 4px;">ahorro estimado vs. Opus en todo</div>
+        <div style="font-size: 14px; color: var(--text-muted);">Prompt caching activo · 0,03 € por brief diario completo con Kuine</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════
+       SLIDE 6 — EXTENDED THINKING
+  ════════════════════════════════════════ -->
+  <section class="slide" id="s6">
+    <div class="tag">EVALUADOR INTELIGENTE</div>
+    <div class="h2" style="width:100%;">El Evaluador <span class="green">razona</span> antes de decidir</div>
+    <div class="score-bar-wrap">
+      <div class="score-bar-label">
+        <span>Score de merma</span>
+        <span id="s6-score" style="font-weight:700; color: var(--green);">0</span>
+      </div>
+      <div class="score-bar-bg">
+        <div class="score-bar-fill" id="score-fill"></div>
+        <div class="score-bar-marker" id="score-marker" style="left: 0%"></div>
+      </div>
+      <div class="score-zones">
+        <span style="color: var(--green);">BAJO 0–40</span>
+        <span style="color: var(--yellow);">MEDIO 40–65</span>
+        <span style="color: var(--orange);">ALTO 65–90</span>
+        <span style="color: var(--red);">CRÍTICO 90+</span>
+      </div>
+    </div>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; width: 100%;">
+      <div class="thinking-box">
+        <div class="thinking-title">🧠 Extended Thinking activado</div>
+        <div class="thinking-content">Solo en zona <strong style="color: var(--orange);">65–90</strong> (ambigüedad real)<br>Budget de tokens dinámico según el riesgo económico identificado</div>
+      </div>
+      <div style="background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.3); border-radius: 14px; padding: 20px 28px;">
+        <div style="font-size: 13px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--green); font-weight: 700; margin-bottom: 8px;">⚡ Resultado</div>
+        <div style="font-size: clamp(13px,1.2vw,16px); color: var(--text-muted); line-height: 1.6;">
+          Score ≥ 90 → acción <strong style="color: var(--text);">inmediata</strong> sin esperar<br>
+          Score &lt; 40 → descartado eficientemente<br>
+          Zona media → razonamiento profundo
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════
+       SLIDE 7 — VALIDADOR
+  ════════════════════════════════════════ -->
+  <section class="slide" id="s7">
+    <div class="tag">SEGURIDAD ADVERSARIAL</div>
+    <div style="display:flex; gap: 40px; width: 100%; align-items: flex-start;">
+      <div style="flex:1; display: flex; flex-direction: column; gap: 20px;">
+        <div style="display: flex; align-items: baseline; gap: 16px;">
+          <div class="stat-100">100%</div>
+          <div>
+            <div style="font-size: 20px; font-weight: 700;">bloqueo</div>
+            <div style="color: var(--text-muted); font-size: 14px;">23 vectores de ataque</div>
+          </div>
+        </div>
+        <div class="attacks-grid" id="attacks">
+          <div class="attack-item"><div class="check-icon">✓</div><div class="attack-text"><strong>Prompt Injection</strong>instrucciones maliciosas en datos</div></div>
+          <div class="attack-item"><div class="check-icon">✓</div><div class="attack-text"><strong>Precio &lt; Coste</strong>descuentos imposibles bloqueados</div></div>
+          <div class="attack-item"><div class="check-icon">✓</div><div class="attack-text"><strong>Caducidad Falsa</strong>fechas manipuladas detectadas</div></div>
+          <div class="attack-item"><div class="check-icon">✓</div><div class="attack-text"><strong>FEFO Violado</strong>orden de salida garantizado</div></div>
+          <div class="attack-item"><div class="check-icon">✓</div><div class="attack-text"><strong>Cantidad Negativa</strong>stock inconsistente rechazado</div></div>
+          <div class="attack-item"><div class="check-icon">✓</div><div class="attack-text"><strong>Desbordamiento</strong>límites de acciones validados</div></div>
+        </div>
+      </div>
+      <!-- CSS Shield -->
+      <div style="display:flex; flex-direction: column; align-items: center; gap: 12px; padding-top: 20px;">
+        <svg width="140" height="170" viewBox="0 0 140 170">
+          <path d="M70 8 L128 32 L128 80 Q128 130 70 162 Q12 130 12 80 L12 32 Z"
+            fill="rgba(16,185,129,0.12)" stroke="#10B981" stroke-width="2.5"/>
+          <path d="M70 28 L112 46 L112 82 Q112 120 70 144 Q28 120 28 82 L28 46 Z"
+            fill="rgba(16,185,129,0.08)" stroke="rgba(16,185,129,0.4)" stroke-width="1.5"/>
+          <text x="70" y="96" text-anchor="middle" fill="#10B981" font-size="38" font-weight="900">✓</text>
+        </svg>
+        <div style="text-align: center;">
+          <div style="font-size: 13px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted);">Validador</div>
+          <div style="font-size: 11px; color: var(--text-muted);">Sonnet 4.6</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════
+       SLIDE 8 — CHUWI & TELEGRAM
+  ════════════════════════════════════════ -->
+  <section class="slide" id="s8">
+    <div style="position:absolute; top: 48px; left: 80px;"><div class="tag">INTERFAZ CONVERSACIONAL</div></div>
+    <div class="tg-mockup">
+      <div class="tg-header">
+        <div class="tg-avatar">C</div>
+        <div class="tg-header-info">
+          <div class="tg-name">Chuwi MermaOps</div>
+          <div class="tg-status">● en línea</div>
+        </div>
+      </div>
+      <div class="tg-body" id="tg-body">
+        <div class="tg-msg tg-user">¿Qué productos son críticos ahora?</div>
+        <div class="tg-msg tg-bot" id="tg-response" style="display:none;"></div>
+      </div>
+    </div>
+    <div class="tg-info">
+      <div>
+        <div class="h3" style="margin-bottom: 12px;">Chuwi, tu asistente<br><span class="green">de merma</span></div>
+        <div class="sub">Agente real con Claude API, 6 tools activas, clasificación de intenciones sin tokens (10 categorías)</div>
+      </div>
+      <div class="streaming-badge">
+        <div class="stream-dot"></div>
+        <span style="font-size: 14px; font-weight: 600; color: var(--green-light);">Streaming progresivo real</span>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div style="display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--text-muted);">
+          <span style="color: var(--green);">→</span> Conversaciones persistidas en Supabase
+        </div>
+        <div style="display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--text-muted);">
+          <span style="color: var(--green);">→</span> Historial por tienda, por usuario
+        </div>
+        <div style="display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--text-muted);">
+          <span style="color: var(--green);">→</span> Escalado automático a Kuine si necesita orquestación
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════
+       SLIDE 9 — DATOS REALES
+  ════════════════════════════════════════ -->
+  <section class="slide" id="s9">
+    <div class="tag">MÉTRICAS REALES</div>
+    <div class="h2" style="width:100%; text-align:center;">
+      Datos del sistema en <span class="green">producción</span>
+    </div>
+    <div class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-num"><span class="count" data-target="774" data-suffix="">0</span></div>
+        <div class="metric-label">Tests pasando<br><span style="color: var(--green);">en 1,98 segundos</span></div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-num"><span class="count" data-target="100" data-suffix="%">0</span></div>
+        <div class="metric-label">Precisión de acciones<br><span style="color: var(--green-light);">+83 pp vs. baseline</span></div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-num"><span class="count" data-target="23" data-suffix="/23">0</span></div>
+        <div class="metric-label">Ataques adversariales<br>bloqueados</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-num"><span class="count" data-target="45" data-suffix="">0</span></div>
+        <div class="metric-label">Acciones completadas<br>en demo real</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-num"><span class="count" data-target="483" data-suffix=" €">0</span></div>
+        <div class="metric-label">Merma identificada<br>y gestionada</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-num" style="font-size: clamp(20px,2vw,32px);">
+          <span class="count" data-target="3" data-suffix=" cts">0</span>
+        </div>
+        <div class="metric-label">Por brief diario completo<br><span style="color: var(--green);">Kuine + prompt caching</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════
+       SLIDE 10 — COMPARATIVA
+  ════════════════════════════════════════ -->
+  <section class="slide" id="s10">
+    <div class="tag">COMPARATIVA</div>
+    <div class="h2" style="width:100%; text-align:center; margin-bottom: 8px;">
+      MermaOps vs. <span class="muted">alternativas del mercado</span>
+    </div>
+    <table class="comp-table" style="width:100%;">
+      <thead>
+        <tr>
+          <th class="nm" style="text-align:left;">Criterio</th>
+          <th class="hl">MermaOps</th>
+          <th class="nm">Winnow V2</th>
+          <th class="nm">Baseline manual</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Coste mensual</td>
+          <td class="hl"><strong class="green">~0,80 €</strong></td>
+          <td>~300–800 €</td>
+          <td>0 € (tiempo humano)</td>
+        </tr>
+        <tr>
+          <td>Hardware requerido</td>
+          <td class="hl"><strong class="green">Ninguno</strong></td>
+          <td>Cámara + báscula</td>
+          <td>Papel / Excel</td>
+        </tr>
+        <tr>
+          <td>Precisión</td>
+          <td class="hl"><strong class="green">100%</strong></td>
+          <td>~85–90%</td>
+          <td>~17% (baseline)</td>
+        </tr>
+        <tr>
+          <td>Autonomía</td>
+          <td class="hl"><strong class="green">Total 24/7</strong></td>
+          <td>Parcial</td>
+          <td>Manual completo</td>
+        </tr>
+        <tr>
+          <td>Informes CSRD</td>
+          <td class="hl"><strong class="green">Automático</strong></td>
+          <td>Manual</td>
+          <td>No disponible</td>
+        </tr>
+        <tr>
+          <td>Instalación</td>
+          <td class="hl"><strong class="green">5 minutos</strong></td>
+          <td>Semanas</td>
+          <td>Inmediata</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ═══════════════════════════════════════
+       SLIDE 11 — TESTS & CALIDAD
+  ════════════════════════════════════════ -->
+  <section class="slide" id="s11">
+    <div class="tag">CALIDAD DE CÓDIGO</div>
+    <div class="h3" style="width:100%;">Tests · Cobertura · <span class="green">Evidencias reales</span></div>
+    <div class="terminal" id="terminal">
+      <div class="term-titlebar">
+        <div class="term-dot" style="background: #FF5F57;"></div>
+        <div class="term-dot" style="background: #FEBC2E;"></div>
+        <div class="term-dot" style="background: #28C840;"></div>
+        <span class="term-title">Terminal — MermaOps</span>
+      </div>
+      <div class="term-body">
+        <div class="term-line"><span class="term-prompt">~/mermaops $ </span><span class="term-cmd">python -m pytest backend/tests/ -q</span></div>
+        <div class="term-line"><span class="term-out">collecting ... collected 774 items</span></div>
+        <div class="term-line"><span class="term-out">........................................................................................................</span></div>
+        <div class="term-line"><span class="term-out">........................................................................................................</span></div>
+        <div class="term-line"><span class="term-success">774 passed in 1.98s  ✓</span></div>
+        <div class="term-line"><span class="term-prompt">~/mermaops $ </span><span class="term-cursor"></span></div>
+      </div>
+    </div>
+    <div class="code-stats">
+      <div class="code-stat">
+        <div class="code-stat-num">29</div>
+        <div class="code-stat-label">Archivos test</div>
+      </div>
+      <div class="code-stat">
+        <div class="code-stat-num">77</div>
+        <div class="code-stat-label">Módulos Python</div>
+      </div>
+      <div class="code-stat">
+        <div class="code-stat-num">15.675</div>
+        <div class="code-stat-label">Líneas de código</div>
+      </div>
+      <div class="code-stat">
+        <div class="code-stat-num">&lt;2s</div>
+        <div class="code-stat-label">Suite completa</div>
+      </div>
+      <div class="code-stat">
+        <div class="code-stat-num">800</div>
+        <div class="code-stat-label">Tests activos</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════
+       SLIDE 12 — CIERRE
+  ════════════════════════════════════════ -->
+  <section class="slide" id="s12">
+    <div class="tag">CONCLUSIÓN</div>
+    <div class="closing-statement">
+      MermaOps no es un prototipo de laboratorio.<br>
+      Es un <em>sistema operativo</em> para la merma alimentaria.
+    </div>
+    <div class="three-cols">
+      <div class="col-box">
+        <div class="col-icon">👁</div>
+        <div class="col-title" style="color: var(--blue);">PERCIBE</div>
+        <div class="col-desc">Datos en tiempo real<br>Supabase · batches · stock · historial climático</div>
+      </div>
+      <div class="col-box">
+        <div class="col-icon">🧠</div>
+        <div class="col-title" style="color: var(--purple);">RAZONA</div>
+        <div class="col-desc">12 agentes Claude<br>Fork-merge · consenso · validación adversarial</div>
+      </div>
+      <div class="col-box">
+        <div class="col-icon">⚡</div>
+        <div class="col-title" style="color: var(--green);">ACTÚA</div>
+        <div class="col-desc">Acciones autónomas<br>Telegram · Flutter · notificaciones proactivas</div>
+      </div>
+    </div>
+    <div class="closing-footer">
+      <div class="footer-link">
+        <span>📦</span>
+        <span>github.com/user/mermaops</span>
+      </div>
+      <div class="footer-link">
+        <span>✈️</span>
+        <span>@ChuwiMermaOpsBot</span>
+      </div>
+      <div class="footer-link">
+        <span>🎓</span>
+        <span>Álvaro Ferrer Muro · EVOLVE 2026</span>
+      </div>
+    </div>
+  </section>
+
+</div><!-- /slides -->
+
+<!-- HUD -->
+<div id="hud">
+  <div id="progress-bar-bg">
+    <div id="progress-bar"></div>
+  </div>
+  <div id="hud-info">
+    <div id="slide-counter"><span id="cur-slide">1</span> / 12</div>
+  </div>
+</div>
+
+<!-- Fade to black -->
+<div id="fade-out"></div>
+
+<script>
+// ─── CONFIG ───────────────────────────────────────────────────────────────────
+const SLIDE_DURATIONS = [15,10,10,15,10,10,10,10,10,10,10,15]; // seconds
+const TOTAL_DURATION = SLIDE_DURATIONS.reduce((a,b)=>a+b,0); // 135s (including transitions)
+const TRANSITION_TIME = 800; // ms
+
+// ─── PARTICLES ───────────────────────────────────────────────────────────────
+(function createParticles(){
+  const container = document.getElementById('particles');
+  for(let i=0; i<25; i++){
+    const p = document.createElement('div');
+    p.className = 'particle';
+    const size = Math.random()*4+2;
+    p.style.cssText = `
+      width:${size}px; height:${size}px;
+      left:${Math.random()*100}%;
+      animation-duration:${Math.random()*20+15}s;
+      animation-delay:${Math.random()*20}s;
+    `;
+    container.appendChild(p);
+  }
+})();
+
+// ─── SLIDE ENGINE ─────────────────────────────────────────────────────────────
+const slides = Array.from(document.querySelectorAll('.slide'));
+let currentSlide = 0;
+let startTime = Date.now();
+let progressInterval, slideTimeout;
+
+function showSlide(idx) {
+  if(idx < 0 || idx >= slides.length) return;
+
+  // exit old
+  const old = slides[currentSlide];
+  old.classList.add('exiting');
+  old.classList.remove('active');
+  setTimeout(() => old.classList.remove('exiting'), 700);
+
+  currentSlide = idx;
+  const s = slides[currentSlide];
+  s.classList.add('active');
+
+  // update counter
+  document.getElementById('cur-slide').textContent = currentSlide + 1;
+
+  // trigger slide-specific animations
+  slideAnimations(currentSlide);
+}
+
+function advance() {
+  if(currentSlide < slides.length - 1) {
+    showSlide(currentSlide + 1);
+    scheduleNext();
+  } else {
+    // fade to black at end
+    setTimeout(()=>{
+      document.getElementById('fade-out').classList.add('active');
+    }, SLIDE_DURATIONS[currentSlide] * 1000 - 2000);
+  }
+}
+
+function scheduleNext() {
+  clearTimeout(slideTimeout);
+  const dur = SLIDE_DURATIONS[currentSlide] * 1000;
+  slideTimeout = setTimeout(advance, dur);
+}
+
+// progress bar
+function startProgress() {
+  startTime = Date.now();
+  clearInterval(progressInterval);
+  progressInterval = setInterval(()=>{
+    const elapsed = (Date.now() - startTime) / 1000;
+    const pct = Math.min((elapsed / TOTAL_DURATION) * 100, 100);
+    document.getElementById('progress-bar').style.width = pct + '%';
+    if(pct >= 100) clearInterval(progressInterval);
+  }, 100);
+}
+
+// ─── SLIDE ANIMATIONS ─────────────────────────────────────────────────────────
+function slideAnimations(idx) {
+  switch(idx) {
+    case 1: animSlide2(); break;
+    case 3: animSlide4(); break;
+    case 5: animSlide6(); break;
+    case 6: animSlide7(); break;
+    case 7: animSlide8(); break;
+    case 8: animSlide9(); break;
+  }
+}
+
+// Slide 2: animated counter
+function animSlide2() {
+  animateCounter(document.getElementById('s2-num'), 0, 10.4, 2000, 1, ' kg');
+}
+
+// Slide 4: arch boxes appear sequentially
+function animSlide4() {
+  const boxes = document.querySelectorAll('.arch-box');
+  boxes.forEach((b,i)=>{
+    setTimeout(()=> b.classList.add('visible'), 200 + i*200);
+  });
+}
+
+// Slide 6: score bar animation
+function animSlide6() {
+  setTimeout(()=>{
+    const fill = document.getElementById('score-fill');
+    const marker = document.getElementById('score-marker');
+    const scoreText = document.getElementById('s6-score');
+    fill.style.width = '77%';
+    marker.style.left = '75%';
+    let s = 0;
+    const iv = setInterval(()=>{
+      s = Math.min(s+1, 77);
+      scoreText.textContent = s;
+      if(s >= 77) {
+        clearInterval(iv);
+        scoreText.style.color = 'var(--orange)';
+      }
+    }, 20);
+  }, 500);
+}
+
+// Slide 7: attack items appear
+function animSlide7() {
+  const items = document.querySelectorAll('.attack-item');
+  items.forEach((item,i)=>{
+    setTimeout(()=> item.classList.add('visible'), 300 + i*250);
+  });
+}
+
+// Slide 8: Telegram typewriter
+function animSlide8() {
+  const body = document.getElementById('tg-body');
+  const response = document.getElementById('tg-response');
+
+  // Show typing indicator first
+  const typing = document.createElement('div');
+  typing.className = 'tg-typing';
+  typing.innerHTML = '<div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div>';
+  body.appendChild(typing);
+
+  setTimeout(()=>{
+    body.removeChild(typing);
+    response.style.display = 'block';
+    const msg = `🔴 Yogur Danone x4 — REBAJA HOY
+🔴 Leche entera 1L x6 — DONAR MAÑANA
+🟡 Pan integral x3 — revisar lote B
+
+💡 Ejecutar 3 acciones = ahorro estimado 23,40 €`;
+    let charIdx = 0;
+    response.textContent = '';
+    const typeIv = setInterval(()=>{
+      if(charIdx < msg.length){
+        response.textContent = msg.substring(0, charIdx+1);
+        charIdx++;
+      } else {
+        clearInterval(typeIv);
+      }
+    }, 30);
+  }, 1800);
+}
+
+// Slide 9: count up metrics
+function animSlide9() {
+  const counters = document.querySelectorAll('.count');
+  counters.forEach((el, i)=>{
+    const target = parseFloat(el.dataset.target);
+    const suffix = el.dataset.suffix || '';
+    setTimeout(()=>{
+      animateCounter(el, 0, target, 1500, Number.isInteger(target) ? 0 : 1, suffix);
+    }, i * 120);
+  });
+}
+
+function animateCounter(el, from, to, duration, decimals, suffix='') {
+  const start = Date.now();
+  const iv = setInterval(()=>{
+    const elapsed = Date.now() - start;
+    const progress = Math.min(elapsed / duration, 1);
+    const eased = 1 - Math.pow(1 - progress, 3);
+    const current = from + (to - from) * eased;
+    el.textContent = current.toFixed(decimals) + suffix;
+    if(progress >= 1) clearInterval(iv);
+  }, 16);
+}
+
+// ─── INIT ─────────────────────────────────────────────────────────────────────
+window.addEventListener('load', ()=>{
+  showSlide(0);
+  scheduleNext();
+  startProgress();
+});
+
+// Manual navigation with arrow keys / click
+document.addEventListener('keydown', e=>{
+  if(e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ') {
+    clearTimeout(slideTimeout);
+    if(currentSlide < slides.length - 1) { showSlide(currentSlide+1); scheduleNext(); }
+  } else if(e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+    clearTimeout(slideTimeout);
+    if(currentSlide > 0) { showSlide(currentSlide-1); scheduleNext(); }
+  }
+});
+document.addEventListener('click', ()=>{
+  clearTimeout(slideTimeout);
+  if(currentSlide < slides.length - 1) { showSlide(currentSlide+1); scheduleNext(); }
+});
+</script>
+</body>
+</html>

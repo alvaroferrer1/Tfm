@@ -13,7 +13,7 @@
 - Base de datos: Supabase (PostgreSQL + Auth + Realtime)
 - Interfaz principal: Telegram AI Agent @ChuwiMermaOpsBot
 - App móvil: Flutter (Android/iOS)
-- Tests: 323/323 en < 1s (sin conexión real a Supabase)
+- Tests: 800/800 en < 3s (sin conexión real a Supabase)
 
 ---
 
@@ -21,16 +21,17 @@
 
 | Agente | Archivo | Modelo | Estado |
 |--------|---------|--------|--------|
-| **Kuine** (orquestador) | `backend/agents/supervisor.py` | Opus 4.7 | activo — loop real, 25 tools, hasta 20 iter |
+| **Kuine** (orquestador) | `backend/agents/supervisor.py` | Opus 4.7 (brief) / Sonnet 4.6 (scans) | activo — loop real, 16 tools, hasta 20 iter |
 | **Chuwi** (Telegram) | `backend/core/chuwi.py` | Sonnet 4.6 | activo — agente real, streaming, 6 iter |
 | **Evaluador** | `backend/agents/evaluator.py` | Sonnet 4.6 | activo — score 0-100, extended thinking >=65 |
+| **ForkMerge** | `backend/agents/fork_merge.py` | Sonnet 4.6 ×3 + Opus 4.7 síntesis | activo — fork-merge para valor>50€ o caducado |
 | **Validador** | `backend/agents/validator.py` | Sonnet 4.6 | activo — 23 ataques adversariales, 100% |
 | **Consenso** | `backend/agents/consensus.py` | Sonnet 4.6 | activo — 3 instancias paralelas score >=90 |
 | **Predictor** | `backend/agents/predictor.py` | Haiku 4.5 | activo — Open-Meteo + historial |
-| **Visión** | `backend/agents/vision.py` | claude-3-5-sonnet | activo — análisis de fotos |
-| **Precio** | `backend/agents/price.py` | Haiku 4.5 | activo — cálculo descuentos |
-| **Stock** | `backend/agents/stock.py` | Haiku 4.5 | activo — decisiones reposición |
-| **Notificador** | `backend/agents/notifier.py` | Sonnet 4.6 | activo — alertas proactivas |
+| **Visión** | `backend/agents/vision.py` | claude-haiku-4-5-20251001 | activo — análisis de fotos |
+| **Precio** | `backend/agents/price.py` | heurístico (sin LLM) | activo — cálculo descuentos |
+| **Stock** | `backend/agents/stock.py` | heurístico (sin LLM) | activo — decisiones reposición FEFO |
+| **Notificador** | `backend/agents/notifier.py` | python-telegram-bot | activo — alertas proactivas |
 | **Reportero** | `backend/agents/reporter.py` | Sonnet 4.6 | activo — briefs y resúmenes |
 
 ---
@@ -94,7 +95,7 @@ _persist_conversation_message()      ← agent_conversations + agent_messages
 4. **NO credenciales en código** — todo por `.env` con `os.getenv()`
 5. **NO desperdiciar tokens Claude API** — solo en pruebas y demo real
 6. Puerto backend: **8001** (no 8000)
-7. Tests: deben seguir >=307/307 después de cada cambio
+7. Tests: deben seguir >=800/800 después de cada cambio
 8. No inventar capacidades — solo implementar lo que está conectado
 
 ---
@@ -112,7 +113,7 @@ _persist_conversation_message()      ← agent_conversations + agent_messages
 - `_upsert_telegram_user()` registra todos los usuarios
 - `scripts/check_all.py` + `make check` para diagnóstico
 - `docs/runbook.md` con guía completa de arranque
-- 323/323 tests
+- 800/800 tests
 
 ### Fase 2 — COMPLETADA — Chuwi intent classification
 
@@ -141,7 +142,7 @@ _persist_conversation_message()      ← agent_conversations + agent_messages
 
 ### Fase 4 — Clasificación de agentes — COMPLETADA
 
-- `/api/v1/agent/status` devuelve los 11 agentes con modelo, tipo y descripción real
+- `/api/v1/agent/status` devuelve los 12 agentes con modelo, tipo y descripción real
 - `check_all.py` verifica imports y función principal de cada agente
 
 ### Fase 5 — Flutter pantalla de actividad — COMPLETADA
@@ -189,7 +190,7 @@ Chuwi crea/actualiza `agent_sessions` en Supabase en cada turno:
 
 - Ruta: `/agents` → `AgentsScreen`
 - Tab en bottom nav: icono `psychology` (6º elemento)
-- 4 tabs: estado de los 11 agentes, conversaciones Chuwi, runs Kuine, decisiones Kuine
+- 4 tabs: estado de los 12 agentes, conversaciones Chuwi, runs Kuine, decisiones Kuine
 - Accessible desde el nav bar principal
 
 ---

@@ -1,0 +1,15 @@
+.env
+__pycache__
+*.pyc
+*.pyo
+.git
+.gitignore
+app/
+docs/
+*.zip
+*.log
+.tmp/
+node_modules/
+*.pdf
+*.png
+*.jpg

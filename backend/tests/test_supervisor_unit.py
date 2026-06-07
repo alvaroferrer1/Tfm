@@ -40,6 +40,7 @@ class TestSupervisorTools:
             "evaluate_all_products_parallel",
             "get_supplier_stats",
             "get_order_suggestions",
+            "get_roi",
         }
         assert required.issubset(names), f"Missing tools: {required - names}"
 
@@ -182,6 +183,51 @@ class TestSupervisorExecutor:
         assert result["count"] == 2
         assert result["top_risk"]["name"] == "Horno San Luis"
         assert "suppliers" in result
+
+    def test_get_order_suggestions_returns_count_and_value(self):
+        mock_suggestions = [
+            {"product_id": "p-001", "product_name": "Baguette", "order_qty": 20,
+             "avg_daily_loss": 0.7, "estimated_value": 24.0},
+            {"product_id": "p-002", "product_name": "Yogur", "order_qty": 12,
+             "avg_daily_loss": 0.4, "estimated_value": 9.6},
+        ]
+        with patch("backend.agents.supervisor.database.get_order_suggestions",
+                   return_value=mock_suggestions):
+            result = self._exec()("get_order_suggestions", {})
+        assert result["count"] == 2
+        assert result["total_estimated_value"] == pytest.approx(33.6, abs=0.01)
+        assert len(result["suggestions"]) == 2
+
+    def test_get_roi_returns_value_recovered(self):
+        """get_roi mide la merma evitada: valor recuperado por acciones completadas."""
+        mock_roi = {
+            "actions_completed": 5,
+            "value_recovered": 47.30,
+            "cost_recovered": 22.10,
+            "period_days": 7,
+        }
+        with patch("backend.agents.supervisor.database.get_completed_actions_value",
+                   return_value=mock_roi):
+            result = self._exec()("get_roi", {"days": 7})
+        assert result["actions_completed"] == 5
+        assert result["value_recovered"] == pytest.approx(47.30)
+        assert result["period_days"] == 7
+
+    def test_get_roi_default_days_is_7(self):
+        mock_roi = {"actions_completed": 0, "value_recovered": 0.0,
+                    "cost_recovered": 0.0, "period_days": 7}
+        with patch("backend.agents.supervisor.database.get_completed_actions_value",
+                   return_value=mock_roi) as mock_fn:
+            self._exec()("get_roi", {})
+        mock_fn.assert_called_once_with(STORE_ID, days=7)
+
+    def test_all_16_tools_present(self):
+        """Kuine tiene al menos 16 tools. Actualizar si se añaden más."""
+        assert len(SUPERVISOR_TOOLS) >= 16
+        names = {t["name"] for t in SUPERVISOR_TOOLS}
+        assert "get_roi" in names
+        assert "get_order_suggestions" in names
+        assert "get_store_comparison" in names
 
     def test_unknown_tool_returns_error(self):
         result = self._exec()("herramienta_fantasma", {})

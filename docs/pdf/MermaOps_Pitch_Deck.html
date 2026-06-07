@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>MermaOps — Pitch Deck</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:#000;color:#fff;print-color-adjust:exact;-webkit-print-color-adjust:exact;}
+.slide{width:297mm;height:210mm;position:relative;overflow:hidden;page-break-after:always;display:flex;flex-direction:column;justify-content:center;align-items:center;padding:40px;}
+/* DARK slides */
+.dark{background:#000;}
+.navy{background:#0F172A;}
+/* LIGHT slides */
+.light{background:#fff;color:#111;}
+/* Typography */
+.mega{font-size:160px;font-weight:900;line-height:1;letter-spacing:-4px;}
+.hero{font-size:96px;font-weight:800;line-height:1.05;letter-spacing:-2px;}
+.title{font-size:52px;font-weight:700;letter-spacing:-1px;}
+.sub{font-size:24px;font-weight:400;opacity:.6;margin-top:12px;}
+.body{font-size:18px;font-weight:400;line-height:1.7;opacity:.75;}
+/* Colors */
+.green{color:#10B981;}
+.gray{color:#9CA3AF;}
+.red{color:#EF4444;}
+.white{color:#fff;}
+.dark-text{color:#111;}
+/* Elements */
+.line{width:80px;height:3px;background:#10B981;margin:20px auto;}
+.line-left{width:80px;height:3px;background:#10B981;margin:20px 0;}
+.badge{display:inline-block;background:#10B98122;border:1px solid #10B981;color:#10B981;padding:6px 18px;border-radius:100px;font-size:13px;font-weight:600;letter-spacing:1px;text-transform:uppercase;}
+/* Table */
+table{width:100%;border-collapse:collapse;font-size:15px;}
+th{background:#111;color:#10B981;padding:10px 14px;text-align:left;font-weight:600;border-bottom:2px solid #10B981;}
+td{padding:10px 14px;border-bottom:1px solid #1f2937;color:#d1d5db;}
+tr:last-child td{border-bottom:none;}
+.highlight-col{color:#10B981;font-weight:700;}
+/* Cards */
+.cards{display:flex;gap:20px;width:100%;}
+.card{flex:1;background:#0F172A;border:1px solid #1f2937;border-radius:16px;padding:24px;}
+.card-val{font-size:56px;font-weight:800;color:#10B981;line-height:1;}
+.card-label{font-size:14px;color:#6b7280;margin-top:6px;}
+/* Metric row */
+.metric-row{display:flex;align-items:baseline;gap:12px;margin-bottom:8px;}
+.metric-big{font-size:80px;font-weight:900;color:#10B981;line-height:1;}
+.metric-label{font-size:20px;color:#6b7280;}
+/* Full-width image */
+.agents-img{max-height:160mm;max-width:260mm;object-fit:contain;}
+/* Two-col */
+.two-col{display:flex;gap:40px;width:100%;align-items:flex-start;}
+.col{flex:1;}
+/* Footer */
+.footer{position:absolute;bottom:24px;left:40px;right:40px;display:flex;justify-content:space-between;font-size:11px;color:#374151;}
+/* Print */
+@media print{body{background:#000;}.slide{page-break-after:always;}}
+/* Competitor strike */
+.strike{text-decoration:line-through;color:#6b7280;}
+/* Number reveal */
+.num-reveal{font-size:200px;font-weight:900;text-align:center;line-height:1;letter-spacing:-6px;}
+</style>
+</head>
+<body>
+
+<!-- SLIDE 1: COVER -->
+<div class="slide dark" style="text-align:center;">
+  <div class="badge">Máster IA Generativa · EVOLVE Madrid 2026</div>
+  <div style="margin-top:32px;">
+    <div style="font-size:88px;font-weight:900;letter-spacing:-3px;">MermaOps</div>
+    <div class="line"></div>
+    <div style="font-size:26px;color:#9CA3AF;max-width:520px;line-height:1.5;margin-top:4px;">Sistema Multi-Agente de IA<br>para Reducción de Merma Alimentaria</div>
+  </div>
+  <div style="position:absolute;bottom:32px;font-size:14px;color:#374151;">Álvaro Ferrer Muro · alvaroferrermarg@gmail.com</div>
+</div>
+
+<!-- SLIDE 2: EL PROBLEMA -->
+<div class="slide light" style="text-align:center;">
+  <div style="font-size:16px;font-weight:600;color:#9CA3AF;letter-spacing:2px;text-transform:uppercase;margin-bottom:24px;">El Problema</div>
+  <div class="num-reveal" style="color:#111;">2–5%</div>
+  <div style="font-size:28px;color:#374151;margin-top:16px;">de los ingresos de tu supermercado</div>
+  <div style="font-size:32px;font-weight:700;color:#111;margin-top:8px;">se pierde en merma alimentaria.</div>
+  <div style="margin-top:32px;display:flex;gap:40px;justify-content:center;">
+    <div style="text-align:center;"><div style="font-size:36px;font-weight:800;color:#EF4444;">15.000€</div><div style="font-size:14px;color:#9CA3AF;">mín. pérdida anual</div></div>
+    <div style="width:1px;background:#e5e7eb;"></div>
+    <div style="text-align:center;"><div style="font-size:36px;font-weight:800;color:#EF4444;">10,4 kg</div><div style="font-size:14px;color:#9CA3AF;">por persona y año en España</div></div>
+    <div style="width:1px;background:#e5e7eb;"></div>
+    <div style="text-align:center;"><div style="font-size:36px;font-weight:800;color:#EF4444;">95%</div><div style="font-size:14px;color:#9CA3AF;">sin solución asequible</div></div>
+  </div>
+  <div class="footer"><span>MermaOps · 2026</span><span>Fuente: FAO España 2024 · MAPAMA</span></div>
+</div>
+
+<!-- SLIDE 3: SOLUCIONES EXISTENTES FALLAN -->
+<div class="slide dark">
+  <div style="width:100%;">
+    <div style="font-size:16px;font-weight:600;color:#6B7280;letter-spacing:2px;text-transform:uppercase;margin-bottom:28px;">¿Qué hay ahora mismo?</div>
+    <table>
+      <tr><th>Solución</th><th>Coste implantación</th><th>Coste mensual</th><th>Hardware</th><th>Accesible</th></tr>
+      <tr><td>Winnow V2</td><td style="color:#EF4444;">&gt;20.000€</td><td>&gt;300€</td><td>Báscula + cámara IA</td><td style="color:#EF4444;">✗ Solo grandes cadenas</td></tr>
+      <tr><td>Orbisk</td><td style="color:#EF4444;">&gt;15.000€</td><td>&gt;250€</td><td>Cámara + servidor</td><td style="color:#EF4444;">✗ Solo grandes cadenas</td></tr>
+      <tr><td>Excel / papel</td><td>0€</td><td>~120€ (tiempo)</td><td>Ninguno</td><td style="color:#F97316;">⚠ Sin datos reales</td></tr>
+      <tr style="background:#0d1f0d;"><td><strong style="color:#10B981;">MermaOps</strong></td><td style="color:#10B981;font-weight:700;">0€ (BYOD)</td><td style="color:#10B981;font-weight:700;">0,80€</td><td style="color:#10B981;">Ninguno</td><td style="color:#10B981;font-weight:700;">✓ Todos los tamaños</td></tr>
+    </table>
+    <div style="margin-top:24px;font-size:18px;color:#6B7280;">El 95% de los supermercados medianos no puede permitirse Winnow ni Orbisk.</div>
+  </div>
+  <div class="footer"><span style="color:#374151;">MermaOps · 2026</span><span style="color:#374151;">Precios: sitios oficiales Winnow / Orbisk 2025</span></div>
+</div>
+
+<!-- SLIDE 4: LA SOLUCIÓN -->
+<div class="slide dark" style="text-align:center;">
+  <div style="font-size:16px;color:#6B7280;letter-spacing:2px;text-transform:uppercase;margin-bottom:20px;">Introduciendo</div>
+  <div style="font-size:104px;font-weight:900;color:#10B981;letter-spacing:-3px;line-height:1;">MermaOps</div>
+  <div class="line"></div>
+  <div style="font-size:72px;font-weight:900;color:#fff;letter-spacing:-2px;margin-top:8px;">0,80 €<span style="font-size:32px;color:#6B7280;font-weight:400;">/mes</span></div>
+  <div style="font-size:22px;color:#9CA3AF;margin-top:16px;max-width:600px;line-height:1.6;">Sin hardware adicional · Sin instalación · Sin formación<br>El encargado ya tiene Telegram.</div>
+  <div style="display:flex;gap:24px;margin-top:32px;justify-content:center;">
+    <div style="background:#0F172A;border:1px solid #1f2937;border-radius:12px;padding:16px 28px;text-align:center;"><div style="font-size:20px;font-weight:700;color:#10B981;">Telegram</div><div style="font-size:13px;color:#6B7280;margin-top:4px;">@ChuwiMermaOpsBot</div></div>
+    <div style="background:#0F172A;border:1px solid #1f2937;border-radius:12px;padding:16px 28px;text-align:center;"><div style="font-size:20px;font-weight:700;color:#3B82F6;">Flutter App</div><div style="font-size:13px;color:#6B7280;margin-top:4px;">Web + Móvil</div></div>
+    <div style="background:#0F172A;border:1px solid #1f2937;border-radius:12px;padding:16px 28px;text-align:center;"><div style="font-size:20px;font-weight:700;color:#8B5CF6;">24/7 Autónomo</div><div style="font-size:13px;color:#6B7280;margin-top:4px;">Scheduler 07:30</div></div>
+  </div>
+</div>
+
+<!-- SLIDE 5: LOS AGENTES (IMAGEN) -->
+<div class="slide dark" style="padding:20px;">
+  <div style="font-size:14px;color:#6B7280;letter-spacing:2px;text-transform:uppercase;text-align:center;margin-bottom:12px;">Arquitectura — 12 Agentes Especializados</div>
+  <img src="../Agentes MermaOps.png" class="agents-img" style="display:block;margin:0 auto;">
+</div>
+
+<!-- SLIDE 6: 100% -->
+<div class="slide dark" style="text-align:center;">
+  <div style="font-size:16px;color:#6B7280;letter-spacing:2px;text-transform:uppercase;margin-bottom:16px;">Precisión del sistema</div>
+  <div style="font-size:220px;font-weight:900;color:#fff;line-height:0.9;letter-spacing:-8px;">100%</div>
+  <div class="line"></div>
+  <div style="font-size:28px;color:#9CA3AF;margin-top:8px;">de precisión en decisiones</div>
+  <div style="font-size:20px;color:#6B7280;margin-top:12px;">vs. 16,7% baseline aleatorio &nbsp;·&nbsp; +83 puntos porcentuales</div>
+  <div style="display:flex;gap:48px;margin-top:32px;justify-content:center;">
+    <div style="text-align:center;"><div style="font-size:48px;font-weight:800;color:#10B981;">774</div><div style="font-size:14px;color:#6B7280;">tests automatizados</div></div>
+    <div style="text-align:center;"><div style="font-size:48px;font-weight:800;color:#10B981;">23/23</div><div style="font-size:14px;color:#6B7280;">ataques adversariales</div></div>
+    <div style="text-align:center;"><div style="font-size:48px;font-weight:800;color:#10B981;">1,98s</div><div style="font-size:14px;color:#6B7280;">todos los tests</div></div>
+  </div>
+</div>
+
+<!-- SLIDE 7: TECH STACK -->
+<div class="slide light">
+  <div style="width:100%;">
+    <div style="font-size:16px;font-weight:600;color:#9CA3AF;letter-spacing:2px;text-transform:uppercase;margin-bottom:24px;">Stack Tecnológico</div>
+    <table>
+      <tr><th style="background:#F9FAFB;color:#111;">Capa</th><th style="background:#F9FAFB;color:#111;">Tecnología</th><th style="background:#F9FAFB;color:#111;">Por qué</th></tr>
+      <tr><td><strong>IA / LLM</strong></td><td>Anthropic Claude API (Opus 4.7 · Sonnet 4.6 · Haiku 4.5)</td><td>Extended thinking · Prompt caching · Multi-turn tool use</td></tr>
+      <tr><td><strong>Backend</strong></td><td>FastAPI + Python 3.14</td><td>Async nativo · OpenAPI automático · 40+ endpoints</td></tr>
+      <tr><td><strong>Base de datos</strong></td><td>Supabase (PostgreSQL + pgvector 1536d)</td><td>Auth · Realtime · RAG sobre normativa alimentaria</td></tr>
+      <tr><td><strong>Frontend</strong></td><td>Flutter (Dart) — Web + iOS + Android</td><td>Un codebase para todas las plataformas</td></tr>
+      <tr><td><strong>Mensajería</strong></td><td>Telegram Bot API (python-telegram-bot)</td><td>El encargado ya lo tiene instalado</td></tr>
+      <tr><td><strong>Scheduler</strong></td><td>APScheduler · timezone Europe/Madrid</td><td>Brief 07:30 · alertas cada 2h · donaciones cada 30min</td></tr>
+    </table>
+    <div style="margin-top:20px;display:flex;gap:16px;">
+      <span style="background:#f0fdf4;color:#065f46;border:1px solid #bbf7d0;padding:5px 14px;border-radius:100px;font-size:13px;font-weight:600;">15.675 líneas de código</span>
+      <span style="background:#f0fdf4;color:#065f46;border:1px solid #bbf7d0;padding:5px 14px;border-radius:100px;font-size:13px;font-weight:600;">77 módulos Python</span>
+      <span style="background:#f0fdf4;color:#065f46;border:1px solid #bbf7d0;padding:5px 14px;border-radius:100px;font-size:13px;font-weight:600;">22 pantallas Flutter</span>
+      <span style="background:#f0fdf4;color:#065f46;border:1px solid #bbf7d0;padding:5px 14px;border-radius:100px;font-size:13px;font-weight:600;">19 tablas Supabase</span>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 8: NORMATIVA -->
+<div class="slide dark">
+  <div style="width:100%;">
+    <div style="font-size:16px;color:#6B7280;letter-spacing:2px;text-transform:uppercase;margin-bottom:28px;">Cumplimiento Normativo Automático</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+      <div style="background:#0F172A;border:1px solid #1f2937;border-radius:12px;padding:20px;display:flex;gap:16px;align-items:flex-start;">
+        <div style="font-size:24px;color:#10B981;margin-top:2px;">✓</div>
+        <div><div style="font-weight:700;color:#fff;font-size:16px;">Reglamento (CE) 178/2002</div><div style="color:#6B7280;font-size:14px;margin-top:4px;">Seguridad alimentaria · Nunca vender caducado</div></div>
+      </div>
+      <div style="background:#0F172A;border:1px solid #1f2937;border-radius:12px;padding:20px;display:flex;gap:16px;align-items:flex-start;">
+        <div style="font-size:24px;color:#10B981;margin-top:2px;">✓</div>
+        <div><div style="font-weight:700;color:#fff;font-size:16px;">Ley 7/2022 — Economía Circular</div><div style="color:#6B7280;font-size:14px;margin-top:4px;">Residuos orgánicos · trazabilidad de merma</div></div>
+      </div>
+      <div style="background:#0F172A;border:1px solid #1f2937;border-radius:12px;padding:20px;display:flex;gap:16px;align-items:flex-start;">
+        <div style="font-size:24px;color:#10B981;margin-top:2px;">✓</div>
+        <div><div style="font-weight:700;color:#fff;font-size:16px;">Ley 49/2002 — Donaciones</div><div style="color:#6B7280;font-size:14px;margin-top:4px;">Deducción fiscal 35% · cálculo automático</div></div>
+      </div>
+      <div style="background:#0F172A;border:1px solid #1f2937;border-radius:12px;padding:20px;display:flex;gap:16px;align-items:flex-start;">
+        <div style="font-size:24px;color:#10B981;margin-top:2px;">✓</div>
+        <div><div style="font-weight:700;color:#fff;font-size:16px;">CSRD 2026 — ESG PYMEs</div><div style="color:#6B7280;font-size:14px;margin-top:4px;">Reporting no financiero obligatorio desde 2026</div></div>
+      </div>
+    </div>
+    <div style="margin-top:20px;background:#0d1f0d;border:1px solid #10B98133;border-radius:12px;padding:16px 20px;color:#10B981;font-size:16px;">
+      MermaOps genera automáticamente los datos ESG necesarios para el reporting CSRD obligatorio.
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 9: ROI -->
+<div class="slide dark" style="text-align:center;">
+  <div style="font-size:16px;color:#6B7280;letter-spacing:2px;text-transform:uppercase;margin-bottom:16px;">Retorno sobre la inversión</div>
+  <div style="font-size:200px;font-weight:900;color:#10B981;line-height:0.9;letter-spacing:-6px;">500:1</div>
+  <div class="line"></div>
+  <div style="font-size:26px;color:#9CA3AF;margin-top:12px;">ROI mensual estimado</div>
+  <div style="display:flex;gap:48px;margin-top:32px;justify-content:center;">
+    <div style="text-align:center;"><div style="font-size:14px;color:#6B7280;text-transform:uppercase;letter-spacing:1px;">COSTE</div><div style="font-size:36px;font-weight:800;color:#EF4444;">0,80€/mes</div></div>
+    <div style="font-size:48px;color:#374151;align-self:center;">→</div>
+    <div style="text-align:center;"><div style="font-size:14px;color:#6B7280;text-transform:uppercase;letter-spacing:1px;">VALOR GENERADO</div><div style="font-size:36px;font-weight:800;color:#10B981;">~400€/mes</div><div style="font-size:13px;color:#6B7280;">merma evitada + 30h tiempo ahorrado</div></div>
+  </div>
+  <div style="margin-top:20px;font-size:16px;color:#6B7280;">ROI positivo con evitar UN producto al mes.</div>
+</div>
+
+<!-- SLIDE 10: DATOS REALES -->
+<div class="slide light">
+  <div style="width:100%;">
+    <div style="font-size:16px;font-weight:600;color:#9CA3AF;letter-spacing:2px;text-transform:uppercase;margin-bottom:24px;">Datos reales del sistema en producción</div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;">
+      <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px;padding:20px;">
+        <div style="font-size:52px;font-weight:900;color:#10B981;line-height:1;">45</div>
+        <div style="font-size:13px;color:#6B7280;margin-top:4px;">Acciones completadas<br>por empleados reales</div>
+      </div>
+      <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px;padding:20px;">
+        <div style="font-size:52px;font-weight:900;color:#111;line-height:1;">483€</div>
+        <div style="font-size:13px;color:#6B7280;margin-top:4px;">Valor de merma identificada<br>datos reales en Supabase</div>
+      </div>
+      <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px;padding:20px;">
+        <div style="font-size:52px;font-weight:900;color:#8B5CF6;line-height:1;">7</div>
+        <div style="font-size:13px;color:#6B7280;margin-top:4px;">Briefs diarios generados<br>por Kuine de forma autónoma</div>
+      </div>
+      <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px;padding:20px;">
+        <div style="font-size:52px;font-weight:900;color:#111;line-height:1;">9</div>
+        <div style="font-size:13px;color:#6B7280;margin-top:4px;">Ejecuciones completas<br>de Kuine en BD</div>
+      </div>
+      <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px;padding:20px;">
+        <div style="font-size:52px;font-weight:900;color:#10B981;line-height:1;">69€</div>
+        <div style="font-size:13px;color:#6B7280;margin-top:4px;">Donaciones registradas<br>(deducción fiscal 35%)</div>
+      </div>
+      <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px;padding:20px;">
+        <div style="font-size:52px;font-weight:900;color:#F97316;line-height:1;">0,03€</div>
+        <div style="font-size:13px;color:#6B7280;margin-top:4px;">Coste por brief de Kuine<br>con prompt caching activo</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 11: ESCALABILIDAD -->
+<div class="slide dark">
+  <div style="width:100%;">
+    <div style="font-size:16px;color:#6B7280;letter-spacing:2px;text-transform:uppercase;margin-bottom:24px;">Escalabilidad</div>
+    <table>
+      <tr><th>Escenario</th><th>Arquitectura</th><th>Coste mensual</th></tr>
+      <tr><td>1 tienda (demo actual)</td><td>1 backend + 1 Supabase + 1 bot Telegram</td><td style="color:#10B981;font-weight:700;">~0,80€</td></tr>
+      <tr><td>10 tiendas</td><td>1 backend + 1 Supabase (multi-store_id)</td><td style="color:#10B981;font-weight:700;">~8€</td></tr>
+      <tr><td>100 tiendas</td><td>1 backend + N workers Kuine</td><td style="color:#10B981;font-weight:700;">~80€</td></tr>
+    </table>
+    <div style="margin-top:24px;background:#0F172A;border:1px solid #1f2937;border-radius:12px;padding:16px 20px;">
+      <div style="font-size:15px;color:#9CA3AF;line-height:1.7;">
+        La arquitectura es <strong style="color:#fff;">stateless</strong>: toda la persistencia en Supabase.<br>
+        Añadir una tienda nueva = insertar una fila en <code style="color:#10B981;">stores</code> y asignar un <code style="color:#10B981;">store_id</code>.<br>
+        Coste marginal por tienda: <strong style="color:#10B981;">~0,80€/mes</strong> con prompt caching activo.
+      </div>
+    </div>
+    <div style="margin-top:16px;">
+      <div style="font-size:15px;color:#6B7280;margin-bottom:8px;">Líneas futuras:</div>
+      <div style="display:flex;gap:12px;">
+        <span style="background:#1e3a5f;color:#93c5fd;padding:6px 14px;border-radius:8px;font-size:13px;">Agente Comprador</span>
+        <span style="background:#1e3a5f;color:#93c5fd;padding:6px 14px;border-radius:8px;font-size:13px;">Multi-tienda comparativas</span>
+        <span style="background:#1e3a5f;color:#93c5fd;padding:6px 14px;border-radius:8px;font-size:13px;">Integración TPV</span>
+        <span style="background:#1e3a5f;color:#93c5fd;padding:6px 14px;border-radius:8px;font-size:13px;">Fine-tuning modelo propio</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 12: CONTACTO -->
+<div class="slide dark" style="text-align:center;">
+  <div style="font-size:80px;font-weight:900;color:#10B981;letter-spacing:-2px;">MermaOps</div>
+  <div class="line"></div>
+  <div style="margin-top:16px;display:flex;flex-direction:column;gap:10px;align-items:center;">
+    <div style="font-size:22px;color:#9CA3AF;">Álvaro Ferrer Muro</div>
+    <div style="font-size:18px;color:#6B7280;">alvaroferrermarg@gmail.com</div>
+    <div style="font-size:20px;color:#10B981;font-weight:600;margin-top:8px;">@ChuwiMermaOpsBot</div>
+  </div>
+  <div style="margin-top:40px;display:flex;gap:20px;justify-content:center;">
+    <div style="background:#0F172A;border:1px solid #1f2937;border-radius:12px;padding:12px 24px;font-size:14px;color:#9CA3AF;">FastAPI + Supabase + Flutter + Claude API</div>
+  </div>
+</div>
+
+</body>
+</html>

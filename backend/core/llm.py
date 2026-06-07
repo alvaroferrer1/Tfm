@@ -6,8 +6,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
+import threading
 import time
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Callable
 
 import anthropic
@@ -19,7 +22,7 @@ load_dotenv()
 
 MODEL = "claude-sonnet-4-6"
 MODEL_FAST = "claude-haiku-4-5-20251001"   # salidas estructuradas simples, checks rápidos
-MODEL_DEEP = "claude-opus-4-7"             # síntesis compleja, árbitros, informes mensuales
+MODEL_DEEP = "claude-opus-4-8"             # síntesis compleja, árbitros, informes mensuales
 
 # ── Langfuse observability (opcional — activa si LANGFUSE_PUBLIC_KEY presente) ──
 # Usa OpenTelemetry AnthropicInstrumentor — auto-instrumenta TODAS las llamadas
@@ -171,6 +174,7 @@ _PRICE_PER_1M: dict[str, dict[str, float]] = {
     "claude-haiku-4-5-20251001": {"input": 0.80,  "output": 4.00,  "cache_read": 0.08,  "cache_write": 1.00},
     "claude-sonnet-4-6":         {"input": 3.00,  "output": 15.00, "cache_read": 0.30,  "cache_write": 3.75},
     "claude-opus-4-7":           {"input": 15.00, "output": 75.00, "cache_read": 1.50,  "cache_write": 18.75},
+    "claude-opus-4-8":           {"input": 15.00, "output": 75.00, "cache_read": 1.50,  "cache_write": 18.75},
 }
 
 # Acumulador global (se resetea al reiniciar el proceso — basta para la demo)
@@ -543,18 +547,24 @@ def call_with_thinking(
     system_extra: str = "",
     budget_tokens: int = 8000,
     max_tokens: int = 12000,
+    fast: bool = False,
 ) -> tuple[str, str]:
     """
-    Llamada con adaptive thinking (Sonnet 4.6 / Opus 4.7).
-    El parámetro budget_tokens se mantiene por compatibilidad pero se ignora —
-    en adaptive mode Claude gestiona su propio presupuesto de tokens de razonamiento.
+    Llamada con thinking (Sonnet 4.6).
+    fast=False (default): adaptive mode — Claude decide cuánto pensar. Para briefs y análisis profundos.
+    fast=True: enabled mode con budget acotado — máx 1500 tokens de razonamiento. Para scans interactivos.
     Devuelve (respuesta_final, bloque_de_razonamiento).
     """
     t0 = time.monotonic()
+    thinking_param = (
+        {"type": "enabled", "budget_tokens": min(budget_tokens, 1500)}
+        if fast
+        else {"type": "adaptive"}
+    )
     response = get_client().messages.create(
         model=MODEL,
-        max_tokens=max_tokens,
-        thinking={"type": "adaptive"},
+        max_tokens=max_tokens if not fast else min(max_tokens, 2048),
+        thinking=thinking_param,
         system=_cached_system(system_extra),
         messages=[{"role": "user", "content": prompt}],
     )
@@ -574,6 +584,9 @@ def run_agentic_loop(
     max_tokens: int = 4096,
     max_iterations: int = 15,
     adaptive_thinking: bool = True,
+    initial_messages: Optional[list[dict]] = None,
+    model: str | None = None,
+    cancel_event: "threading.Event | None" = None,
 ) -> tuple[str, list[dict]]:
     """
     Loop agéntico completo: Claude llama herramientas hasta tener la respuesta.
@@ -585,16 +598,22 @@ def run_agentic_loop(
     Benchmark: +54% en τ-Bench airline domain (Anthropic, 2025).
     """
     client = get_client()
-    messages: list[dict] = [{"role": "user", "content": prompt}]
+    messages: list[dict] = list(initial_messages) if initial_messages else []
+    messages.append({"role": "user", "content": prompt})
     tool_trace: list[dict] = []
     t0 = time.monotonic()
 
     # Adaptive thinking params — solo para modelos que lo soportan (Sonnet 4.6+)
     thinking_param = {"type": "adaptive"} if adaptive_thinking else None
+    _model = model or MODEL
 
     for iteration in range(max_iterations):
+        # Cancelación cooperativa: si el llamador señala cancel_event, paramos limpiamente
+        if cancel_event is not None and cancel_event.is_set():
+            logger.info(f"[llm] run_agentic_loop cancelado en iteración {iteration}")
+            break
         create_kwargs: dict = dict(
-            model=MODEL,
+            model=_model,
             max_tokens=max_tokens,
             system=_cached_system(system_extra),
             tools=tools,
@@ -631,9 +650,10 @@ def run_agentic_loop(
             import concurrent.futures
             tool_results = []
             with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(tool_use_blocks), 5)) as pool:
-                futures = [pool.submit(_run_tool, b) for b in tool_use_blocks]
-                for future in concurrent.futures.as_completed(futures):
-                    block, result = future.result()
+                # Mantener el orden original de tool_use_blocks (Claude requiere orden consistente)
+                futures = [(b, pool.submit(_run_tool, b)) for b in tool_use_blocks]
+                for block, future in futures:
+                    _, result = future.result()
                     serialized = json.dumps(result, ensure_ascii=False, default=str)
                     tool_trace.append({
                         "tool": block.name,
@@ -654,7 +674,7 @@ def run_agentic_loop(
         "content": "Con la información recopilada hasta ahora, proporciona la respuesta final.",
     })
     final_kwargs: dict = dict(
-        model=MODEL,
+        model=_model,  # usa el modelo original del caller, no el default global
         max_tokens=max_tokens,
         system=_cached_system(system_extra),
         messages=messages,
@@ -662,6 +682,8 @@ def run_agentic_loop(
     if thinking_param:
         final_kwargs["thinking"] = thinking_param
     final = client.messages.create(**final_kwargs)
+    _log_usage(final, "agentic_loop_final_synthesis", prompt=prompt[:200],
+               duration_ms=(time.monotonic() - t0) * 1000, model=_model)
     return _extract_text(final), tool_trace
 
 
@@ -713,3 +735,75 @@ def _extract_thinking(response: anthropic.types.Message) -> str:
         if hasattr(block, "type") and block.type == "thinking":
             return block.thinking
     return ""
+
+
+# ── Circuit breaker — previene gasto descontrolado en loops agénticos ─────────
+
+class _CBState(Enum):
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
+
+
+class _LLMCircuitBreaker:
+    def __init__(self, failure_threshold: int = 5, recovery_timeout: float = 60.0):
+        self.state = _CBState.CLOSED
+        self.failure_count = 0
+        self.last_failure = 0.0
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self._lock = threading.Lock()
+
+    def before_call(self) -> None:
+        with self._lock:
+            if self.state == _CBState.OPEN:
+                if time.monotonic() - self.last_failure > self.recovery_timeout:
+                    self.state = _CBState.HALF_OPEN
+                else:
+                    raise RuntimeError(
+                        "[circuit_breaker] Claude API temporalmente suspendida — "
+                        "demasiados errores consecutivos. Espera 60s o reinicia."
+                    )
+
+    def on_success(self) -> None:
+        with self._lock:
+            self.failure_count = max(0, self.failure_count - 1)
+            if self.state == _CBState.HALF_OPEN:
+                self.state = _CBState.CLOSED
+
+    def on_failure(self, exc: Exception) -> None:
+        with self._lock:
+            self.failure_count += 1
+            self.last_failure = time.monotonic()
+            if self.failure_count >= self.failure_threshold:
+                self.state = _CBState.OPEN
+                logger.error(
+                    f"[circuit_breaker] OPEN — {self.failure_count} fallos consecutivos. "
+                    f"Último: {str(exc)[:120]}"
+                )
+
+
+_circuit_breaker = _LLMCircuitBreaker(failure_threshold=5, recovery_timeout=60.0)
+
+
+def call_with_retry(func: Callable, *args, max_retries: int = 3, **kwargs) -> Any:
+    """
+    Llama a `func` con retry exponencial + jitter para errores recuperables
+    (rate limit 429, server error 529/500). Pasa por el circuit breaker global.
+    """
+    _circuit_breaker.before_call()
+    for attempt in range(max_retries):
+        try:
+            result = func(*args, **kwargs)
+            _circuit_breaker.on_success()
+            return result
+        except Exception as exc:
+            err = str(exc)
+            retriable = any(code in err for code in ("429", "529", "500", "rate_limit", "overloaded"))
+            if not retriable or attempt == max_retries - 1:
+                _circuit_breaker.on_failure(exc)
+                raise
+            delay = (2 ** attempt) + random.uniform(0, 1.0)
+            logger.warning(f"[llm] retry {attempt + 1}/{max_retries} en {delay:.1f}s — {err[:80]}")
+            time.sleep(delay)
+    raise RuntimeError("call_with_retry: max retries sin resultado")

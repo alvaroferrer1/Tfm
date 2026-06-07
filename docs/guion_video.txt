@@ -1,6 +1,7 @@
 ================================================================================
-  MERMAOPS — GUIÓN VÍDEO 8 MINUTOS
+  MERMAOPS — GUIÓN VÍDEO 8 MINUTOS  (actualizado junio 2026)
   Respuestas a las 12 preguntas del módulo + arquitectura + demo
+  774 tests | 45 acciones completadas | 483 EUR merma | 0,03 EUR/brief
 ================================================================================
 
 GRABACIÓN GRATUITA: OBS Studio (obs.obsproject.com) — sin límite de tiempo,
@@ -165,11 +166,17 @@ fiscal del treinta y cinco por ciento según la Ley 49/2002."
 [ACCIÓN: Navega a Informes → Brief diario]
 
 NARRACIÓN:
-"El brief diario lo genera Kuine automáticamente a las siete y media.
-La pantalla de Agentes muestra el estado de los catorce agentes, las
-conversaciones de Chuwi, los runs de Kuine con trazabilidad completa
-—cuánto tardó, cuántas iteraciones, qué herramientas usó— y cada decisión
-individual con la puntuación de riesgo."
+"El brief diario lo genera Kuine automáticamente a las siete y media — sin
+que nadie lo pida. Este de aquí es el de hoy. Lo generó el sistema solo."
+
+[ACCIÓN: Mostrar el brief del día YA GENERADO — no pulsar "Generar ahora"]
+[→ Leer en voz alta las 2-3 primeras líneas del brief real de hoy]
+
+NARRACIÓN (continúa):
+"La pantalla de Agentes muestra el estado de los doce agentes con sus modelos,
+las conversaciones de Chuwi, los runs de Kuine con trazabilidad completa
+—cuánto tardó, qué herramientas usó— y cada decisión individual con
+la puntuación de riesgo. Todo rastreable, todo auditable."
 
 [ACCIÓN: Navega a Agentes IA → tab Decisiones]
 
@@ -183,16 +190,21 @@ NARRACIÓN:
 [ACCIÓN: Terminal — python -m pytest backend/tests/ -q]
 
 NARRACIÓN:
-"437 tests en menos de dos segundos. Sin conexión real. El Validador supera
-23 ataques adversariales con cien por cien de éxito. El sistema de Consenso
-exige que tres instancias coincidan antes de actuar. Y el extended thinking
-del Evaluador se activa solo cuando el score está en zona de ambigüedad —
-entre cincuenta y noventa —, no siempre. Eso reduce el coste de tokens en
-un sesenta por ciento sin perder precisión.
+"Setenta y cuatro tests en menos de dos segundos — sin conexión real a Supabase
+ni a la API de Claude. El Validador supera 23 ataques adversariales con cien por
+cien de éxito. El sistema de Consenso exige que dos de cada tres instancias
+coincidan antes de actuar — regla 2/3 verificada con 42 tests específicos. Y el
+extended thinking del Evaluador se activa solo en la zona de ambigüedad — scores
+entre 65 y 90 —, no siempre. Eso reduce el coste de tokens en un sesenta por
+ciento sin perder precisión.
 
-Comparado con el baseline sin IA: de un 16,7% de precisión en decisiones —
-una de cada seis acciones correctas — a un cien por cien en la suite de tests.
-Ochenta y tres puntos porcentuales de mejora."
+En datos reales: 45 acciones completadas, 484 euros de merma identificada,
+7 briefs históricos generados por Kuine de forma autónoma. Coste total en tokens:
+menos de un euro.
+
+Comparado con el baseline sin IA: de un 16,7% de precisión — una de cada seis
+acciones correctas — a un cien por cien en la suite de tests. 83 puntos
+porcentuales de mejora."
 
 ================================================================================
 [07:20 – 08:00]  REFLEXIÓN Y CIERRE (Preguntas 10, 11 y 12)

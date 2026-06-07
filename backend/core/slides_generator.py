@@ -361,7 +361,7 @@ def s03_solucion(d: Deck):
 
     # Bullets principales
     items = [
-        "11 agentes de IA trabajando en paralelo 24/7 sin supervision",
+        "12 agentes de IA trabajando en paralelo 24/7 sin supervision",
         "Kuine (Opus 4.7) orquesta y toma decisiones: rebajar, donar o retirar",
         "Chuwi avisa por Telegram antes de que nadie lo pida",
         "Vision por computador analiza el estado real del producto en 3 segundos",
@@ -414,7 +414,7 @@ def s04_arquitectura(d: Deck):
     d.hbar(18, 1.5, _NEON)
     d.label("Arquitectura multi-agente — Hub & Spoke", 12, 5, 200, 8, _NEON)
 
-    d.heading("11 agentes. Un cerebro central.", 12, 22, 218, 18, _WHITE)
+    d.heading("12 agentes. Un cerebro central.", 12, 22, 218, 18, _WHITE)
     d.sub("Kuine (Opus 4.7) en el nucleo  |  4 agentes primarios  |  6 especializados",
           12, 34, 210, 7.5, _GREY)
 
@@ -443,7 +443,7 @@ def s04_arquitectura(d: Deck):
     d.set_xy(cx - 18, cy + 1)
     d.cell(36, 5, "Opus 4.7", align="C")
     d.set_xy(cx - 18, cy + 7)
-    d.cell(36, 5, "25 tools", align="C")
+    d.cell(36, 5, "16 tools", align="C")
 
     # ── Agents ────────────────────────────────────────────────────────────────
     # Inner ring (r=50): 4 core agents at diagonal positions
@@ -783,7 +783,7 @@ def s08_stack(d: Deck):
         {
             "title": "IA & Agentes", "color": _NEON,
             "items": [
-                ("Claude Opus 4.7",     "Orquestador Kuine — 25 tools"),
+                ("Claude Opus 4.7",     "Orquestador Kuine — 16 tools"),
                 ("Claude Sonnet 4.6",   "7 agentes — reasoning + streaming"),
                 ("Claude Haiku 4.5",    "3 agentes — tareas rapidas"),
                 ("Extended thinking",   "Decisiones criticas con razonamiento"),
@@ -809,7 +809,7 @@ def s08_stack(d: Deck):
                 ("Riverpod",            "Estado reactivo, sin boilerplate"),
                 ("Go Router",           "Navegacion declarativa"),
                 ("Mobile Scanner",      "Escaneo de codigos de barras"),
-                ("Pytest",              "323 tests, mocks de Supabase"),
+                ("Pytest",              "800 tests, mocks de Supabase"),
                 ("share_plus",          "Compartir PDFs desde la app"),
             ],
         },

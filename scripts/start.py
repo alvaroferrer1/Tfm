@@ -282,13 +282,31 @@ def print_test_guide(bot_info: dict) -> None:
   SELECT telegram_user_id, telegram_username, status, last_seen_at
   FROM telegram_users ORDER BY last_seen_at DESC LIMIT 10;
 
+{_c("PDF DEFENSA TFM", "bold")}
+  Descarga directa en el navegador (con token dev):
+  http://127.0.0.1:{port}/api/v1/reports/tfm/pdf
+  (necesita header Authorization: Bearer dev-bypass)
+
+  Desde terminal:
+  curl -H "Authorization: Bearer dev-bypass" \\
+       http://127.0.0.1:{port}/api/v1/reports/tfm/pdf \\
+       -o MermaOps_TFM_Defensa.pdf
+
+  Abrir en Chrome directamente:
+  python -m webbrowser http://127.0.0.1:{port}/docs#/default/get_tfm_defense_pdf_api_v1_reports_tfm_pdf_get
+
+{_c("APP FLUTTER EN CHROME", "bold")}
+  Si ya esta compilada:  python scripts/build_web.py --serve
+  Compilar y servir:     python scripts/build_web.py
+  URL: http://localhost:3000
+
 {_c("COMANDOS UTILES", "bold")}
   make check          → diagnostico completo del sistema
   make seed           → cargar/recargar datos demo
   make advance N=2    → simular que pasaron 2 dias (productos caducan)
   make demo-reset     → volver al estado inicial
   make brief          → forzar generacion de brief ahora
-  make test           → correr 323 tests
+  make test           → correr 732 tests reales
 """)
     print(SEP)
     print(_c("  Ctrl+C para parar el backend", "yellow"))

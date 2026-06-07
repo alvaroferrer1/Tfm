@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/api_service.dart';
+import '../../core/error_widget.dart';
 import '../../core/notification_service.dart';
 import '../../core/supabase_client.dart';
 import '../../core/user_role_provider.dart';
@@ -95,7 +96,7 @@ class _DemoControlScreenState extends ConsumerState<_DemoContent> {
       setState(() { _loading = false; });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),
         );
       }
     }
@@ -106,9 +107,8 @@ class _DemoControlScreenState extends ConsumerState<_DemoContent> {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Resetear demo'),
-        content: const Text(
-          'Vuelve al estado inicial del Super Martínez.\n'
-          '¿Continuar?',
+        content: Text(
+          'Vuelve al estado inicial de $storeName.\n¿Continuar?',
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
@@ -148,7 +148,7 @@ class _DemoControlScreenState extends ConsumerState<_DemoContent> {
       setState(() { _loading = false; });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),
         );
       }
     }

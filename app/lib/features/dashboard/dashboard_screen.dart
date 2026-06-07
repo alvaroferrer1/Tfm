@@ -5,14 +5,23 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/api_service.dart';
+import '../../core/error_widget.dart';
 import '../../core/l10n.dart';
 import '../../core/supabase_client.dart';
-import '../../core/theme.dart';
+import '../../core/theme.dart' show UrgencyColors, ShimmerKpiGrid;
 
 // ── Providers ─────────────────────────────────────────────────────────────────
 
 final _comparisonProvider = FutureProvider<List<Map<String, dynamic>>>((ref) async {
   return api.getStoresComparison();
+});
+
+// Escucha cambios en acciones en tiempo real (Supabase Realtime)
+final _actionsRealtimeProvider = StreamProvider<List<Map<String, dynamic>>>((ref) {
+  return supabase
+      .from('actions')
+      .stream(primaryKey: ['id'])
+      .eq('store_id', storeId);
 });
 
 final dashboardProvider = FutureProvider<Map<String, dynamic>>((ref) async {
@@ -53,7 +62,7 @@ final dashboardProvider = FutureProvider<Map<String, dynamic>>((ref) async {
   final criticalCount =
       pendingList.where((a) => (a['priority_score'] as int? ?? 0) >= 85).length;
   final highCount =
-      pendingList.where((a) => (a['priority_score'] as int? ?? 0) >= 60).length;
+      pendingList.where((a) => (a['priority_score'] as int? ?? 0) >= 65).length;
 
   final donationsRaw = await supabase
       .from('donations')
@@ -74,6 +83,64 @@ final dashboardProvider = FutureProvider<Map<String, dynamic>>((ref) async {
       .gte('date', cutoff7.toIso8601String().substring(0, 10))
       .order('date', ascending: true);
 
+  final todayStr = DateTime.now().toIso8601String().substring(0, 10);
+  final tomorrowStr = DateTime.now()
+      .add(const Duration(days: 1))
+      .toIso8601String()
+      .substring(0, 10);
+  final expiringTodayRaw = await supabase
+      .from('batches')
+      .select('quantity, expiry_date, products(name, category, pasillo)')
+      .eq('store_id', storeId)
+      .eq('status', 'active')
+      .gte('expiry_date', todayStr)
+      .lte('expiry_date', tomorrowStr)
+      .order('expiry_date', ascending: true)
+      .limit(6);
+
+  final completedTodayRaw = await supabase
+      .from('actions')
+      .select('id')
+      .eq('store_id', storeId)
+      .eq('status', 'completed')
+      .gte('completed_at', todayStr);
+
+  // ── Predictive alerts: lotes que van a cruzar el umbral CRÍTICO pronto ────
+  // Computa qué productos sin acción caducan en las próximas 24-48h
+  // con alto stock → van a necesitar acción urgente antes de que sea tarde.
+  final pendingBatchIds = pendingList.map((a) => a['batch_id']).toSet();
+  final predictiveAlerts = <Map<String, dynamic>>[];
+  final now = DateTime.now();
+  for (final b in batches) {
+    final batchId = b['id'] ?? '';
+    if (pendingBatchIds.contains(batchId)) continue; // ya tiene acción
+    final expiryStr = b['expiry_date'] as String? ?? '';
+    if (expiryStr.isEmpty) continue;
+    final expiry = DateTime.tryParse(expiryStr);
+    if (expiry == null) continue;
+    final hoursLeft = expiry.difference(now).inHours;
+    if (hoursLeft < 0 || hoursLeft > 48) continue; // solo próximas 48h sin acción
+
+    final product = (b['products'] as Map?)?.cast<String, dynamic>() ?? {};
+    final qty = (b['quantity'] as num?)?.toInt() ?? 0;
+    final price = (product['price'] as num?)?.toDouble() ?? 0;
+    final value = qty * price;
+
+    if (value < 5) continue; // ignorar productos de poco valor
+
+    predictiveAlerts.add({
+      'product': product['name'] ?? 'Producto',
+      'hours_left': hoursLeft,
+      'days_left': expiry.difference(now).inDays,
+      'qty': qty,
+      'value': value,
+      'pasillo': product['pasillo'] ?? '?',
+      'expiry': expiryStr,
+    });
+  }
+  // Ordenar por más urgente primero
+  predictiveAlerts.sort((a, b) => (a['hours_left'] as int).compareTo(b['hours_left'] as int));
+
   return {
     'pending_count': pendingList.length,
     'critical_count': criticalCount,
@@ -85,23 +152,59 @@ final dashboardProvider = FutureProvider<Map<String, dynamic>>((ref) async {
     'merma_7d': List<Map<String, dynamic>>.from(merma7),
     'donation_qty': donationQty,
     'donation_value': donationValue,
+    'expiring_today': List<Map<String, dynamic>>.from(expiringTodayRaw),
+    'completed_today': (completedTodayRaw as List).length,
+    'predictive_alerts': predictiveAlerts.take(4).toList(),
   };
 });
 
 // ── Screen ────────────────────────────────────────────────────────────────────
 
-class DashboardScreen extends ConsumerWidget {
+class DashboardScreen extends ConsumerStatefulWidget {
   const DashboardScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<DashboardScreen> createState() => _DashboardScreenState();
+}
+
+class _DashboardScreenState extends ConsumerState<DashboardScreen> {
+  int _prevCriticalCount = -1;
+
+  @override
+  Widget build(BuildContext context) {
+    // Realtime: recarga dashboard y muestra banner si aparecen nuevos críticos
+    ref.listen(_actionsRealtimeProvider, (prev, next) {
+      ref.invalidate(dashboardProvider);
+      next.whenData((actions) {
+        final criticals = actions.where((a) => (a['priority_score'] as int? ?? 0) >= 85).length;
+        if (_prevCriticalCount >= 0 && criticals > _prevCriticalCount) {
+          final newCount = criticals - _prevCriticalCount;
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Row(children: [
+              const Icon(Icons.crisis_alert_rounded, color: Colors.white, size: 18),
+              const SizedBox(width: 8),
+              Expanded(child: Text('$newCount nuevo${newCount > 1 ? 's' : ''} producto${newCount > 1 ? 's' : ''} CRÍTICO${newCount > 1 ? 'S' : ''} detectado${newCount > 1 ? 's' : ''}')),
+            ]),
+            backgroundColor: const Color(0xFFDC2626),
+            duration: const Duration(seconds: 5),
+            action: SnackBarAction(
+              label: 'Ver acciones',
+              textColor: Colors.white,
+              onPressed: () => context.go('/actions'),
+            ),
+          ));
+        }
+        setState(() => _prevCriticalCount = criticals);
+      });
+    });
+
     final dashAsync = ref.watch(dashboardProvider);
     final user = supabase.auth.currentUser;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF0FDF4),
       body: dashAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
+        loading: () => const SafeArea(child: ShimmerKpiGrid()),
         error: (e, _) => SafeArea(
           child: Center(
             child: Padding(
@@ -126,7 +229,7 @@ class DashboardScreen extends ConsumerWidget {
                           fontWeight: FontWeight.w800,
                           color: Color(0xFF111827))),
                   const SizedBox(height: 8),
-                  Text('$e',
+                  Text(friendlyError(e),
                       textAlign: TextAlign.center,
                       style: const TextStyle(
                           fontSize: 13, color: Color(0xFF6B7280))),
@@ -219,6 +322,11 @@ class _DashboardBodyState extends State<_DashboardBody>
     final donationValue = widget.data['donation_value'] as double? ?? 0;
     final mostCriticalBatch =
         widget.data['most_critical_batch'] as Map<String, dynamic>?;
+    final expiringToday = List<Map<String, dynamic>>.from(
+        widget.data['expiring_today'] as List? ?? []);
+    final completedToday = widget.data['completed_today'] as int? ?? 0;
+    final predictiveAlerts = List<Map<String, dynamic>>.from(
+        widget.data['predictive_alerts'] as List? ?? []);
     final name = widget.userEmail?.split('@').first ?? 'encargado';
     final headerBg = _headerColor(critical);
     final ref = widget.ref;
@@ -360,6 +468,25 @@ class _DashboardBodyState extends State<_DashboardBody>
                     const SizedBox(height: 20),
                   ],
 
+                  // Today's progress bar
+                  if (completedToday > 0 || pending > 0) ...[
+                    _TodayProgressCard(
+                        completed: completedToday, pending: pending),
+                    const SizedBox(height: 20),
+                  ],
+
+                  // Predictive alerts — lotes sin acción que caducan pronto
+                  if (predictiveAlerts.isNotEmpty) ...[
+                    _PredictiveAlertsCard(alerts: predictiveAlerts),
+                    const SizedBox(height: 16),
+                  ],
+
+                  // Expiring today/tomorrow mini-list
+                  if (expiringToday.isNotEmpty) ...[
+                    _ExpiringTodayCard(batches: expiringToday),
+                    const SizedBox(height: 20),
+                  ],
+
                   // Quick actions
                   const Text(
                     'Acciones rápidas',
@@ -454,7 +581,7 @@ class _DashboardBodyState extends State<_DashboardBody>
           SizedBox(width: 12),
           Expanded(child: Text('Kuine analizando… puede tardar 60–90 segundos')),
         ]),
-        duration: Duration(seconds: 180),
+        duration: Duration(seconds: 15),
         backgroundColor: Color(0xFF7C3AED),
       ),
     );
@@ -481,7 +608,7 @@ class _DashboardBodyState extends State<_DashboardBody>
       messenger.hideCurrentSnackBar();
       final errMsg = e.toString().contains('TimeoutException')
           ? 'Kuine tardó demasiado. Inténtalo de nuevo o usa "make brief" en terminal.'
-          : 'Error generando brief: $e';
+          : friendlyError(e);
       messenger.showSnackBar(SnackBar(
           content: Text(errMsg),
           backgroundColor: const Color(0xFFEF4444),
@@ -962,7 +1089,9 @@ class _CriticalSpotlight extends StatelessWidget {
             ? 'Caduca mañana'
             : 'Caduca en $daysLeft días';
 
-    return Container(
+    return GestureDetector(
+      onTap: () => context.push('/actions'),
+      child: Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
@@ -1032,10 +1161,10 @@ class _CriticalSpotlight extends StatelessWidget {
           ),
         ],
       ),
+    ),
     );
   }
 }
-
 // ── Merma Area Card ───────────────────────────────────────────────────────────
 
 class _MermaAreaCard extends StatelessWidget {
@@ -1420,7 +1549,7 @@ class _StoresComparisonCard extends ConsumerWidget {
               style: TextStyle(fontSize: 13, color: Colors.grey)),
         ]),
       ),
-      error: (_, __) => const SizedBox.shrink(),
+      error: (_, __) => const SizedBox.shrink(), // sección opcional, fallo silencioso aceptable
       data: (stores) {
         if (stores.isEmpty) return const SizedBox.shrink();
         final current = stores.firstWhere((s) => s['is_current'] == true,
@@ -1562,6 +1691,313 @@ class _RankBadge extends StatelessWidget {
       child: Text('Puesto $rank / $total',
           style: TextStyle(
               fontSize: 11, fontWeight: FontWeight.w700, color: fg)),
+    );
+  }
+}
+
+// ── Today Progress Card ───────────────────────────────────────────────────────
+
+class _TodayProgressCard extends StatelessWidget {
+  final int completed;
+  final int pending;
+  const _TodayProgressCard({required this.completed, required this.pending});
+
+  @override
+  Widget build(BuildContext context) {
+    final total = completed + pending;
+    final pct = total > 0 ? completed / total : 0.0;
+    final isDone = pending == 0 && completed > 0;
+    final barColor = isDone
+        ? const Color(0xFF059669)
+        : pct >= 0.5
+            ? const Color(0xFF3B82F6)
+            : const Color(0xFFF59E0B);
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withValues(alpha: 0.05),
+              blurRadius: 10,
+              offset: const Offset(0, 3))
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: barColor.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(9),
+              ),
+              child: Icon(
+                isDone ? Icons.check_circle_rounded : Icons.pending_actions_rounded,
+                color: barColor,
+                size: 17,
+              ),
+            ),
+            const SizedBox(width: 10),
+            const Expanded(
+              child: Text('Progreso de hoy',
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF111827))),
+            ),
+            Text(
+              '$completed / $total',
+              style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w900,
+                  color: barColor),
+            ),
+          ]),
+          const SizedBox(height: 12),
+          TweenAnimationBuilder<double>(
+            tween: Tween(begin: 0, end: pct),
+            duration: const Duration(milliseconds: 900),
+            curve: Curves.easeOut,
+            builder: (_, v, __) => ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: LinearProgressIndicator(
+                value: v,
+                minHeight: 8,
+                backgroundColor: barColor.withValues(alpha: 0.12),
+                valueColor: AlwaysStoppedAnimation<Color>(barColor),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            isDone
+                ? '¡Todo completado! La tienda está al día.'
+                : '$pending acciones pendientes · $completed completadas hoy',
+            style: TextStyle(
+                fontSize: 11,
+                color: isDone ? const Color(0xFF059669) : const Color(0xFF6B7280),
+                fontWeight: isDone ? FontWeight.w600 : FontWeight.normal),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Predictive Alerts Card ────────────────────────────────────────────────────
+// Muestra productos sin acción asignada que caducan en <48h.
+// "Inteligencia predictiva": Kuine ve ANTES de que el problema sea crítico.
+
+class _PredictiveAlertsCard extends StatelessWidget {
+  final List<Map<String, dynamic>> alerts;
+  const _PredictiveAlertsCard({required this.alerts});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFF59E0B).withValues(alpha: 0.4)),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFFF59E0B).withValues(alpha: 0.08),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF59E0B).withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.auto_graph_rounded, size: 12, color: Color(0xFFF59E0B)),
+                SizedBox(width: 4),
+                Text('PREDICCIÓN', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFFF59E0B), letterSpacing: 0.5)),
+              ]),
+            ),
+            const SizedBox(width: 8),
+            const Text('Sin acción asignada — caducan pronto',
+                style: TextStyle(fontSize: 12, color: Color(0xFF6B7280))),
+          ]),
+          const SizedBox(height: 12),
+          ...alerts.map((a) {
+            final hoursLeft = a['hours_left'] as int? ?? 0;
+            final product = a['product'] as String? ?? 'Producto';
+            final qty = a['qty'] as int? ?? 0;
+            final value = (a['value'] as num?)?.toDouble() ?? 0;
+            final pasillo = a['pasillo'] ?? '?';
+
+            final urgency = hoursLeft < 12
+                ? const Color(0xFFEF4444)
+                : const Color(0xFFF59E0B);
+            final timeLabel = hoursLeft < 24
+                ? '${hoursLeft}h'
+                : '${(hoursLeft / 24).round()}d';
+
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(children: [
+                Container(
+                  width: 40, height: 40,
+                  decoration: BoxDecoration(
+                    color: urgency.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: urgency.withValues(alpha: 0.3)),
+                  ),
+                  child: Center(
+                    child: Text(timeLabel,
+                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: urgency)),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(product,
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF111827)),
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                    Text('Pasillo $pasillo · $qty uds · ${value.toStringAsFixed(0)}€',
+                        style: const TextStyle(fontSize: 11, color: Color(0xFF6B7280))),
+                  ]),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: urgency.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text('Sin acción',
+                      style: TextStyle(fontSize: 10, color: urgency, fontWeight: FontWeight.w600)),
+                ),
+              ]),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Expiring Today Card ───────────────────────────────────────────────────────
+
+class _ExpiringTodayCard extends StatelessWidget {
+  final List<Map<String, dynamic>> batches;
+  const _ExpiringTodayCard({required this.batches});
+
+  @override
+  Widget build(BuildContext context) {
+    final today = DateTime.now().toIso8601String().substring(0, 10);
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFFECACA)),
+        boxShadow: [
+          BoxShadow(
+              color: const Color(0xFFEF4444).withValues(alpha: 0.08),
+              blurRadius: 10,
+              offset: const Offset(0, 3))
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: const Color(0xFFFEE2E2),
+                borderRadius: BorderRadius.circular(9),
+              ),
+              child: const Icon(Icons.event_busy_rounded,
+                  color: Color(0xFFDC2626), size: 17),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Caducan hoy o mañana (${batches.length})',
+                style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF111827)),
+              ),
+            ),
+          ]),
+          const SizedBox(height: 12),
+          ...batches.map((b) {
+            final name =
+                (b['products'] as Map?)?['name'] as String? ?? 'Producto';
+            final pasillo =
+                (b['products'] as Map?)?['pasillo'] as String? ?? '?';
+            final qty = (b['quantity'] as num?)?.toInt() ?? 0;
+            final expiry = b['expiry_date'] as String? ?? '';
+            final isToday = expiry == today;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(children: [
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: isToday
+                        ? const Color(0xFFDC2626)
+                        : const Color(0xFFF59E0B),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(name,
+                      style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF374151)),
+                      overflow: TextOverflow.ellipsis),
+                ),
+                const SizedBox(width: 8),
+                Text('P$pasillo',
+                    style: const TextStyle(
+                        fontSize: 11, color: Color(0xFF9CA3AF))),
+                const SizedBox(width: 8),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: isToday
+                        ? const Color(0xFFFEE2E2)
+                        : const Color(0xFFFEF3C7),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    isToday ? 'HOY · $qty ud.' : 'MAÑANA · $qty ud.',
+                    style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        color: isToday
+                            ? const Color(0xFFDC2626)
+                            : const Color(0xFFD97706)),
+                  ),
+                ),
+              ]),
+            );
+          }),
+        ],
+      ),
     );
   }
 }

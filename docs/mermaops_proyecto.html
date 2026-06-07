@@ -378,7 +378,7 @@
       <span class="cover-stat-label">Agentes IA</span>
     </div>
     <div class="cover-stat">
-      <span class="cover-stat-num">439</span>
+      <span class="cover-stat-num">800</span>
       <span class="cover-stat-label">Tests pasando</span>
     </div>
     <div class="cover-stat">
@@ -465,7 +465,7 @@
   <div class="agent-card ac-purple">
     <div class="agent-name">🧠 Kuine (Orchestrator)</div>
     <div class="agent-model">Claude Opus 4.7</div>
-    <div class="agent-desc">Cerebro central. Loop agéntico de hasta 20 iteraciones, 25 tools conectadas. Toma todas las decisiones críticas: rebajar, donar, retirar. Usa extended thinking en casos complejos.</div>
+    <div class="agent-desc">Cerebro central. Loop agéntico de hasta 20 iteraciones, 16 tools conectadas. Toma todas las decisiones críticas: rebajar, donar, retirar. Usa extended thinking en casos complejos.</div>
   </div>
   <div class="agent-card ac-blue">
     <div class="agent-name">💬 Chuwi (Telegram)</div>
@@ -633,7 +633,7 @@
   <div class="tech-item">
     <div class="tech-dot" style="background:#D97706;"></div>
     <div>
-      <div class="tech-name">Testing: 439 tests en &lt;2s</div>
+      <div class="tech-name">Testing: 800 tests en &lt;2s</div>
       <div class="tech-desc">Pytest con mocks de Supabase y Claude. Sin conexión real en CI. Cobertura de rutas, agentes, evaluador, validador (23 ataques adversariales) y scheduler.</div>
     </div>
   </div>
@@ -666,7 +666,7 @@ python scripts/serve_web.py       # app web en localhost:3000</pre>
   <tr><td>4. Foto producto</td><td>Telegram</td><td>Enviar foto de un producto → Agente Visión analiza fecha y estado</td></tr>
   <tr><td>5. Brief de Kuine</td><td>App → Dashboard</td><td>Botón "Generar brief" → Claude Opus analiza 60-90s → brief aparece</td></tr>
   <tr><td>6. make advance N=1</td><td>Terminal</td><td>Simular un día → alerta proactiva llega a Telegram sola</td></tr>
-  <tr><td>7. Pantalla Agentes</td><td>App Flutter</td><td>11 agentes activos, pipeline animado, decisiones de Kuine trazadas</td></tr>
+  <tr><td>7. Pantalla Agentes</td><td>App Flutter</td><td>12 agentes activos, pipeline animado, decisiones de Kuine trazadas</td></tr>
   <tr><td>8. Analizar PDF</td><td>App → Informes</td><td>Importar PDF de informe → Claude analiza y extrae KPIs</td></tr>
 </table>
 
@@ -682,7 +682,7 @@ python scripts/serve_web.py       # app web en localhost:3000</pre>
 
 <div class="stats-row no-break">
   <div class="stat-card">
-    <span class="stat-num green">439</span>
+    <span class="stat-num green">800</span>
     <span class="stat-label">Tests pasando</span>
   </div>
   <div class="stat-card">
@@ -734,7 +734,7 @@ python scripts/serve_web.py       # app web en localhost:3000</pre>
   <tr><td>Base de datos</td><td>Supabase</td><td>Firebase</td><td>SQL real, Auth integrado, Realtime sin configuración, gratuito hasta 2GB</td></tr>
   <tr><td>Clasificación de intents</td><td>Keyword-based (0 tokens)</td><td>LLM classifier</td><td>10 intents cubiertos sin gastar tokens. Coste: 0€</td></tr>
   <tr><td>Parallel consensus</td><td>3 instancias Sonnet</td><td>1 instancia Opus</td><td>Más barato, elimina sesgo de instancia única, más robusto</td></tr>
-  <tr><td>Testing Supabase</td><td>Mocks completos</td><td>Test DB real</td><td>439 tests en &lt;2s sin credenciales. Ejecutable en cualquier máquina</td></tr>
+  <tr><td>Testing Supabase</td><td>Mocks completos</td><td>Test DB real</td><td>800 tests en &lt;2s sin credenciales. Ejecutable en cualquier máquina</td></tr>
 </table>
 
 <!-- ══ 8. REFLEXIÓN FINAL ══════════════════════════════════════════ -->
@@ -750,7 +750,7 @@ python scripts/serve_web.py       # app web en localhost:3000</pre>
 <h3>¿Qué ha funcionado bien?</h3>
 <div class="card card-green no-break">
   <ul style="padding-left: 20px;">
-    <li style="margin-bottom: 8px;"><strong>La arquitectura multi-agente funcionó exactamente como estaba diseñada:</strong> especializar agentes por tarea reduce costes y aumenta la calidad. Los 439 tests lo validan.</li>
+    <li style="margin-bottom: 8px;"><strong>La arquitectura multi-agente funcionó exactamente como estaba diseñada:</strong> especializar agentes por tarea reduce costes y aumenta la calidad. Los 800 tests lo validan.</li>
     <li style="margin-bottom: 8px;"><strong>Telegram como interfaz principal fue el acierto más grande del proyecto.</strong> Eliminar la fricción de instalar una app nueva fue clave para la adoptabilidad real.</li>
     <li style="margin-bottom: 8px;"><strong>El sistema adversarial demostró ser robusto:</strong> 100% de ataques bloqueados sin necesidad de reglas manuales — el Validador razona sobre la intención.</li>
     <li><strong>La proactividad de Chuwi cambia el modelo mental:</strong> pasar de "herramienta que responde" a "agente que monitoriza" es el salto conceptual más importante del proyecto.</li>

@@ -206,7 +206,8 @@ class _LoginScreenState extends State<LoginScreen>
     if (msg.contains('network') || msg.contains('connection') || msg.contains('SocketException')) {
       return 'Sin conexión. Comprueba tu internet e inténtalo de nuevo.';
     }
-    return 'Error: $msg';
+    // No exponer detalles internos al usuario — siempre mensaje genérico
+    return 'Error de autenticación. Inténtalo de nuevo o contacta al administrador.';
   }
 
   void _toggleMode() {
@@ -491,11 +492,11 @@ class _LoginScreenState extends State<LoginScreen>
                         const SizedBox(width: 8),
                         Expanded(
                           child: _QuickLoginButton(
-                            label: 'Supervisor',
+                            label: 'Demo',
                             icon: Icons.manage_accounts_outlined,
                             color: const Color(0xFF2563EB),
                             onTap: () => _quickLogin(
-                                'supervisor@mermaops.es', 'Supervisor2024!'),
+                                'demo@mermaops.es', 'Demo2024!'),
                           ),
                         ),
                         const SizedBox(width: 8),

@@ -10,6 +10,8 @@ const _es = {
   'nav_actions': 'Acciones',
   'nav_map': 'Mapa',
   'nav_reports': 'Informes',
+  'nav_agents': 'Agentes',
+  'nav_chat': 'Chuwi',
   // Screen titles
   'title_dashboard': 'MermaOps',
   'title_scan': 'Escanear producto',
@@ -62,6 +64,8 @@ const _en = {
   'nav_actions': 'Actions',
   'nav_map': 'Store Map',
   'nav_reports': 'Reports',
+  'nav_agents': 'Agents',
+  'nav_chat': 'Chuwi',
   // Screen titles
   'title_dashboard': 'MermaOps',
   'title_scan': 'Scan product',

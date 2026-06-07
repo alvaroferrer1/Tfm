@@ -1,0 +1,94 @@
+1. Chuwi (El Compañero de Turno)
+Filosofía humana: Chuwi no debe parecer un manual de instrucciones. Debe hablar como un encargado que te escribe por WhatsApp: frases cortas, directas y enfocadas a resolver la tarea física.
+Propuesta de optimización:
+Eliminación de formato robótico: Configurar el agente para que nunca use negritas, listas tabuladas largas, asteriscos o bloques de código a menos que el usuario se lo pida específicamente. Las listas se expresan con guiones sencillos.
+Uso de Jerga de Supermercado Español: Integrar en su vocabulario términos del día a día de las tiendas en España: frescos, flejes, lineal, cabecera de góndola, picar merma, rotura de stock, caja dañada, reposición FEFO.
+Adaptación de tono según la hora: Si el mensaje ocurre a primera hora de la mañana (apertura) o a última (cierre), Chuwi debe responder con mayor brevedad y urgencia, enfocándose solo en lo crítico para no hacer perder el tiempo al empleado en hora punta.
+2. Kuine (El Orquestador Invisible)
+Filosofía humana: Un buen coordinador no presume de sus procesos internos ante el operario; resuelve los problemas en silencio.
+Propuesta de optimización:
+Ocultación de logs técnicos: Evitar que Chuwi muestre mensajes del tipo "Llamando a herramienta X" o "Ejecutando consenso con 3 agentes". Toda la orquestación ocurre por detrás de la conversación, entregando solo la conclusión final procesada de forma natural.
+3. Evaluador (Evaluación de Lotes)
+Filosofía humana: La urgencia de un producto no es solo un número frío (score de 0 a 100); depende del contexto y del esfuerzo que requiera del personal.
+Propuesta de optimización:
+Criterio de esfuerzo operativo: Al evaluar el riesgo, el agente debe considerar el volumen del producto. No es lo mismo tener que rebajar 3 ensaladas (se hace en 1 minuto) que tener que reetiquetar 80 yogures (lleva mucho tiempo). El Evaluador debe priorizar o alertar sobre tareas de volumen para que el encargado pueda planificar su tiempo.
+4. Validador (El Auditor Comprensivo)
+Filosofía humana: En lugar de ser un sistema de seguridad que "bloquea" con un mensaje de error técnico, debe actuar como un compañero veterano que te corrige con educación.
+Propuesta de optimización:
+Explicaciones operativas: Si el empleado propone rebajar un lote que legalmente ya no se puede vender (violación de la Ley 3/2023 de desperdicio alimentario), el Validador debe responder a través de Chuwi explicando la razón en lenguaje cotidiano: "Ojo, ese lote caducó ayer. Por ley no podemos venderlo ni rebajarlo, hay que retirarlo de la venta y registrarlo para donación antes de que acabe el turno".
+5. Consenso (Resolución de Casos Complejos)
+Filosofía humana: Resolver las discrepancias sin generar debate en el chat con el usuario.
+Propuesta de optimización:
+Síntesis amigable: Si tres agentes debaten sobre si donar o destruir un lote grande de carne, la conclusión mostrada al usuario debe ser una recomendación unificada y directa: "Hemos revisado el lote de lomo. Al ser mucha cantidad y faltar 2 días, lo mejor es ofrecerlo hoy a Cruz Roja en vez de meterle descuento. ¿Te parece bien?".
+6. ForkMerge (Árboles de Decisión)
+Filosofía humana: Evaluar diferentes caminos de forma invisible para presentar solo la mejor opción al encargado.
+Propuesta de optimización:
+Presentación simplificada: En lugar de proponer tres alternativas complejas que confundan al empleado, ForkMerge debe quedarse con la de mayor probabilidad de éxito y presentarla de manera simple.
+7. Predictor (Previsiones de Ventas y Clima)
+Filosofía humana: Traducir los datos meteorológicos a consecuencias reales en la tienda.
+Propuesta de optimización:
+Alertas prácticas: En lugar de decir "Temperatura de 32°C, factor de merma aumentado 15%", el Predictor debe decir: "Vienen dos días de mucho calor. Las ensaladas preparadas del pasillo 1 se van a vender menos si la gente no sale. Sería buena idea vigilar el stock hoy mismo".
+8. Visión (Análisis Visual)
+Filosofía humana: Actuar como si miraras el producto con tus propios ojos, detectando anomalías que un código de barras no registra.
+Propuesta de optimización:
+Detección de desperfectos reales: Enfocar el modelo para identificar si el paquete está abollado, si la fruta tiene un golpe o si el envase está húmedo. Si es así, recomendar directamente rebaja por tara o donación rápida, tal como haría un empleado en el lineal al colocar los productos.
+9. Precio (Descuentos de Tienda)
+Filosofía humana: Respetar los hábitos de descuento de los supermercados en España (ej. las pegatinas amarillas de porcentaje fijo).
+Propuesta de optimización:
+Redondeos comerciales: Evitar sugerir precios extraños como "2.37 €". Ajustar los descuentos sugeridos a importes redondeados o al sistema de pegatinas estándar del supermercado (ej. descuento del 30% o del 50%), haciendo que el etiquetado físico sea rápido y natural.
+10. Stock (Reposición)
+Filosofía humana: Coordinar la reposición evitando saturar el lineal de la tienda.
+Propuesta de optimización:
+Reposición lógica: Si hay un lote a punto de caducar en tienda, recordar al empleado que no saque más stock del almacén hasta que se liquide el actual, manteniendo el orden físico de las estanterías (rotación FEFO natural).
+11. Notificador (Alertas)
+Filosofía humana: Respetar el descanso y el foco del trabajador.
+Propuesta de optimización:
+Silencio operativo: No enviar notificaciones durante las horas en las que el empleado está atendiendo en caja o fuera de su turno de trabajo, acumulando las alertas para el inicio de su jornada.
+12. Reportero (Briefings)
+Filosofía humana: Un informe debe leerse en 30 segundos mientras se toma un café antes de abrir la tienda.
+Propuesta de optimización:
+Estructura en lenguaje hablado: El informe diario de apertura debe ser un resumen verbalizado: "Hoy abrimos con 3 críticos en lácteos y el pescado bien cubierto. Ayer salvamos 40 € en rebajas y las donaciones a Cáritas salieron a tiempo. Buen día".
+
+Parte 2: Optimización de la App Flutter (Mobile Client)
+Para garantizar una experiencia móvil impecable conectada a este ecosistema de agentes, proponemos la implementación de los siguientes cuatro patrones de arquitectura frontend:
+
+2.1 Patrón Outbox para Sincronización Offline-First
+El problema: En las cámaras frigoríficas y almacenes de los supermercados la conectividad a internet es intermitente o nula, provocando fallos al enviar escaneos o completar tareas.
+La implementación SOTA:
+Configurar una base de datos local robusta con Drift (SQLite) o integrar la sincronización en tiempo real de PowerSync.
+Cada escaneo realizado o acción confirmada se escribe en una tabla local de cola (sync_queue) y la UI se actualiza de forma inmediata y reactiva utilizando flujos locales (Streams).
+Un servicio en segundo plano detecta la recuperación de red (connectivity_plus) y sincroniza secuencialmente las peticiones pendientes con Supabase en segundo plano.
+2.2 Visualizador de Trazabilidad Progresiva (SSE / WebSockets)
+El problema: Los análisis multi-agente complejos tardan segundos en resolverse, y mostrar un indicador de carga genérico genera sensación de inactividad o bloqueo.
+La implementación SOTA:
+Conectar el frontend a un endpoint del backend FastAPI mediante eventos del lado del servidor (Server-Sent Events) o WebSockets.
+Renderizar una línea de tiempo animada que muestre el procesamiento interno paso a paso de la IA:
+text
+[✔] Código verificado
+[✔] Evaluando riesgo (Score: 82/100)
+[⏳] Validador auditando políticas...
+2.3 Comandos de Voz con Manos Libres (Whisper + TTS)
+El problema: Los reponedores operan con las manos ocupadas manipulando productos y cajas, dificultando el uso de la pantalla de la app.
+La implementación SOTA:
+Añadir un botón flotante de grabación de voz en la app.
+Grabar en formato comprimido (Opus) y enviar el audio a un endpoint /api/v1/agent/voice. El backend transcribe con Whisper, procesa el comando con Kuine, y devuelve una respuesta en texto junto con un archivo de audio generado mediante Text-to-Speech (TTS) que el empleado escucha directamente en sus auriculares inalámbricos.
+2.4 Control Dinámico de Overrides (Human-in-the-Loop)
+El problema: Cuando un encargado modifica un descuento sugerido por la IA, el sistema pierde esa información de aprendizaje.
+La implementación SOTA:
+Diseñar un selector deslizante interactivo (Slider) en la app Flutter para la edición de precios.
+Al mover el deslizador, mostrar dinámicamente el impacto en el margen y la tasa de recuperación estimada.
+Al confirmar la modificación, enviar el motivo de la decisión de vuelta al almacén de memoria del agente (agent_memory) para refinar las futuras sugerencias de precio del modelo.
+
+
+Parte 2: Rediseño Humano de la App Flutter
+La aplicación móvil no debe ser un laberinto de menús técnicos. Debe actuar como una herramienta de apoyo rápido en el pasillo de la tienda.
+
+2.1 Interfaz basada en Gestos Físicos
+Operación natural: El empleado lleva guantes o tiene las manos ocupadas.
+Optimización: Diseñar la interfaz con botones grandes y gestos intuitivos (deslizar a la derecha para confirmar retirada, deslizar a la izquierda para donar). El flujo de trabajo debe completarse con una sola mano mientras se sostiene el producto con la otra.
+2.2 Sincronización en Cámara Frigorífica (Offline)
+Operación natural: El operario baja al sótano o entra en la cámara frigorífica (donde no hay cobertura) a comprobar la carne.
+Optimización: La app debe permitir seguir usando la cámara para escanear y registrar las mermas de forma fluida. Al volver a la zona de cajas con cobertura, la app se sincroniza sola en segundo plano sin mostrar alertas de error ni pantallas de carga que interrumpan el ritmo de trabajo.
+2.3 Grabación de Notas por Voz (Manos Libres)
+Operación natural: Dictar en lugar de escribir en teclados pequeños de móvil.
+Optimización: Un botón central de micrófono en la app para reportar incidencias: "Chuwi, el pack de yogures del pasillo 3 tiene la caja un poco rota, pero están bien. ¿Los rebajamos?". El sistema responde por voz o con una sugerencia directa en pantalla para confirmar con un toque.

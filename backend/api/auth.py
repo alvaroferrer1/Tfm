@@ -32,12 +32,13 @@ def verify_token(
     para facilitar pruebas sin credenciales reales.
     """
     env = os.getenv("APP_ENV", "dev")
+    _is_dev = env in ("dev", "development")  # acepta ambas variantes
 
     # En dev, si no hay credenciales configuradas, modo permisivo para pruebas
-    if env == "dev":
+    if _is_dev:
         supabase_url = os.getenv("SUPABASE_URL", "")
         if not supabase_url or supabase_url.startswith("https://xxxx"):
-            # BD no configurada — no tiene sentido validar tokens
+            logger.warning("[auth] DEV MODE sin Supabase — bypass activo, NO usar en producción")
             return {"sub": "dev-user", "role": "authenticated", "dev_mode": True}
 
     if not credentials:
@@ -49,8 +50,9 @@ def verify_token(
 
     token = credentials.credentials
 
-    # Token de bypass para desarrollo
-    if env == "dev" and token == "dev-bypass":
+    # Token de bypass para desarrollo (APP_ENV=dev o development)
+    if _is_dev and token == "dev-bypass":
+        logger.debug("[auth] dev-bypass token usado — solo válido en entorno de desarrollo")
         return {"sub": "dev-user", "role": "authenticated", "dev_mode": True}
 
     # Verificación real con Supabase usando el cliente existente
@@ -85,6 +87,32 @@ def database_module():
     return database
 
 
+def require_role(*allowed_roles: str):
+    """Dependencia que exige que el usuario tenga uno de los roles indicados en la tabla users."""
+    from fastapi import Depends
+
+    def _check(auth: dict = Depends(verify_token)) -> dict:
+        if auth.get("dev_mode"):
+            return auth
+        user_id = auth.get("sub", "")
+        try:
+            db = database_module().get_db()
+            row = db.table("users").select("role").eq("id", user_id).maybe_single().execute()
+            role = (row.data or {}).get("role", "")
+        except Exception as _e:
+            logger.warning(f"[auth] role lookup failed for {user_id}: {_e}")
+            role = ""
+        if role not in allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Acceso denegado. Se requiere rol: {', '.join(allowed_roles)}.",
+            )
+        auth["user_role"] = role
+        return auth
+
+    return _check
+
+
 # Dependencia opcional — para endpoints que funcionan con o sin auth
 def optional_token(
     credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
@@ -92,5 +120,5 @@ def optional_token(
     """Como verify_token pero devuelve None en lugar de lanzar excepción."""
     try:
         return verify_token(credentials)
-    except HTTPException:
+    except Exception:
         return None

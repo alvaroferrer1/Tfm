@@ -5,24 +5,62 @@ import 'package:go_router/go_router.dart';
 import '../features/actions/actions_provider.dart';
 import 'l10n.dart';
 import 'theme.dart';
+import 'user_role_provider.dart';
+
+// Definición de un tab con su ruta, iconos y rol mínimo requerido
+class _NavTab {
+  final String route;
+  final IconData icon;
+  final IconData activeIcon;
+  final String labelKey;
+  final UserRole minRole;
+
+  const _NavTab({
+    required this.route,
+    required this.icon,
+    required this.activeIcon,
+    required this.labelKey,
+    this.minRole = UserRole.staff,
+  });
+}
+
+const _allTabs = [
+  _NavTab(route: '/',        icon: Icons.dashboard_outlined,        activeIcon: Icons.dashboard,             labelKey: 'nav_dashboard'),
+  _NavTab(route: '/scan',    icon: Icons.qr_code_scanner_outlined,  activeIcon: Icons.qr_code_scanner,       labelKey: 'nav_scan'),
+  _NavTab(route: '/actions', icon: Icons.task_alt_outlined,         activeIcon: Icons.task_alt,               labelKey: 'nav_actions'),
+  _NavTab(route: '/map',     icon: Icons.map_outlined,              activeIcon: Icons.map,                    labelKey: 'nav_map'),
+  _NavTab(route: '/reports', icon: Icons.bar_chart_outlined,        activeIcon: Icons.bar_chart,              labelKey: 'nav_reports',  minRole: UserRole.manager),
+  _NavTab(route: '/agents',  icon: Icons.psychology_outlined,       activeIcon: Icons.psychology,             labelKey: 'nav_agents',   minRole: UserRole.manager),
+  _NavTab(route: '/chat',    icon: Icons.chat_bubble_outline_rounded, activeIcon: Icons.chat_bubble_rounded,  labelKey: 'nav_chat'),
+];
 
 class ShellScaffold extends ConsumerWidget {
   final Widget child;
   const ShellScaffold({super.key, required this.child});
 
-  int _locationToIndex(String location) {
-    if (location.startsWith('/scan')) return 1;
-    if (location.startsWith('/actions')) return 2;
-    if (location.startsWith('/map')) return 3;
-    if (location.startsWith('/reports')) return 4;
-    if (location.startsWith('/agents')) return 5;
-    return 0;
-  }
-
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final location = GoRouterState.of(context).matchedLocation;
-    final currentIndex = _locationToIndex(location);
+
+    // Role-based tab filtering: staff ve solo sus tabs, manager ve todos
+    final roleAsync = ref.watch(userRoleProvider);
+    final userRole = roleAsync.when(
+      data: (r) => r,
+      loading: () => UserRole.staff,
+      error: (_, __) => UserRole.staff,
+    );
+
+    // Tabs visibles para este rol
+    final visibleTabs = _allTabs.where((t) => userRole.index >= t.minRole.index).toList();
+
+    // Índice del tab actual dentro de los visibles
+    final currentIndex = () {
+      for (int i = 0; i < visibleTabs.length; i++) {
+        final r = visibleTabs[i].route;
+        if (r == '/' ? location == '/' : location.startsWith(r)) return i;
+      }
+      return 0;
+    }();
 
     // Badge count for critical actions
     final actionsAsync = ref.watch(pendingActionsProvider);
@@ -32,9 +70,9 @@ class ShellScaffold extends ConsumerWidget {
       error: (_, __) => 0,
     );
 
-    Widget actionIcon(bool active) {
-      final icon = Icon(active ? Icons.task_alt : Icons.task_alt_outlined);
-      if (criticalCount == 0) return icon;
+    Widget buildIcon(bool active, _NavTab tab) {
+      final icon = Icon(active ? tab.activeIcon : tab.icon);
+      if (tab.route != '/actions' || criticalCount == 0) return icon;
       return Badge(
         label: Text(criticalCount > 9 ? '9+' : '$criticalCount'),
         backgroundColor: UrgencyColors.critical,
@@ -46,55 +84,14 @@ class ShellScaffold extends ConsumerWidget {
     return Scaffold(
       body: child,
       bottomNavigationBar: BottomNavigationBar(
+        type: BottomNavigationBarType.fixed,
         currentIndex: currentIndex,
-        onTap: (index) {
-          switch (index) {
-            case 0:
-              context.go('/');
-            case 1:
-              context.go('/scan');
-            case 2:
-              context.go('/actions');
-            case 3:
-              context.go('/map');
-            case 4:
-              context.go('/reports');
-            case 5:
-              context.go('/agents');
-          }
-        },
-        items: [
-          BottomNavigationBarItem(
-            icon: const Icon(Icons.dashboard_outlined),
-            activeIcon: const Icon(Icons.dashboard),
-            label: tr(ref, 'nav_dashboard'),
-          ),
-          BottomNavigationBarItem(
-            icon: const Icon(Icons.qr_code_scanner_outlined),
-            activeIcon: const Icon(Icons.qr_code_scanner),
-            label: tr(ref, 'nav_scan'),
-          ),
-          BottomNavigationBarItem(
-            icon: actionIcon(false),
-            activeIcon: actionIcon(true),
-            label: tr(ref, 'nav_actions'),
-          ),
-          BottomNavigationBarItem(
-            icon: const Icon(Icons.map_outlined),
-            activeIcon: const Icon(Icons.map),
-            label: tr(ref, 'nav_map'),
-          ),
-          BottomNavigationBarItem(
-            icon: const Icon(Icons.bar_chart_outlined),
-            activeIcon: const Icon(Icons.bar_chart),
-            label: tr(ref, 'nav_reports'),
-          ),
-          const BottomNavigationBarItem(
-            icon: Icon(Icons.psychology_outlined),
-            activeIcon: Icon(Icons.psychology),
-            label: 'Agentes',
-          ),
-        ],
+        onTap: (index) => context.go(visibleTabs[index].route),
+        items: visibleTabs.map((tab) => BottomNavigationBarItem(
+          icon: buildIcon(false, tab),
+          activeIcon: buildIcon(true, tab),
+          label: tr(ref, tab.labelKey),
+        )).toList(),
       ),
     );
   }

@@ -25,6 +25,11 @@ def get_admin_db() -> Client:
     if _admin_client is None:
         url = os.getenv("SUPABASE_URL", "")
         key = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_KEY", "")
+        if not os.getenv("SUPABASE_SERVICE_KEY"):
+            import logging as _log
+            _log.getLogger("mermaops.db").warning(
+                "[db] SUPABASE_SERVICE_KEY no definida — get_admin_db usa SUPABASE_KEY (sin bypass RLS)"
+            )
         if not url or not key:
             raise RuntimeError("SUPABASE_URL y SUPABASE_SERVICE_KEY deben estar definidos en .env")
         _admin_client = create_client(url, key)
@@ -34,7 +39,7 @@ def get_admin_db() -> Client:
 # ── Stores ──────────────────────────────────────────────────────────────────
 
 def get_store(store_id: str) -> dict | None:
-    result = get_db().table("stores").select("*").eq("id", store_id).single().execute()
+    result = get_db().table("stores").select("*").eq("id", store_id).maybe_single().execute()
     return result.data
 
 
@@ -46,7 +51,7 @@ def get_product_by_barcode(store_id: str, barcode: str) -> dict | None:
         .select("*")
         .eq("store_id", store_id)
         .eq("barcode", barcode)
-        .single()
+        .maybe_single()
         .execute()
     )
     return result.data
@@ -57,7 +62,7 @@ def get_product_by_id(product_id: str) -> dict | None:
         get_db().table("products")
         .select("*")
         .eq("id", product_id)
-        .single()
+        .maybe_single()
         .execute()
     )
     return result.data
@@ -92,6 +97,17 @@ def get_batches_expiring_soon(store_id: str, days: int = 7) -> list[dict]:
     return result.data or []
 
 
+def get_batch_by_id(batch_id: str) -> dict | None:
+    result = (
+        get_db().table("batches")
+        .select("*, products(*)")
+        .eq("id", batch_id)
+        .maybe_single()
+        .execute()
+    )
+    return result.data
+
+
 def get_batches_by_product(store_id: str, product_id: str) -> list[dict]:
     result = (
         get_db().table("batches")
@@ -113,7 +129,7 @@ def get_warehouse_stock(store_id: str, product_id: str) -> int:
         .select("quantity")
         .eq("store_id", store_id)
         .eq("product_id", product_id)
-        .single()
+        .maybe_single()
         .execute()
     )
     return result.data["quantity"] if result.data else 0
@@ -139,9 +155,9 @@ def get_pending_actions(store_id: str) -> list[dict]:
 
 
 def complete_action(action_id: str, completed_by: str, notes: str = "", photo_url: str = "") -> None:
-    from datetime import datetime
+    from datetime import datetime, timezone
     db = get_db()
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     db.table("actions").update({
         "status": "completed",
         "completed_by": completed_by,
@@ -154,26 +170,30 @@ def complete_action(action_id: str, completed_by: str, notes: str = "", photo_ur
     try:
         action_row = db.table("actions").select(
             "store_id, batch_id, action_type, donation_quantity"
-        ).eq("id", action_id).single().execute().data
+        ).eq("id", action_id).maybe_single().execute().data
         if action_row and action_row.get("batch_id"):
             batch = db.table("batches").select(
                 "store_id, product_id, quantity, products(price, cost)"
-            ).eq("id", action_row["batch_id"]).single().execute().data
+            ).eq("id", action_row["batch_id"]).maybe_single().execute().data
             if batch:
                 qty = action_row.get("donation_quantity") or batch.get("quantity", 0)
                 products = batch.get("products") or {}
                 cost = float(products.get("cost", 0))
+                store_id_for_log = action_row.get("store_id") or batch.get("store_id")
+                if not store_id_for_log:
+                    return
                 merma_entry = {
-                    "store_id": action_row["store_id"],
+                    "store_id": store_id_for_log,
                     "batch_id": action_row["batch_id"],
                     "quantity_lost": qty,
                     "value_lost": round(qty * cost, 2),
                     "reason": action_row.get("action_type", "completado"),
-                    "date": datetime.utcnow().date().isoformat(),
+                    "date": datetime.now(timezone.utc).date().isoformat(),
                 }
                 db.table("merma_log").insert(merma_entry).execute()
-    except Exception:
-        pass  # No bloquear el completado por error en log
+    except Exception as _e:
+        import logging as _log
+        _log.getLogger("mermaops.db").warning(f"merma_log insert failed for action {action_id}: {_e}")
 
 
 # ── Merma log ─────────────────────────────────────────────────────────────────
@@ -234,19 +254,19 @@ def get_memory(store_id: str, pattern_key: str) -> str | None:
         .select("pattern_value")
         .eq("store_id", store_id)
         .eq("pattern_key", pattern_key)
-        .single()
+        .maybe_single()
         .execute()
     )
     return result.data["pattern_value"] if result.data else None
 
 
 def set_memory(store_id: str, pattern_key: str, pattern_value: str) -> None:
-    from datetime import datetime
+    from datetime import datetime, timezone
     get_db().table("agent_memory").upsert({
         "store_id": store_id,
         "pattern_key": pattern_key,
         "pattern_value": pattern_value,
-        "updated_at": datetime.utcnow().isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
     }, on_conflict="store_id,pattern_key").execute()
 
 
@@ -257,7 +277,7 @@ def get_user_by_telegram_id(telegram_user_id: str) -> dict | None:
         get_db().table("users")
         .select("*")
         .eq("telegram_user_id", str(telegram_user_id))
-        .single()
+        .maybe_single()
         .execute()
     )
     return result.data
@@ -387,9 +407,9 @@ def import_batches_csv(store_id: str, csv_data: str) -> dict:
 
 def save_weekly_report(report: dict) -> None:
     """Guarda el informe semanal en la tabla weekly_reports."""
-    from datetime import datetime
+    from datetime import datetime, timezone
     if "created_at" not in report:
-        report["created_at"] = datetime.utcnow().isoformat()
+        report["created_at"] = datetime.now(timezone.utc).isoformat()
     get_db().table("weekly_reports").insert(report).execute()
 
 
@@ -429,6 +449,7 @@ def get_order_suggestions(store_id: str) -> list[dict]:
     """
     Sugerencia de pedido semanal basada en merma histórica.
     Calcula avg_daily_loss por producto y recomienda cantidad a pedir.
+    Una sola query para warehouse_stock evita el N+1 del bucle anterior.
     """
     logs = get_merma_history(store_id, days=30)
     by_product: dict[str, dict] = {}
@@ -449,13 +470,29 @@ def get_order_suggestions(store_id: str) -> list[dict]:
             }
         by_product[pid]["total_lost"] += int(log.get("quantity_lost", 0))
 
+    # Precargar todos los stocks del almacén en una sola query (evita N+1)
+    warehouse_map: dict[str, int] = {}
+    if by_product:
+        try:
+            ws_res = (
+                get_db().table("warehouse_stock")
+                .select("product_id, quantity")
+                .eq("store_id", store_id)
+                .in_("product_id", list(by_product.keys()))
+                .execute()
+            )
+            for row in (ws_res.data or []):
+                warehouse_map[row["product_id"]] = int(row.get("quantity", 0))
+        except Exception:
+            pass
+
     suggestions = []
     for pid, data in by_product.items():
         avg_daily = data["total_lost"] / 30
         suggested_weekly = round(avg_daily * 7)
         if suggested_weekly < 1:
             continue
-        warehouse = get_warehouse_stock(store_id, pid)
+        warehouse = warehouse_map.get(pid, 0)
         order_qty = max(0, suggested_weekly - warehouse)
         if order_qty == 0:
             continue
@@ -514,8 +551,8 @@ def get_completed_actions_value(store_id: str, days: int = 7) -> dict:
 
 def get_overdue_critical_actions(store_id: str, hours: int = 4) -> list[dict]:
     """Acciones críticas (score >= 85) pendientes hace más de `hours` horas."""
-    from datetime import datetime, timedelta
-    cutoff = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
+    from datetime import datetime, timedelta, timezone
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
     result = (
         get_db().table("actions")
         .select("*, batches(*, products(*))")
@@ -680,9 +717,9 @@ def log_agent_message(
     }).execute()
     # Actualizar contadores en la conversación
     try:
-        from datetime import datetime
+        from datetime import datetime, timezone
         get_db().table("agent_conversations").update({
-            "last_message_at": datetime.utcnow().isoformat(),
+            "last_message_at": datetime.now(timezone.utc).isoformat(),
             "message_count": get_db().table("agent_messages")
                 .select("id", count="exact")
                 .eq("conversation_id", conversation_id)
@@ -720,9 +757,9 @@ def create_agent_session(store_id: str, telegram_user_id: str | None = None) -> 
 
 
 def close_agent_session(session_id: str, kuine_calls: int = 0, resolved: bool = False) -> None:
-    from datetime import datetime
+    from datetime import datetime, timezone
     get_db().table("agent_sessions").update({
-        "session_end": datetime.utcnow().isoformat(),
+        "session_end": datetime.now(timezone.utc).isoformat(),
         "kuine_calls": kuine_calls,
         "resolved": resolved,
     }).eq("id", session_id).execute()
@@ -730,14 +767,11 @@ def close_agent_session(session_id: str, kuine_calls: int = 0, resolved: bool = 
 
 def increment_session_stats(session_id: str, tools_called: int = 0, kuine_calls: int = 0) -> None:
     try:
-        row = get_db().table("agent_sessions").select(
-            "messages_count, tools_called, kuine_calls"
-        ).eq("id", session_id).single().execute().data
-        if row:
-            get_db().table("agent_sessions").update({
-                "messages_count": row.get("messages_count", 0) + 1,
-                "tools_called": row.get("tools_called", 0) + tools_called,
-                "kuine_calls": row.get("kuine_calls", 0) + kuine_calls,
-            }).eq("id", session_id).execute()
+        # Incremento atómico vía función SQL — sin race condition
+        get_db().rpc("increment_session_stats", {
+            "p_session_id": session_id,
+            "p_tools": tools_called,
+            "p_kuine": kuine_calls,
+        }).execute()
     except Exception:
         pass

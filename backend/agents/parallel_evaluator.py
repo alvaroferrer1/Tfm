@@ -47,12 +47,21 @@ def evaluate_all_parallel(
             pass
 
         try:
-            risk = evaluator.evaluate(
-                product,
-                [batch],
-                historical_context=historical,
-                warehouse_qty=warehouse_qty,
-            )
+            from backend.agents.fork_merge import evaluate_fork_merge, should_use_fork_merge
+            from backend.agents import stock as _stock
+            # Para productos de alto valor: fork-merge
+            if should_use_fork_merge(product, [batch]):
+                risk = evaluate_fork_merge(
+                    product, [batch],
+                    historical_context=historical,
+                    warehouse_qty=warehouse_qty,
+                )
+            else:
+                risk = evaluator.evaluate(
+                    product, [batch],
+                    historical_context=historical,
+                    warehouse_qty=warehouse_qty,
+                )
         except Exception as e:
             logger.warning(f"[parallel] Error evaluando '{product.get('name', product_id)}': {e}")
             risk = {

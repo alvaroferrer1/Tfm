@@ -7,11 +7,20 @@ from unittest.mock import patch, MagicMock
 import base64
 import pytest
 
+import backend.agents.vision as _vision_module
 from backend.agents.vision import (
     analyze_product_photo,
     analyze_from_telegram_file,
     format_vision_result,
 )
+
+
+@pytest.fixture(autouse=True)
+def _clear_vision_cache():
+    """Limpia la caché de visión antes de cada test para evitar colisiones."""
+    _vision_module._vision_cache.clear()
+    yield
+    _vision_module._vision_cache.clear()
 
 
 _FAKE_B64 = base64.b64encode(b"fake-image-data").decode()

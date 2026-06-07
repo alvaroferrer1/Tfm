@@ -24,9 +24,11 @@ class TestSafeFunction:
         result = _safe("Super · Martinez")
         assert "·" not in result
 
-    def test_strips_non_ascii(self):
+    def test_preserves_latin1_accents(self):
+        # _safe preserves spanish accents (latin-1 range) for fpdf2 Helvetica
         result = _safe("café résumé naïve")
-        assert all(ord(c) < 128 for c in result)
+        assert "café" in result  # é, ï are in latin-1
+        assert all(ord(c) <= 0xFF for c in result)
 
     def test_preserves_ascii(self):
         text = "MermaOps 2026 - 100% OK"
@@ -34,14 +36,15 @@ class TestSafeFunction:
 
     def test_handles_accents(self):
         result = _safe("Análisis de Kuine")
-        assert "é" not in result
-        # normalized: á → a, etc.
+        # Á, á are in latin-1 — preserved, not stripped
+        assert "á" in result or "Á" in result
         assert len(result) > 0
 
     def test_replaces_emoji_labels(self):
         result = _safe("🔴  PRODUCTOS CRÍTICOS")
         assert "🔴" not in result
-        assert "[CRITICO]" in result
+        # 🔴 maps to [!!!]
+        assert "[!!!]" in result
 
     def test_empty_string(self):
         assert _safe("") == ""
@@ -107,9 +110,10 @@ class TestGenerateBriefPdf:
         result = generate_brief_pdf("Texto.", store_name="Supermercado García & Cía")
         assert isinstance(result, bytes)
 
-    def test_empty_text_doesnt_crash(self):
-        result = generate_brief_pdf("")
-        assert isinstance(result, bytes)
+    def test_empty_text_raises_value_error(self):
+        import pytest
+        with pytest.raises(ValueError, match="brief_text"):
+            generate_brief_pdf("")
 
 
 # ── generate_weekly_pdf() ────────────────────────────────────────────────────

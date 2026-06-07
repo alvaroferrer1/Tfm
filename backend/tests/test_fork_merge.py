@@ -108,7 +108,7 @@ class TestEvaluateForkMerge:
                 _make_product(price=20.0),
                 [_make_batch(days_left=0, qty=5)],
             )
-        assert result["method"] in ("fork_merge", "fork_merge_fallback")
+        assert result["method"] in ("fork_merge", "fork_merge_fallback", "fork_merge_consensus")
 
     def test_fallback_when_merge_fails(self):
         """Si Opus falla en el merge, usa la rama de mayor confianza."""

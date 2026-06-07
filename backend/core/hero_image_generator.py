@@ -398,7 +398,7 @@ def build() -> Image.Image:
 
     draw.text((AG_X + 24, AG_Y + 22), "Sistema multi-agente",
               font=_font(28, bold=True), fill=WHITE)
-    draw.text((AG_X + 24, AG_Y + 56), "11 agentes activos  ·  Kuine orquesta",
+    draw.text((AG_X + 24, AG_Y + 56), "12 agentes activos  ·  Kuine orquesta",
               font=_font(19), fill=GREY)
     draw.line((AG_X + 16, AG_Y + 88, AG_X + AG_W - 16, AG_Y + 88), fill=(*NEON, 80), width=1)
 
@@ -462,7 +462,7 @@ def build() -> Image.Image:
               font=_font(22, bold=True), fill=NEON)
 
     mets = [
-        ("323/323", "Tests en verde", NEON),
+        ("800/800", "Tests en verde", NEON),
         ("100%",    "Robustez advers.", GREEN_MID),
         ("+83pp",   "vs. baseline", AMBER),
         ("< 1s",    "Tiempo total", BLUE),
@@ -506,7 +506,7 @@ def build() -> Image.Image:
 
     tech_items = [
         ("Claude API", NEON), ("FastAPI 8001", BLUE), ("Supabase", TEAL),
-        ("Flutter", PURPLE), ("Pytest 323/323", GREEN_MID), ("python-tb-bot", AMBER),
+        ("Flutter", PURPLE), ("Pytest 800/800", GREEN_MID), ("python-tb-bot", AMBER),
     ]
     for i, (tech, col) in enumerate(tech_items):
         tx = AG_X + 16 + (i % 3) * (AG_W // 3)
@@ -525,7 +525,7 @@ def build() -> Image.Image:
 
     points = [
         ("Sistema operativo de IA",
-         "No un chatbot. 11 agentes colaborando en tiempo real con datos reales.",
+         "No un chatbot. 12 agentes colaborando en tiempo real con datos reales.",
          NEON),
         ("Chuwi avisa sin que le preguntes",
          "Monitoriza la tienda cada 30 min y envia alertas proactivas por Telegram.",
@@ -559,7 +559,7 @@ def build() -> Image.Image:
     footer_items = [
         ("github.com/alvaroferrer1/Tfm", NEON),
         ("@ChuwiMermaOpsBot", GREEN_MID),
-        ("323/323 tests", BLUE),
+        ("800/800 tests", BLUE),
         ("MermaOps · IA multi-agente", GREY),
         ("TFM  Alvaro Ferrer  2026", GREY2),
     ]

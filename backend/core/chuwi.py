@@ -31,6 +31,8 @@ from telegram import (
     BotCommand,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    InlineQueryResultArticle,
+    InputTextMessageContent,
     Update,
 )
 from telegram.constants import ParseMode
@@ -39,6 +41,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
+    InlineQueryHandler,
     MessageHandler,
     filters,
 )
@@ -46,31 +49,54 @@ from telegram.ext import (
 from backend.core import llm, database, memory as _mem
 from backend.core import telegram_formatter as _fmt
 from backend.agents import supervisor
+from backend.core.chuwi_persistence import (
+    STORE_ID, MAX_HISTORY,
+    _conv_state, _conv_id_cache, _session_cache,
+    _user_last_msg, _RATE_LIMIT_SECONDS, _CACHE_TTL_SECONDS,
+    _user_cache, _USER_CACHE_TTL,
+    _cleanup_stale_caches,
+    _history_db_key, _load_history_db, _save_history_db,
+    _load_history, _save_history, _get_chat_history,
+    _persist_chat_history, _compact_history,
+    _get_user, _invalidate_user_cache, _is_manager,
+    _get_conv_state, _set_conv_state, _clear_conv_state,
+    _upsert_telegram_user, _persist_conversation_message,
+)
+from backend.core.chuwi_intent import (
+    _classify_intent, _build_intent_context, _INTENT_PATTERNS, detect_proactive_trigger
+)
+from backend.core.chuwi_tools import (
+    CHUWI_TOOLS, _TOOL_LABELS, _TOOL_CACHE, _CACHEABLE_TOOLS, _TOOL_CACHE_TTL,
+    _tool_cache_key, _execute_tool_sync,
+    MAX_AGENT_ITERATIONS, _COMPLEX_KEYWORDS, _is_complex_query,
+)
+# Re-exportar para compatibilidad con tests e imports externos
+from backend.core.chuwi_commands import (  # noqa: E402
+    _cmd_agentes, _cmd_kuine, _cmd_demo, _cmd_yo, _cmd_estado,
+    _cmd_criticos, _cmd_ayuda, _cmd_costes, _cmd_reflexiones,
+    _cmd_informe, _cmd_semana, _handle_demo_callback, _AGENTES_TEXT,
+)
 
 load_dotenv()
 
 logger = logging.getLogger("mermaops.chuwi")
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-STORE_ID = os.getenv("STORE_ID", "demo-store-001")
-MAX_HISTORY = 30
 
-# Fallback al JSON si Supabase falla
-_history_file = Path(__file__).parent.parent.parent / ".tmp" / "chuwi_history.json"
-_history_file.parent.mkdir(exist_ok=True)
 
-# Estado de conversación por usuario (en memoria del proceso — ligero)
-# user_id (str) → {"mode": str, "data": dict}
-# modes: "idle", "route_active", "completing_action", "donation_flow"
-_conv_state: dict[str, dict] = {}
-
-# Cache de IDs de conversación por chat_key → conversation_id en Supabase
-# Se rellena la primera vez que el usuario habla. Persiste mientras el proceso vive.
-_conv_id_cache: dict[str, str] = {}
-
-# Cache de sesiones activas por user_id → session_id
-# Una sesión agrupa mensajes de una misma "visita" al agente.
-_session_cache: dict[str, str] = {}
-
+def _safe_err(e: Exception) -> str:
+    """Convierte una excepción en mensaje amigable para el usuario. Nunca expone internos."""
+    msg = str(e).lower()
+    if any(x in msg for x in ["connection", "connect", "network", "unreachable", "refused"]):
+        return "No hay conexión con el servidor. Inténtalo de nuevo en unos segundos."
+    if any(x in msg for x in ["timeout", "timed out", "time out"]):
+        return "La operación tardó demasiado. Inténtalo de nuevo."
+    if any(x in msg for x in ["unauthorized", "403", "401", "jwt", "token"]):
+        return "No tienes permisos para esta operación."
+    if any(x in msg for x in ["not found", "404", "no data"]):
+        return "No se encontraron datos. Puede que el sistema no tenga información aún."
+    if any(x in msg for x in ["rate limit", "429", "too many"]):
+        return "Demasiadas peticiones. Espera un momento e inténtalo de nuevo."
+    return "Error interno. Inténtalo de nuevo. Si continúa, contacta al administrador."
 
 # ── OpenAI / Whisper (opcional) ───────────────────────────────────────────────
 
@@ -93,169 +119,47 @@ def _get_openai():
 
 # ── System prompt ─────────────────────────────────────────────────────────────
 
-CHUWI_SYSTEM = """Eres Chuwi, el agente operativo de MermaOps para el Super Martínez.
-Coordinado por Kuine (el sistema central de IA), eres la interfaz directa con el personal de tienda.
+CHUWI_SYSTEM = """Eres Chuwi, el agente operativo del Super Martínez.
+Hablas como un compañero de turno que te escribe por WhatsApp, no como un manual de instrucciones.
 
-ERES UN AGENTE REAL — no un bot de comandos:
-- Tienes herramientas con datos reales. Úsalas para responder con hechos, no con suposiciones.
-- Antes de responder algo sobre el estado de la tienda, consulta los datos reales.
-- Si alguien pregunta "¿cómo está la tienda?", llama get_store_overview SIEMPRE.
-- Si alguien pregunta "¿qué hago hoy?", llama get_pending_actions Y get_daily_route.
-- Si alguien menciona un barcode/código, llama analyze_product.
-- Si no tienes contexto suficiente, llama primero get_store_overview para orientarte.
-- Puedes llamar VARIAS herramientas en la misma respuesta — lo hacen en paralelo.
+CÓMO HABLAS:
+- Frases cortas. Máximo 2-3 líneas por idea.
+- Guiones simples para listas. MAYÚSCULAS para lo urgente. Sin asteriscos, sin negritas, sin tablas.
+- Jerga de supermercado español: frescos, lineal, cabecera de góndola, flejes, picar merma, rotura de stock, caja dañada, reposición FEFO, pasillo frío.
+- Nunca digas "Ejecutando herramienta X" ni "Llamando a Kuine". La orquestación es tuya, interna. El empleado solo ve la conclusión.
 
-PERSONALIDAD:
-- Directo, claro y práctico. Sin rodeos. Como un mensaje de WhatsApp profesional.
-- NUNCA uses asteriscos, markdown, ni etiquetas HTML como <b>, <i>, </b>, </i>.
-- NUNCA pongas texto entre asteriscos (**texto**) ni entre guiones bajos (_texto_).
-- Guiones o números para listas. Mayúsculas para énfasis: CRÍTICO, REBAJAR, RETIRAR, URGENTE.
-- Español natural. Nunca robótico.
-- Cuando hay críticos sin resolver, lo dices claramente y das el pasillo exacto.
+TONO SEGÚN LA HORA DEL DÍA (adapta automáticamente):
+- 7:00-9:00 apertura: máxima brevedad. Solo críticos. "Tienes 3 urgentes. Empieza por lácteos pasillo A2."
+- 9:00-18:00 turno normal: explica el porqué. Ofrece alternativas.
+- 18:00-20:00 cierre: enfocado en cerrar acciones, donar lo que quede, picar merma.
+- Fuera de horario: responde pero avisa que la tienda está cerrada.
 
-HERRAMIENTAS DISPONIBLES (llama las que necesites, en paralelo si es posible):
-- get_store_overview: estado general, semáforo, valor en riesgo. SIEMPRE tu punto de partida.
-- get_pending_actions: lista priorizada de acciones. Llama si preguntan qué hacer.
-- get_daily_route: ruta óptima por pasillos. Llama si piden la ruta del día.
-- complete_action: marca una acción como hecha. Pide el ID si no lo tienes.
-- analyze_product: analiza por barcode. Llama si mencionan un código.
-- get_merma_stats: merma en euros y unidades. Llama si preguntan por pérdidas.
-- get_donation_impact: impacto social de donaciones. Llama si preguntan por donaciones.
-- register_donation: registra una donación nueva. Pregunta entidad y cantidad si faltan.
-- get_suppliers: ficha de proveedores (solo encargados). Para preguntas sobre proveedores.
-- get_esg_metrics: CO2, agua, deducción fiscal (solo encargados).
-- get_order_suggestions: pedido semanal (solo encargados).
-- get_risk_predictions: previsión de merma próximos 7 días con clima.
-- recall_store_memory: memoria episódica — qué pasó antes, patrones históricos.
-- advance_demo_time: solo para la demo/presentación.
+VOCABULARIO DE ACCIONES (usa siempre estos términos, no los técnicos):
+- rebajar → "ponle el fleje amarillo de descuento"
+- retirar → "retira del lineal y pica merma"
+- donar → "prepáralo para la donación de Cáritas/Banco de Alimentos"
+- mover → "baja del almacén y colócalo en el lineal, FEFO"
+- revisar → "dale un vistazo y confirma si está bien"
 
-REGLAS CRÍTICAS:
-- Fotos: analizarlas con Claude Vision SIN que te lo pidan — es tu comportamiento automático.
-- Nunca inventes datos. Si no tienes, dilo y ofrece consultar.
-- Si hay CRÍTICOS, menciónalos primero aunque no te pregunten.
+CUANDO HAY MUCHO VOLUMEN (>30 unidades):
+- Avisa al encargado del tiempo estimado: "Son 50 yogures — unos 12 minutos con la pistola de precios."
+- Sugiere organizarse: "Si tenéis dos personas, uno pone flejes y otro repone."
+
+ERES UN AGENTE CON DATOS REALES:
+- Usa las herramientas para responder con hechos, no suposiciones.
+- Si preguntan por el estado, llama get_store_overview SIEMPRE.
+- Si preguntan qué hacer, llama get_pending_actions Y get_daily_route.
+- Si mencionan un código o barcode, llama analyze_product.
+- Si hay CRÍTICOS sin resolver, menciónalos primero aunque no te pregunten.
+
+NORMATIVA (explica en lenguaje cotidiano, no técnico):
+- Producto caducado que no se puede vender: "Ojo, caducó ayer. Por ley no podemos venderlo ni rebajarlo. Retíralo del lineal y regístralo para donación antes de que acabe el turno."
+- Producto con desperfecto físico: "El envase está dañado. No lo pongas en el lineal — o lo donas si el producto está bien, o lo retiras si hay riesgo."
+
+REGLAS:
+- Nunca inventes datos. Si no tienes, consulta primero.
 - Si el empleado no está registrado, explica cómo vincularse con /start.
-- Kuine genera los briefs y análisis profundos. Tú eres la interfaz ágil con el personal."""
-
-
-# ── Historial — Supabase primero, JSON como fallback ─────────────────────────
-
-def _history_db_key(chat_key: str) -> str:
-    return f"chuwi_conv_{chat_key}"
-
-
-def _load_history_db(chat_key: str) -> Optional[list]:
-    """Intenta cargar historial desde Supabase agent_memory."""
-    try:
-        val = _mem.recall(STORE_ID, _history_db_key(chat_key))
-        if val:
-            return json.loads(val)
-    except Exception:
-        pass
-    return None
-
-
-def _save_history_db(chat_key: str, history: list) -> bool:
-    """Guarda historial en Supabase agent_memory. Returns True si éxito."""
-    try:
-        _mem.remember(STORE_ID, _history_db_key(chat_key),
-                      json.dumps(history, ensure_ascii=False))
-        return True
-    except Exception:
-        return False
-
-
-def _load_history() -> dict:
-    """Carga todos los historiales (archivo JSON, legacy fallback)."""
-    if _history_file.exists():
-        try:
-            return json.loads(_history_file.read_text(encoding="utf-8"))
-        except Exception:
-            return {}
-    return {}
-
-
-def _save_history(history: dict) -> None:
-    try:
-        _history_file.write_text(
-            json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-    except Exception:
-        pass
-
-
-def _get_chat_history(chat_key: str) -> list:
-    """Obtiene historial: Supabase → JSON file → vacío."""
-    db_hist = _load_history_db(chat_key)
-    if db_hist is not None:
-        return db_hist
-    history = _load_history()
-    return history.get(chat_key, [])
-
-
-def _persist_chat_history(chat_key: str, history: list) -> None:
-    """Guarda historial: intenta Supabase, fallback a JSON."""
-    if not _save_history_db(chat_key, history):
-        all_history = _load_history()
-        all_history[chat_key] = history
-        _save_history(all_history)
-
-
-def _compact_history(history: list) -> list:
-    """
-    Compacta el historial usando Haiku para resumir los turnos antiguos.
-    Preserva datos operativos clave: acciones, productos, precios, decisiones.
-    Cae en truncación simple si la llamada LLM falla (Supabase no disponible, etc.)
-    """
-    if len(history) <= MAX_HISTORY:
-        return history
-    keep = MAX_HISTORY - 6
-    old = history[:-keep]
-    recent = history[-keep:]
-
-    # Extraer solo texto de los mensajes antiguos
-    old_lines = []
-    for m in old:
-        role = m.get("role", "")
-        content = m.get("content", "")
-        if isinstance(content, str) and content.strip():
-            old_lines.append(f"{role.upper()}: {content[:250]}")
-        elif isinstance(content, list):
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    old_lines.append(f"{role.upper()}: {block['text'][:200]}")
-
-    if not old_lines:
-        return [{"role": "user", "content": f"[{len(old)} mensajes anteriores omitidos.]"}] + recent
-
-    old_text = "\n".join(old_lines[:60])  # máx 60 líneas para el prompt
-
-    try:
-        summary = llm.call_fast(
-            f"""Resume este historial de conversación sobre gestión de merma en un supermercado.
-Conserva exactamente: acciones tomadas, productos críticos mencionados (nombre, pasillo, fecha),
-decisiones del encargado, precios acordados y cualquier dato numérico relevante.
-Máximo 120 palabras. Escribe en español, tono operativo.
-
-HISTORIAL:
-{old_text}""",
-            max_tokens=180,
-        )
-        return [{"role": "user", "content": f"[Contexto anterior (Kuine): {summary}]"}] + recent
-    except Exception:
-        return [{"role": "user", "content": f"[{len(old)} mensajes anteriores — operaciones Super Martínez.]"}] + recent
-
-
-# ── Auth ──────────────────────────────────────────────────────────────────────
-
-def _get_user(telegram_user_id: int) -> Optional[dict]:
-    try:
-        return database.get_user_by_telegram_id(str(telegram_user_id))
-    except Exception:
-        return None
-
-
-def _is_manager(user: Optional[dict]) -> bool:
-    return user is not None and user.get("role") in ("admin", "manager")
+- Las fotos: analízalas automáticamente con visión sin que te lo pidan."""
 
 
 # ── Formato HTML para Telegram ────────────────────────────────────────────────
@@ -387,12 +291,19 @@ def _main_menu_keyboard(is_manager: bool) -> InlineKeyboardMarkup:
         ])
         rows.append([
             InlineKeyboardButton("⚙️ Generar brief ahora", callback_data="cmd:runbrief"),
+            InlineKeyboardButton("🖥 Estado sistema", callback_data="cmd:sistema"),
+        ])
+        rows.append([
             InlineKeyboardButton("📖 Normativa citada", callback_data="cmd:citar"),
         ])
         rows.append([
             InlineKeyboardButton("📄 Brief en PDF", callback_data="cmd:brief_pdf"),
             InlineKeyboardButton("📊 Informe semanal PDF", callback_data="cmd:semana_pdf"),
         ])
+    rows.append([
+        InlineKeyboardButton("🖥 Estado sistema", callback_data="cmd:sistema"),
+        InlineKeyboardButton("🧪 Simular 7:30", callback_data="cmd:simular"),
+    ])
     rows.append([
         InlineKeyboardButton("❓ ¿Qué puedo preguntarte?", callback_data="cmd:ayuda"),
         InlineKeyboardButton("🎯 Cómo funciona todo", callback_data="cmd:tour"),
@@ -649,538 +560,9 @@ def _action_card_keyboard(action: dict, remaining: int = 0) -> InlineKeyboardMar
     return InlineKeyboardMarkup(rows)
 
 
-# ── Herramientas del agente Chuwi ── Claude decide cuál usar, no if/else ──────
-# Esta es la diferencia entre un agente real y un bot: Claude razona sobre
-# qué información necesita y llama las herramientas que corresponden.
-
-_TOOL_LABELS: dict[str, str] = {
-    "get_store_overview": "Consultando estado de la tienda",
-    "get_pending_actions": "Cargando acciones pendientes",
-    "get_daily_route": "Generando ruta del día",
-    "complete_action": "Registrando acción completada",
-    "analyze_product": "Analizando producto",
-    "get_merma_stats": "Consultando estadísticas de merma",
-    "get_donation_impact": "Calculando impacto social",
-    "register_donation": "Registrando donación",
-    "get_suppliers": "Cargando ficha de proveedores",
-    "get_esg_metrics": "Calculando métricas ESG",
-    "advance_demo_time": "Avanzando tiempo de simulación",
-    "get_order_suggestions": "Calculando pedido semanal",
-    "get_risk_predictions": "Calculando predicciones de riesgo",
-    "recall_store_memory": "Consultando memoria episódica",
-}
-
-CHUWI_TOOLS = [
-    {
-        "name": "get_store_overview",
-        "description": (
-            "Estado general de la tienda: acciones pendientes, críticos, valor en riesgo y resumen del brief. "
-            "Usar cuando el empleado pregunte por el estado de hoy, qué hay que hacer, si hay urgencias, "
-            "o cuando necesites contexto antes de responder otra pregunta."
-        ),
-        "input_schema": {"type": "object", "properties": {}, "required": []},
-    },
-    {
-        "name": "get_pending_actions",
-        "description": (
-            "Lista detallada de todas las acciones pendientes ordenadas por prioridad. "
-            "Usar cuando pregunten qué acciones hay, qué productos son críticos, "
-            "qué hay que hacer hoy, o para saber qué acción completar."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "max_results": {"type": "integer", "default": 10, "description": "Número máximo de acciones"},
-            },
-        },
-    },
-    {
-        "name": "get_daily_route",
-        "description": (
-            "Ruta óptima del día organizada por pasillos para hacer las acciones pendientes de forma eficiente. "
-            "Usar cuando pidan la ruta del día, el recorrido, o cómo hacer las acciones en orden."
-        ),
-        "input_schema": {"type": "object", "properties": {}, "required": []},
-    },
-    {
-        "name": "complete_action",
-        "description": (
-            "Marca una acción como completada y lo registra en la base de datos. "
-            "Usar cuando el empleado diga que ya hizo algo, que está listo, hecho, terminado. "
-            "IMPORTANTE: si no sabes el action_id, primero llama a get_pending_actions."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "action_id": {"type": "string", "description": "ID de la acción a completar"},
-                "notes": {"type": "string", "description": "Notas opcionales del empleado"},
-            },
-            "required": ["action_id"],
-        },
-    },
-    {
-        "name": "analyze_product",
-        "description": (
-            "Analiza un producto por código de barras: días hasta caducidad, precio, acción recomendada. "
-            "Usar cuando el empleado mencione un código de barras o pida analizar un producto específico."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "barcode": {"type": "string", "description": "Código de barras del producto (6-14 dígitos)"},
-            },
-            "required": ["barcode"],
-        },
-    },
-    {
-        "name": "get_merma_stats",
-        "description": (
-            "Estadísticas de merma: valor perdido en euros, unidades, productos más problemáticos. "
-            "Usar cuando pregunten sobre merma, pérdidas, qué se ha tirado, valor perdido."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "days": {"type": "integer", "default": 7, "description": "Días hacia atrás (default: 7)"},
-            },
-        },
-    },
-    {
-        "name": "get_donation_impact",
-        "description": (
-            "Impacto social de las donaciones al banco de alimentos y otras entidades. "
-            "Usar cuando pregunten sobre donaciones, impacto social, CO2 evitado, cuánto se ha donado."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "days": {"type": "integer", "default": 30, "description": "Días hacia atrás"},
-            },
-        },
-    },
-    {
-        "name": "register_donation",
-        "description": (
-            "Registra una donación al banco de alimentos u otra entidad solidaria. "
-            "Usar cuando el empleado confirme que va a donar o haya donado un producto. "
-            "Si el empleado no especifica la entidad, preguntar antes de registrar."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "entity": {
-                    "type": "string",
-                    "enum": ["banco_alimentos", "caritas", "cruz_roja", "comedor_social"],
-                    "description": "Entidad receptora de la donación",
-                },
-                "quantity": {"type": "integer", "minimum": 1, "description": "Unidades donadas"},
-                "product_name": {"type": "string", "description": "Nombre del producto donado"},
-                "batch_id": {"type": "string", "description": "ID del lote si se conoce"},
-            },
-            "required": ["entity", "quantity"],
-        },
-    },
-    {
-        "name": "get_suppliers",
-        "description": (
-            "Ficha de proveedores con tasa de merma histórica y nivel de riesgo. "
-            "Solo accesible para encargados. Usar cuando pregunten por proveedores, suministradores o quién da más problemas."
-        ),
-        "input_schema": {"type": "object", "properties": {}, "required": []},
-    },
-    {
-        "name": "get_esg_metrics",
-        "description": (
-            "Métricas de impacto ambiental y social: CO2 evitado (kg), agua ahorrada (litros), "
-            "deducción fiscal estimada por donaciones (Ley 49/2002). "
-            "Usar cuando pregunten por sostenibilidad, impacto, ESG, CO2, deducciones."
-        ),
-        "input_schema": {"type": "object", "properties": {}, "required": []},
-    },
-    {
-        "name": "get_order_suggestions",
-        "description": (
-            "Sugerencias de pedido semanal basadas en historial de merma y stock actual. "
-            "Solo encargados. Usar cuando pregunten qué pedir, cómo reponer stock."
-        ),
-        "input_schema": {"type": "object", "properties": {}, "required": []},
-    },
-    {
-        "name": "advance_demo_time",
-        "description": (
-            "Para la presentación: avanza N días en la simulación, actualizando caducidades, "
-            "creando nuevas acciones urgentes y garantizando productos CRÍTICO/ALTO/BAJO visibles. "
-            "Solo usar si el encargado lo pide explícitamente para la demo."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "days": {
-                    "type": "number",
-                    "minimum": 0.5,
-                    "maximum": 30,
-                    "description": "Días a avanzar (puede ser decimal, ej: 1.5 = día y medio)",
-                },
-            },
-            "required": ["days"],
-        },
-    },
-    {
-        "name": "get_risk_predictions",
-        "description": (
-            "Predicciones de riesgo de merma para los próximos 5-7 días con previsión meteorológica. "
-            "Usa el Predictor Agent que analiza histórico + clima + día de semana. "
-            "Usar cuando pregunten qué va a pasar esta semana, previsión de merma, "
-            "qué productos habrá que vigilar pronto, o para planificación anticipada."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "days": {"type": "integer", "default": 7, "description": "Horizonte de predicción en días"},
-            },
-        },
-    },
-    {
-        "name": "recall_store_memory",
-        "description": (
-            "Recupera patrones y aprendizajes guardados de la memoria episódica de la tienda. "
-            "Usar cuando el empleado pregunte por algo histórico: qué pasó la semana pasada, "
-            "qué proveedor falló antes, qué patrón hay en la merma de una categoría. "
-            "También útil para dar contexto histórico antes de responder sobre riesgos."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "pattern_key": {
-                    "type": "string",
-                    "description": (
-                        "Clave del patrón a recuperar. Ejemplos: "
-                        "'merma_historica_semana', 'categoria_lacteos_tendencia', "
-                        "'proveedor_riesgo', 'horas_pico_venta'"
-                    ),
-                },
-            },
-            "required": ["pattern_key"],
-        },
-        # cache_control en el ÚLTIMO tool: Anthropic cachea todas las definiciones de tools
-        # anteriores a este punto → ahorro ~5-8K tokens en cada llamada (15 tools × ~500 tokens).
-        "cache_control": {"type": "ephemeral"},
-    },
-]
-
-
-def _execute_tool_sync(tool_name: str, tool_input: dict, user: Optional[dict]) -> dict:
-    """
-    Ejecuta una herramienta de Chuwi de forma síncrona.
-    Llamado desde código async via run_in_executor.
-    Claude llama a estas herramientas — no hay routing manual.
-    """
-    is_mgr = _is_manager(user)
-    try:
-        if tool_name == "get_store_overview":
-            pending = database.get_pending_actions(STORE_ID)
-            critical = [a for a in pending if (a.get("priority_score") or 0) >= 85]
-            alto = [a for a in pending if 65 <= (a.get("priority_score") or 0) < 85]
-            brief = database.get_latest_brief(STORE_ID)
-            batches = database.get_batches_expiring_soon(STORE_ID, days=7)
-            value_at_risk = sum(
-                int(b.get("quantity", 0)) * float((b.get("products") or {}).get("price", 0))
-                for b in batches
-            )
-            semaforo = "ROJO" if len(critical) >= 5 else "AMARILLO" if len(critical) >= 2 else "VERDE"
-            return {
-                "semaforo": semaforo,
-                "pending_total": len(pending),
-                "criticos": len(critical),
-                "altos": len(alto),
-                "value_at_risk_eur": round(value_at_risk, 2),
-                "lotes_caducando_7d": len(batches),
-                "brief_hoy": brief.get("summary", "") if brief else None,
-                "brief_fecha": brief.get("date", "") if brief else None,
-            }
-
-        elif tool_name == "get_pending_actions":
-            max_r = int(tool_input.get("max_results", 10))
-            pending = database.get_pending_actions(STORE_ID)
-            sorted_p = sorted(pending, key=lambda a: -(a.get("priority_score") or 0))
-            actions = []
-            for a in sorted_p[:max_r]:
-                batch = a.get("batches") or {}
-                product = (batch.get("products") or {}) if batch else {}
-                exp = batch.get("expiry_date", "")
-                try:
-                    days_left = (date.fromisoformat(exp) - date.today()).days if exp else None
-                except Exception:
-                    days_left = None
-                actions.append({
-                    "id": a.get("id"),
-                    "product": product.get("name", "?"),
-                    "pasillo": product.get("pasillo", "?"),
-                    "action_type": a.get("action_type", ""),
-                    "priority_score": a.get("priority_score", 0),
-                    "new_price": a.get("new_price"),
-                    "days_left": days_left,
-                    "notes": (a.get("notes") or "")[:120],
-                })
-            return {"total": len(pending), "mostrando": len(actions), "acciones": actions}
-
-        elif tool_name == "get_daily_route":
-            from backend.agents import evaluator as ev, route as rt
-            batches = database.get_batches_expiring_soon(STORE_ID, days=7)
-            if not batches:
-                return {"ruta": "Sin productos próximos a caducar esta semana. Todo en orden."}
-            risk_reports = [(b, ev.evaluate(b.get("products") or {}, [b])) for b in batches]
-            daily_route = rt.generate(STORE_ID, risk_reports)
-            return {"ruta": rt.format_route_message(daily_route)}
-
-        elif tool_name == "complete_action":
-            action_id = tool_input.get("action_id", "")
-            u_name = (user.get("email") or user.get("id", "empleado")).split("@")[0] if user else "empleado"
-            database.complete_action(action_id, u_name)
-            return {"ok": True, "completada_por": u_name, "action_id": action_id}
-
-        elif tool_name == "analyze_product":
-            barcode = str(tool_input.get("barcode", ""))
-            u_id = (user or {}).get("id", "")
-            result = supervisor.run_scan(STORE_ID, barcode, u_id)
-            return {"analisis": result}
-
-        elif tool_name == "get_merma_stats":
-            days = int(tool_input.get("days", 7))
-            logs = database.get_merma_history(STORE_ID, days=days)
-            total_value = sum(float(l.get("value_lost", 0)) for l in logs)
-            total_qty = sum(int(l.get("quantity_lost", 0)) for l in logs)
-            top = []
-            for log in logs[:5]:
-                batch = log.get("batches") or {}
-                product = (batch.get("products") or {}) if batch else {}
-                top.append({
-                    "producto": product.get("name", log.get("reason", "?")[:30]),
-                    "fecha": log.get("date", "?"),
-                    "cantidad": log.get("quantity_lost", 0),
-                    "valor_eur": round(float(log.get("value_lost", 0)), 2),
-                })
-            return {
-                "dias": days,
-                "valor_total_eur": round(total_value, 2),
-                "unidades_total": total_qty,
-                "registros": len(logs),
-                "top_productos": top,
-            }
-
-        elif tool_name == "get_donation_impact":
-            days = int(tool_input.get("days", 30))
-            stats = database.get_donation_stats(STORE_ID, days=days)
-            return stats
-
-        elif tool_name == "register_donation":
-            entity = tool_input.get("entity", "banco_alimentos")
-            quantity = int(tool_input.get("quantity", 0))
-            product_name = tool_input.get("product_name", "")
-            batch_id = tool_input.get("batch_id")
-            u_name = (user.get("email") or "empleado") if user else "empleado"
-            entity_display = {
-                "banco_alimentos": "Banco de Alimentos",
-                "caritas": "Cáritas",
-                "cruz_roja": "Cruz Roja",
-                "comedor_social": "Comedor Social",
-            }.get(entity, entity)
-            donation_data = {
-                "store_id": STORE_ID,
-                "entity": entity_display,
-                "quantity": quantity,
-                "value_donated": 0.0,
-                "donated_at": datetime.now(timezone.utc).isoformat(),
-                "donated_by": u_name,
-            }
-            if batch_id:
-                donation_data["batch_id"] = batch_id
-            database.log_donation(donation_data)
-            return {"ok": True, "entidad": entity_display, "cantidad": quantity, "producto": product_name}
-
-        elif tool_name == "get_suppliers":
-            if not is_mgr:
-                return {"error": "Solo encargados pueden ver la ficha de proveedores."}
-            stats = database.get_supplier_stats(STORE_ID)
-            return {"proveedores": stats}
-
-        elif tool_name == "get_esg_metrics":
-            if not is_mgr:
-                return {"error": "Solo encargados pueden ver las métricas ESG completas."}
-            from backend.agents.esg import get_store_esg_summary
-            return get_store_esg_summary(STORE_ID, 30)
-
-        elif tool_name == "get_order_suggestions":
-            if not is_mgr:
-                return {"error": "Solo encargados pueden ver sugerencias de pedido."}
-            suggestions = database.get_order_suggestions(STORE_ID)
-            return {"sugerencias": suggestions[:15] if suggestions else []}
-
-        elif tool_name == "advance_demo_time":
-            if not is_mgr:
-                return {"error": "Solo encargados pueden avanzar el tiempo de la demo."}
-            days = float(tool_input.get("days", 1))
-            from backend.data.advance_demo import advance as _adv
-            result = _adv(days, store_id=STORE_ID, generate_brief=True)
-            return {"ok": True, "dias_avanzados": days, **result}
-
-        elif tool_name == "get_risk_predictions":
-            days = int(tool_input.get("days", 7))
-            try:
-                from backend.agents.predictor import predict_merma_risk
-                predictions = predict_merma_risk(STORE_ID, days=days)
-                return {
-                    "dias": days,
-                    "productos_en_riesgo": len(predictions),
-                    "predicciones": predictions[:10],
-                }
-            except Exception as e:
-                return {"error": f"Predictor no disponible: {e}"}
-
-        elif tool_name == "recall_store_memory":
-            pattern_key = tool_input.get("pattern_key", "")
-            from backend.core import memory as _mem_mod
-            value = _mem_mod.recall(STORE_ID, pattern_key)
-            return {
-                "pattern_key": pattern_key,
-                "found": value is not None,
-                "value": value or "Sin datos históricos para esta clave.",
-            }
-
-        else:
-            return {"error": f"Herramienta desconocida: {tool_name}"}
-
-    except Exception as e:
-        logger.error(f"[chuwi] tool error {tool_name}: {e}")
-        return {"error": str(e)}
-
-
-_COMPLEX_KEYWORDS = (
-    "analiza", "compara", "por qué", "explica", "estrategia",
-    "informe", "resumen", "qué harías", "recomendación", "decisión",
-    "merma", "proveedor", "esg", "predicción", "semana", "mes",
-)
-
-MAX_AGENT_ITERATIONS = 6
-
-
-def _is_complex_query(text: str) -> bool:
-    t = text.lower()
-    return len(text) > 120 or any(kw in t for kw in _COMPLEX_KEYWORDS)
-
-
-# ── Fase 2: Clasificación de intención (sin LLM — zero tokens) ───────────────
-
-_INTENT_PATTERNS: list[tuple[str, list[str]]] = [
-    # Orden importa: más específico primero
-    ("registrar_donacion", [
-        "donar", "donación", "donacion", "banco de alimentos", "banco alimentos",
-        "food bank", "entidad benéfica", "ong",
-        "quiero donar", "podemos donar", "vamos a donar", "para donar",
-        "lo donamos", "donamos esto", "mandamos al banco",
-    ]),
-    ("registrar_merma", [
-        "registrar merma", "apuntar merma", "anotar merma", "hubo merma",
-        "se perdió", "se perdio", "tiré", "tire ",
-        "está malo", "esta malo", "se echó a perder", "echo a perder", "echó a perder",
-        "hay que tirar", "tirar esto", "para tirar", "ya no sirve",
-        "está en mal estado", "esta en mal estado", "se ha puesto mal",
-        "se pudrió", "se pudrio", "está podrido", "esta podrido",
-        "en mal estado", "deteriorado", "caducado", "ha caducado",
-    ]),
-    ("pedir_ruta", [
-        "ruta", "iniciar ruta", "empezar ruta", "comenzar ruta",
-        "hacer la ruta", "dame la ruta", "modo ruta", "empiezo la ruta",
-    ]),
-    ("pedir_brief", [
-        "brief", "resumen del día", "resumen del dia", "informe del día",
-        "cómo estamos", "como estamos", "análisis de hoy", "analisis de hoy",
-        "generar brief", "situación de hoy", "situacion de hoy",
-    ]),
-    ("completar_accion", [
-        "completé", "complete ", "hice ", "listo", "terminé", "termine",
-        "ya está", "ya esta", "lo hice", "ya lo hice", "done", "hecho",
-        "realizé", "realize",
-    ]),
-    ("crear_accion", [
-        "crear acción", "crear accion", "nueva acción", "nueva accion",
-        "añadir acción", "crea una accion", "agregar acción",
-    ]),
-    ("consulta_estado", [
-        "cuánto", "cuantos", "cuántos", "cuanta", "qué caduca", "que caduca",
-        "qué hay", "que hay", "estado", "críticos", "criticos", "urgentes",
-        "pendientes", "cuántas acciones", "cuantas acciones", "cuántos lotes",
-        "productos caducados", "qué vence", "que vence",
-    ]),
-    ("configuracion", [
-        "configurar", "cambiar ajuste", "ajustar", "ayuda", "help",
-        "comandos", "commands", "qué puedes hacer", "que puedes hacer",
-        "opciones", "menú", "menu",
-    ]),
-]
-
-
-def _classify_intent(text: str) -> str:
-    """
-    Clasificador de intención basado en keywords. Sin LLM — 0 tokens.
-    Orden de evaluación: más específico primero. Fallback: pregunta_libre.
-    """
-    t = text.lower().strip()
-    for intent, keywords in _INTENT_PATTERNS:
-        if any(kw in t for kw in keywords):
-            return intent
-    return "pregunta_libre"
-
-
-def _build_intent_context(intent: str, store_id: str) -> str:
-    """
-    Genera contexto adicional según intención detectada.
-    Se inyecta en el system prompt para ayudar al agente a responder más rápido.
-    Falla silenciosamente si Supabase no está disponible.
-    """
-    try:
-        if intent == "consulta_estado":
-            pending = database.get_pending_actions(store_id)
-            critical = [a for a in pending if a.get("priority_score", 0) >= 85]
-            high = [a for a in pending if 65 <= a.get("priority_score", 0) < 85]
-            return (
-                f"\n[CONTEXTO AUTOMÁTICO — consulta_estado]\n"
-                f"Acciones pendientes: {len(pending)} total, "
-                f"{len(critical)} críticas (score≥85), {len(high)} altas (score≥65)\n"
-            )
-        elif intent == "pedir_brief":
-            brief = database.get_latest_brief(store_id)
-            if brief:
-                return (
-                    f"\n[CONTEXTO AUTOMÁTICO — pedir_brief]\n"
-                    f"Último brief: {brief.get('date','?')}, "
-                    f"valor en riesgo: {brief.get('value_at_risk', 0):.2f}€, "
-                    f"acciones: {brief.get('actions_count', 0)}\n"
-                )
-        elif intent in ("completar_accion", "pedir_ruta"):
-            pending = database.get_pending_actions(store_id)
-            top = pending[:3] if pending else []
-            lines = "\n".join(
-                f"  - {(a.get('batches') or {}).get('products', {}).get('name','?')} "
-                f"[score={a.get('priority_score',0)}]"
-                for a in top
-            )
-            return (
-                f"\n[CONTEXTO AUTOMÁTICO — {intent}]\n"
-                f"Acciones pendientes: {len(pending)}\n"
-                f"Top prioridad:\n{lines}\n"
-            )
-        elif intent == "registrar_donacion":
-            stats = database.get_donation_stats(store_id, days=30)
-            return (
-                f"\n[CONTEXTO AUTOMÁTICO — registrar_donacion]\n"
-                f"Donaciones este mes: {stats['total_donations']}, "
-                f"total: {stats['total_quantity']} uds, "
-                f"valor: {stats['total_value_donated']:.2f}€\n"
-            )
-    except Exception:
-        pass
-    return ""
+# ── Herramientas, cache y agent loop — ver chuwi_tools.py ────────────────────
+# CHUWI_TOOLS, _TOOL_LABELS, _execute_tool_sync, MAX_AGENT_ITERATIONS, etc.
+# importados arriba desde backend.core.chuwi_tools
 
 
 async def _run_agent_loop(
@@ -1216,7 +598,7 @@ async def _run_agent_loop(
     messages.append({"role": "user", "content": user_text})
 
     client = llm.get_async_client()
-    ev_loop = asyncio.get_event_loop()
+    ev_loop = asyncio.get_running_loop()
     buffer = ""
     last_edit_len = 0
     last_edit_time = time.monotonic()
@@ -1303,6 +685,7 @@ async def _run_agent_loop(
                 break
 
             # Ejecutar todas las tools en PARALELO — 90% mejora de velocidad
+            # Cache: tools de lectura se guardan 5 min para reutilizar en siguientes mensajes
             async def _exec_one(tc: dict) -> dict:
                 try:
                     t_input = json.loads(tc["input"]) if tc["input"].strip() else {}
@@ -1311,6 +694,9 @@ async def _run_agent_loop(
                 res = await ev_loop.run_in_executor(
                     None, _execute_tool_sync, tc["name"], t_input, user
                 )
+                if tc["name"] in _CACHEABLE_TOOLS and "error" not in res:
+                    cache_key = _tool_cache_key(tc["name"], t_input)
+                    _TOOL_CACHE[cache_key] = (res, time.monotonic())
                 return {
                     "type": "tool_result",
                     "tool_use_id": tc["id"],
@@ -1375,46 +761,62 @@ def _is_route_start(text: str) -> bool:
     return any(w in text_lower for w in _ROUTE_START_WORDS)
 
 
-def _get_conv_state(user_id: str) -> dict:
-    return _conv_state.get(user_id, {"mode": "idle", "data": {}})
-
-
-def _set_conv_state(user_id: str, mode: str, data: dict = None) -> None:
-    _conv_state[user_id] = {"mode": mode, "data": data or {}}
-
-
-def _clear_conv_state(user_id: str) -> None:
-    _conv_state.pop(user_id, None)
-
-
 # ── Respuesta de bienvenida ───────────────────────────────────────────────────
 
-def _welcome_text(name: str, is_manager: bool) -> str:
+def _get_store_quick_stats() -> dict:
+    """Estadísticas rápidas de la tienda para el mensaje de bienvenida."""
+    try:
+        actions = database.get_pending_actions(STORE_ID)
+        critical = sum(1 for a in actions if (a.get("priority_score") or 0) >= 85)
+        high = sum(1 for a in actions if (a.get("priority_score") or 0) >= 60)
+        return {"pending": len(actions), "critical": critical, "high": high - critical}
+    except Exception:
+        return {"pending": 0, "critical": 0, "high": 0}
+
+
+def _welcome_text(name: str, is_manager: bool, stats: dict | None = None) -> str:
+    pending = (stats or {}).get("pending", 0)
+    critical = (stats or {}).get("critical", 0)
+    high = (stats or {}).get("high", 0)
+
+    if critical >= 3:
+        status_icon = "🔴"
+        status_text = f"<b>ALERTA — {critical} productos CRÍTICOS sin resolver</b>"
+    elif critical >= 1:
+        status_icon = "🟡"
+        status_text = (
+            f"<b>{critical} crítico{'s' if critical > 1 else ''}</b>"
+            f" · {high} alto{'s' if high != 1 else ''}"
+            f" · {pending} pendientes"
+        )
+    elif pending > 0:
+        status_icon = "🟢"
+        status_text = f"{pending} acciones pendientes · sin críticos"
+    else:
+        status_icon = "✅"
+        status_text = "Sin alertas. La tienda está en orden."
+
     if is_manager:
         role_line = "🔑 <b>ENCARGADO</b> — acceso completo al sistema"
-        extra = (
-            "\n\nComo encargado puedes:\n"
-            "- Generar el brief del dia ahora mismo\n"
-            "- Ver ficha de proveedores y negociacion\n"
-            "- Pedido semanal basado en historico\n"
-            "- Impacto ESG y deduccion fiscal\n"
-            "- Simular paso del tiempo en la demo"
+        menu_hint = (
+            "📋 Brief  ·  ⚡ Acciones  ·  🗺 Ruta\n"
+            "📦 Proveedores  ·  🛒 Pedido  ·  🌱 ESG\n"
+            "🔮 Predicciones  ·  📄 PDF  ·  ⚙️ Generar brief"
         )
     else:
-        role_line = "👷 <b>EMPLEADO</b> — operaciones del dia"
-        extra = (
-            "\n\nPuedo ayudarte con:\n"
-            "- Que hay que hacer ahora mismo\n"
-            "- La ruta guiada por pasillos\n"
-            "- Registrar que ya hiciste algo\n"
-            "- Informar de merma o donacion"
+        role_line = "👷 <b>EMPLEADO</b> — operaciones del día"
+        menu_hint = (
+            "⚡ Acciones  ·  🗺 Ruta del día\n"
+            "✅ Completar tarea  ·  ❤️ Donaciones\n"
+            "🔍 Escanear  ·  📊 Merma"
         )
+
     return (
-        f"Hola <b>{html.escape(name)}</b>. Soy Chuwi, el agente de MermaOps.\n\n"
-        f"{role_line}\n"
-        f"{extra}\n\n"
-        f"Escríbeme en lenguaje natural o usa el menu de abajo.\n"
-        f"<i>Escribe /yo para ver tu perfil completo.</i>"
+        f"Hola <b>{html.escape(name)}</b> 👋\n\n"
+        f"{status_icon}  {status_text}\n\n"
+        f"{role_line}\n\n"
+        f"{menu_hint}\n\n"
+        f"Escríbeme en lenguaje natural o usa el menú de abajo."
     )
 
 
@@ -1481,7 +883,8 @@ def _format_route_action(action: dict, index: int, total: int) -> str:
 
 async def _start_route_mode(update: Update, context: ContextTypes.DEFAULT_TYPE, user: Optional[dict]) -> None:
     """Inicia el modo ruta activa — guía al empleado acción por acción."""
-    actions = _get_route_actions()
+    loop = asyncio.get_running_loop()
+    actions = await loop.run_in_executor(None, _get_route_actions)
 
     if not actions:
         await update.message.reply_text(
@@ -1515,7 +918,8 @@ async def _handle_action_complete(update: Update, context: ContextTypes.DEFAULT_
     Muestra las acciones pendientes para que confirme cuál fue.
     """
     try:
-        pending = database.get_pending_actions(STORE_ID)
+        loop = asyncio.get_running_loop()
+        pending = await loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
         if not pending:
             await update.message.reply_text(
                 "No hay acciones pendientes registradas. ¡Todo resuelto!",
@@ -1551,7 +955,7 @@ async def _handle_action_complete(update: Update, context: ContextTypes.DEFAULT_
 
     except Exception as e:
         await update.message.reply_text(
-            f"Error al cargar acciones: {e}",
+            "Error cargando acciones. Inténtalo de nuevo.",
             reply_markup=_back_keyboard()
         )
 
@@ -1559,7 +963,8 @@ async def _handle_action_complete(update: Update, context: ContextTypes.DEFAULT_
 # ── Acciones del menú ─────────────────────────────────────────────────────────
 
 async def _action_brief(update_or_query, context, user: Optional[dict], is_callback=False):
-    brief = database.get_latest_brief(STORE_ID)
+    loop = asyncio.get_running_loop()
+    brief = await loop.run_in_executor(None, database.get_latest_brief, STORE_ID)
     keyboard = _back_keyboard()
     if not brief:
         text = (
@@ -1574,7 +979,7 @@ async def _action_brief(update_or_query, context, user: Optional[dict], is_callb
             ]])
     else:
         summary = brief.get("summary", "")
-        pending = database.get_pending_actions(STORE_ID)
+        pending = await loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
         critical_count = sum(1 for a in pending if (a.get("priority_score") or 0) >= 85)
         high_count = sum(1 for a in pending if 65 <= (a.get("priority_score") or 0) < 85)
         value_at_risk = brief.get("value_at_risk", 0.0) or 0.0
@@ -1632,7 +1037,8 @@ async def _action_brief(update_or_query, context, user: Optional[dict], is_callb
 
 
 async def _action_acciones(update_or_query, context, user: Optional[dict], is_callback=False):
-    pending = database.get_pending_actions(STORE_ID)
+    loop = asyncio.get_running_loop()
+    pending = await loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
     text = _fmt.format_actions(pending)
 
     if not pending:
@@ -1667,28 +1073,38 @@ async def _action_acciones(update_or_query, context, user: Optional[dict], is_ca
 
 
 async def _action_ruta(update_or_query, context, user: Optional[dict], is_callback=False):
-    async def _build():
-        from backend.agents import evaluator as ev, route as rt
-        loop = asyncio.get_running_loop()
+    loop = asyncio.get_running_loop()
 
-        def _sync():
-            batches = database.get_batches_expiring_soon(STORE_ID, days=7)
-            if not batches:
-                return "Sin productos próximos a caducar esta semana."
-            risk_reports = []
-            for batch in batches:
-                product = batch.get("products") or {}
-                risk = ev.evaluate(product, [batch])
-                risk_reports.append((batch, risk))
-            daily_route = rt.generate(STORE_ID, risk_reports)
-            return rt.format_route_message(daily_route)
-
-        return await loop.run_in_executor(None, _sync)
+    def _sync():
+        from backend.agents import route as rt
+        # Usa los scores ya calculados en BD — sin llamar al evaluador (sin LLM)
+        pending = database.get_pending_actions(STORE_ID)
+        if not pending:
+            return "Sin acciones pendientes para la ruta de hoy. ✅"
+        risk_reports = []
+        for action in pending:
+            batch = action.get("batches") or {}
+            score = action.get("priority_score", 0)
+            risk_level = (
+                "CRÍTICO" if score >= 85 else
+                "ALTO" if score >= 65 else
+                "MEDIO" if score >= 40 else "BAJO"
+            )
+            risk = {
+                "score": score,
+                "risk_level": risk_level,
+                "action": action.get("action_type", "revisar"),
+                "reasoning": action.get("notes") or "",
+                "price_adjustment_pct": action.get("price_adjustment_pct") or 0,
+            }
+            risk_reports.append((batch, risk))
+        daily_route = rt.generate(STORE_ID, risk_reports)
+        return rt.format_route_message(daily_route)
 
     try:
-        response = await _build()
-    except Exception as e:
-        response = f"Error generando la ruta: {e}"
+        response = await loop.run_in_executor(None, _sync)
+    except Exception:
+        response = "Error generando la ruta. Inténtalo de nuevo."
 
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("▶️ Iniciar modo ruta guiada", callback_data="cmd:iniciar_ruta")],
@@ -1706,11 +1122,14 @@ async def _action_ruta(update_or_query, context, user: Optional[dict], is_callba
 async def _action_stats(update_or_query, context, user: Optional[dict], is_callback=False):
     """Dashboard KPIs en Telegram — resumen ejecutivo de la tienda en un mensaje."""
     try:
-        pending = database.get_pending_actions(STORE_ID)
-        batches = database.get_batches_expiring_soon(STORE_ID, days=7)
-        merma_7d = database.get_merma_history(STORE_ID, days=7)
-        donations = database.get_donation_stats(STORE_ID, days=30)
-        brief = database.get_latest_brief(STORE_ID)
+        loop = asyncio.get_running_loop()
+        pending, batches, merma_7d, donations, brief = await asyncio.gather(
+            loop.run_in_executor(None, database.get_pending_actions, STORE_ID),
+            loop.run_in_executor(None, database.get_batches_expiring_soon, STORE_ID, 7),
+            loop.run_in_executor(None, database.get_merma_history, STORE_ID, 7),
+            loop.run_in_executor(None, database.get_donation_stats, STORE_ID, 30),
+            loop.run_in_executor(None, database.get_latest_brief, STORE_ID),
+        )
 
         critical = sum(1 for a in pending if (a.get("priority_score") or 0) >= 85)
         high = sum(1 for a in pending if 65 <= (a.get("priority_score") or 0) < 85)
@@ -1736,7 +1155,7 @@ async def _action_stats(update_or_query, context, user: Optional[dict], is_callb
             semaforo=semaforo,
         )
     except Exception as e:
-        text = f"❌ Error al obtener KPIs: {e}"
+        text = "❌ Error obteniendo datos. Inténtalo de nuevo."
 
     keyboard = InlineKeyboardMarkup([
         [
@@ -1755,10 +1174,11 @@ async def _action_stats(update_or_query, context, user: Optional[dict], is_callb
 
 async def _action_merma(update_or_query, context, user: Optional[dict], is_callback=False):
     try:
-        logs = database.get_merma_history(STORE_ID, days=7)
+        loop = asyncio.get_running_loop()
+        logs = await loop.run_in_executor(None, database.get_merma_history, STORE_ID, 7)
         text = _fmt.format_merma(logs, days=7)
     except Exception as e:
-        text = f"❌ Error al obtener merma: {e}"
+        text = "❌ Error obteniendo merma. Inténtalo de nuevo."
 
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("↩ Menú", callback_data="cmd:menu")]])
     if is_callback:
@@ -1769,10 +1189,11 @@ async def _action_merma(update_or_query, context, user: Optional[dict], is_callb
 
 async def _action_donaciones(update_or_query, context, user: Optional[dict], is_callback=False):
     try:
-        stats = database.get_donation_stats(STORE_ID, days=30)
+        loop = asyncio.get_running_loop()
+        stats = await loop.run_in_executor(None, database.get_donation_stats, STORE_ID, 30)
         text = _fmt.format_donaciones(stats)
     except Exception as e:
-        text = f"❌ Error al obtener donaciones: {e}"
+        text = "❌ Error obteniendo donaciones. Inténtalo de nuevo."
 
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🤝 Registrar donación", callback_data="cmd:donar_flow")],
@@ -1795,10 +1216,11 @@ async def _action_proveedores(update_or_query, context, user: Optional[dict], is
         return
 
     try:
-        stats = database.get_supplier_stats(STORE_ID)
+        loop = asyncio.get_running_loop()
+        stats = await loop.run_in_executor(None, database.get_supplier_stats, STORE_ID)
         text = _fmt.format_proveedores(stats)
     except Exception as e:
-        text = f"❌ Error al obtener proveedores: {e}"
+        text = "❌ Error obteniendo proveedores. Inténtalo de nuevo."
 
     if is_callback:
         await update_or_query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
@@ -1817,10 +1239,11 @@ async def _action_pedido(update_or_query, context, user: Optional[dict], is_call
         return
 
     try:
-        suggestions = database.get_order_suggestions(STORE_ID)
+        loop = asyncio.get_running_loop()
+        suggestions = await loop.run_in_executor(None, database.get_order_suggestions, STORE_ID)
         text = _fmt.format_pedido(suggestions)
     except Exception as e:
-        text = f"❌ Error al calcular pedido: {e}"
+        text = "❌ Error calculando pedido. Inténtalo de nuevo."
 
     if is_callback:
         await update_or_query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
@@ -1829,27 +1252,39 @@ async def _action_pedido(update_or_query, context, user: Optional[dict], is_call
 
 
 async def _action_runbrief(update_or_query, context, user: Optional[dict], is_callback=False):
-    keyboard = _back_keyboard()
-    if not _is_manager(user):
-        text = "Solo los encargados pueden generar el brief manualmente."
-        if is_callback:
-            await update_or_query.edit_message_text(text, reply_markup=keyboard)
-        else:
-            await _send(update_or_query, text, reply_markup=keyboard)
-        return
+    # Si ya hay brief de hoy, mostrarlo directamente — sin confirmación
+    loop = asyncio.get_running_loop()
+    existing = await loop.run_in_executor(None, database.get_latest_brief, STORE_ID)
+    if existing:
+        from datetime import date as _date
+        if str(existing.get("date", "")) == str(_date.today()):
+            summary = existing.get("summary", "Sin resumen disponible.")
+            text = f"📋 <b>Brief del día</b> ({existing.get('date','')})\n\n{summary[:3000]}"
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Regenerar ahora", callback_data="confirm:runbrief"),
+                 InlineKeyboardButton("↩ Menú", callback_data="cmd:menu")],
+            ])
+            if is_callback:
+                await update_or_query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+            else:
+                await _send(update_or_query, text, reply_markup=kb)
+            return
 
-    confirm_keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ Generar brief ahora", callback_data="confirm:runbrief"),
-        InlineKeyboardButton("❌ Cancelar", callback_data="cmd:menu"),
-    ]])
+    # No hay brief de hoy — ofrecer generarlo (cualquier usuario)
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⚙️ Generar brief ahora (~60s)", callback_data="confirm:runbrief")],
+        [InlineKeyboardButton("↩ Menú", callback_data="cmd:menu")],
+    ])
     text = (
-        "Generar el brief analiza todos los productos de la tienda con IA.\n\n"
-        "Puede tardar entre 30 y 90 segundos. ¿Continuar?"
+        "📋 <b>Sin brief para hoy todavía</b>\n\n"
+        "Se genera automáticamente a las <b>07:30</b> cada día.\n"
+        "Puedes generarlo ahora — tarda ~60s y te llega aquí cuando esté listo.\n"
+        "Puedes seguir usando Chuwi mientras tanto."
     )
     if is_callback:
-        await update_or_query.edit_message_text(text, reply_markup=confirm_keyboard)
+        await update_or_query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
     else:
-        await _send(update_or_query, text, reply_markup=confirm_keyboard)
+        await _send(update_or_query, text, reply_markup=kb)
 
 
 async def _action_scan_help(update_or_query, context, user: Optional[dict], is_callback=False):
@@ -1907,7 +1342,7 @@ async def _action_ayuda(update_or_query, context, user: Optional[dict], is_callb
 
 async def _action_tour(update_or_query, context, user: Optional[dict], is_callback=False):
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🧠 Ver los 11 agentes de IA", callback_data="cmd:tour_agentes")],
+        [InlineKeyboardButton("🧠 Ver los 12 agentes de IA", callback_data="cmd:tour_agentes")],
         [InlineKeyboardButton("📱 Ver funciones de la app", callback_data="cmd:tour_app")],
         [InlineKeyboardButton("↩ Menú principal", callback_data="cmd:menu")],
     ])
@@ -1922,7 +1357,7 @@ async def _action_tour(update_or_query, context, user: Optional[dict], is_callba
         "- Análisis de riesgo con razonamiento interno (extended thinking de Claude)\n"
         "- Agente conversacional disponible 24h en Telegram\n\n"
         "TECNOLOGÍA:\n"
-        "- 11 agentes especializados coordinados por Kuine\n"
+        "- 12 agentes especializados coordinados por Kuine\n"
         "- IA con extended thinking para productos críticos\n"
         "- Consenso de 3 agentes en paralelo para casos extremos\n"
         "- Memoria episódica: recuerda qué pasó la semana anterior\n"
@@ -1944,7 +1379,7 @@ async def _action_tour_agentes(update_or_query, context, user: Optional[dict], i
     ])
     text = (
         "LOS 11 AGENTES DE MERMAOPS:\n\n"
-        "1. KUINE — el cerebro. Loop agéntico con 25 herramientas. "
+        "1. KUINE — el cerebro. Loop agéntico con 16 herramientas. "
         "Decide qué investigar, en qué orden y cuándo escalar.\n\n"
         "2. EVALUATOR — análisis de riesgo profundo. Usa extended thinking "
         "(Claude razona internamente antes de responder). Para casos extremos "
@@ -2017,7 +1452,8 @@ async def _action_tour_app(update_or_query, context, user: Optional[dict], is_ca
 async def _action_marcar_hecha(update_or_query, context, user: Optional[dict], is_callback=False):
     """Shortcut para marcar acción como hecha desde el menú."""
     try:
-        pending = database.get_pending_actions(STORE_ID)
+        loop = asyncio.get_running_loop()
+        pending = await loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
         if not pending:
             text = "No hay acciones pendientes registradas."
             if is_callback:
@@ -2053,7 +1489,7 @@ async def _action_marcar_hecha(update_or_query, context, user: Optional[dict], i
             await _send(update_or_query, text, reply_markup=keyboard)
 
     except Exception as e:
-        text = f"Error: {e}"
+        text = _safe_err(e)
         if is_callback:
             await update_or_query.edit_message_text(text, reply_markup=_back_keyboard())
         else:
@@ -2140,7 +1576,7 @@ async def _confirm_scan_action(barcode: str, action_type: str, user: Optional[di
                         "entity": entity_map.get(action_type, "Otro"),
                         "quantity": qty,
                         "value_donated": round(qty * price, 2),
-                        "donated_at": _dt.now(_dt.now().astimezone().tzinfo).isoformat(),
+                        "donated_at": datetime.now(timezone.utc).isoformat(),
                         "donated_by": u_label,
                     })
 
@@ -2164,10 +1600,11 @@ _DONATION_ENTITIES = [
 async def _action_donar_flow(update_or_query, context, user: Optional[dict], is_callback=False):
     """Inicia el flujo multi-step de donación: product → entity → quantity → confirm."""
     try:
-        actions = database.get_pending_actions(STORE_ID)
+        loop = asyncio.get_running_loop()
+        actions = await loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
         donar_actions = [a for a in actions if a.get("action_type") == "donar"]
     except Exception as e:
-        text = f"Error al obtener acciones de donación: {e}"
+        text = "Error obteniendo acciones. Inténtalo de nuevo."
         kb = _back_keyboard()
         if is_callback:
             await update_or_query.edit_message_text(text, reply_markup=kb)
@@ -2254,7 +1691,7 @@ async def _action_esg(update_or_query, context, user: Optional[dict], is_callbac
         ]
         text = "\n".join(lines)
     except Exception as e:
-        text = f"Error al obtener datos ESG: {e}"
+        text = "Error obteniendo datos ESG. Inténtalo de nuevo."
 
     if is_callback:
         await update_or_query.edit_message_text(
@@ -2315,7 +1752,7 @@ async def _action_prediccion(update_or_query, context, user: Optional[dict], is_
             ]
             text = "\n".join(lines)
     except Exception as e:
-        text = f"Error al calcular predicciones: {e}"
+        text = "Error calculando predicciones. Inténtalo de nuevo."
 
     if is_callback:
         await update_or_query.edit_message_text(
@@ -2377,7 +1814,7 @@ async def _action_citar(update_or_query, context, user: Optional[dict], is_callb
             ctx_text = _knowledge.get_context_for_decision(cat_key, dias, accion)
             text = f"NORMATIVA — {product_label.upper()} ({dias}d)\n\n{ctx_text}\n\n(Citations API no activa — configura ANTHROPIC_API_KEY para citas exactas)"
         except Exception as e:
-            text = f"Error al consultar normativa: {e}"
+            text = "Error consultando normativa. Inténtalo de nuevo."
 
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("↩ Menú", callback_data="cmd:menu")]])
     if is_callback:
@@ -2386,6 +1823,177 @@ async def _action_citar(update_or_query, context, user: Optional[dict], is_callb
         )
     else:
         await _send(update_or_query, text, reply_markup=keyboard)
+
+
+async def _action_simular(update_or_query, context, user: Optional[dict], is_callback=False) -> None:
+    """Simula lo que ocurre a las 07:30 — prueba real del scheduler."""
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("▶️ Ejecutar todo (brief + predicción)", callback_data="confirm:simular")],
+        [InlineKeyboardButton("🔔 Probar alerta ahora", callback_data="confirm:test_alerta")],
+        [InlineKeyboardButton("↩ Menú", callback_data="cmd:menu")],
+    ])
+    text = (
+        "🧪 <b>Simulación del scheduler</b>\n\n"
+        "Esto ejecuta exactamente lo que ocurre a las 07:30 de forma automática:\n\n"
+        "• <b>Brief diario</b> — Kuine analiza todos los productos\n"
+        "• <b>Predicción</b> — riesgo de merma con datos climáticos\n\n"
+        "Todo va en background. Te mando los resultados aquí cuando terminen.\n\n"
+        "También puedes probar que las alertas llegan a tu Telegram."
+    )
+    if is_callback:
+        await update_or_query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+    else:
+        await _send(update_or_query, text, reply_markup=kb)
+
+
+async def _simulate_730_background(bot, chat_id: int, user: Optional[dict]) -> None:
+    """Ejecuta predicción + brief en background, igual que el scheduler a las 07:30."""
+    loop = asyncio.get_running_loop()
+
+    await bot.send_message(chat_id=chat_id, text="🔮 Paso 1/2: Ejecutando predicción de merma...")
+    try:
+        from backend.agents.predictor import predict_merma_risk, generate_prediction_brief
+        predictions = await loop.run_in_executor(None, predict_merma_risk, STORE_ID)
+        if predictions:
+            pred_text = await loop.run_in_executor(None, generate_prediction_brief, STORE_ID)
+            await bot.send_message(
+                chat_id=chat_id,
+                text=f"🔮 <b>Predicción completada:</b>\n\n{pred_text[:2000]}",
+                parse_mode=ParseMode.HTML,
+            )
+        else:
+            await bot.send_message(chat_id=chat_id, text="🔮 Predicción: sin datos suficientes.")
+    except Exception as e:
+        await bot.send_message(chat_id=chat_id, text=f"🔮 Predicción: error — {str(e)[:80]}")
+
+    await bot.send_message(chat_id=chat_id, text="📋 Paso 2/2: Generando brief con Kuine (IA)... ~60s")
+    try:
+        result = await loop.run_in_executor(None, supervisor.run_daily_brief, STORE_ID)
+        keyboard = _smart_keyboard(result, _is_manager(user))
+        chunks = [result[i:i+4000] for i in range(0, max(len(result), 1), 4000)]
+        for i, chunk in enumerate(chunks):
+            await bot.send_message(
+                chat_id=chat_id,
+                text=_md_to_html(chunk),
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard if i == len(chunks) - 1 else None,
+            )
+    except Exception as e:
+        await bot.send_message(chat_id=chat_id, text=f"📋 Brief: error — {str(e)[:80]}")
+
+    await bot.send_message(
+        chat_id=chat_id,
+        text="✅ <b>Simulación 07:30 completada.</b>\nEsto es exactamente lo que ocurre cada mañana de forma automática.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=_back_keyboard(),
+    )
+
+
+async def _generate_brief_background(bot, chat_id: int, user: Optional[dict]) -> None:
+    """Genera el brief en background y manda el resultado cuando termina."""
+    loop = asyncio.get_running_loop()
+    try:
+        result = await loop.run_in_executor(None, supervisor.run_daily_brief, STORE_ID)
+    except Exception as e:
+        result = f"❌ Error generando el brief: {str(e)[:100]}"
+
+    keyboard = _smart_keyboard(result, _is_manager(user))
+    try:
+        chunks = [result[i:i+4000] for i in range(0, max(len(result), 1), 4000)]
+        for i, chunk in enumerate(chunks):
+            await bot.send_message(
+                chat_id=chat_id,
+                text=_md_to_html(chunk),
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard if i == len(chunks) - 1 else None,
+            )
+    except Exception:
+        try:
+            await bot.send_message(chat_id=chat_id, text=result[:4000])
+        except Exception:
+            pass
+
+
+async def _action_sistema(update_or_query, context, user: Optional[dict], is_callback=False) -> None:
+    """Estado real del scheduler — muestra qué se ejecutó de verdad."""
+    loop = asyncio.get_running_loop()
+
+    def _get_system_status():
+        try:
+            db = database.get_db()
+            runs = db.table("agent_runs").select(
+                "trigger_source,tools_used,duration_ms,started_at"
+            ).eq("store_id", STORE_ID).order("started_at", desc=True).limit(5).execute()
+            briefs = db.table("daily_briefs").select("date,actions_count,value_at_risk").eq(
+                "store_id", STORE_ID
+            ).order("date", desc=True).limit(3).execute()
+            decisions = db.table("supervisor_decisions").select(
+                "decision_type,score,created_at"
+            ).eq("store_id", STORE_ID).order("created_at", desc=True).limit(5).execute()
+            return runs.data or [], briefs.data or [], decisions.data or []
+        except Exception:
+            return [], [], []
+
+    runs, briefs, decisions = await loop.run_in_executor(None, _get_system_status)
+
+    from datetime import datetime as _dt, date as _date
+    def _fmt_ts(ts_str):
+        if not ts_str:
+            return "—"
+        try:
+            dt = _dt.fromisoformat(ts_str.replace("Z", "+00:00"))
+            return dt.astimezone().strftime("%d/%m %H:%M")
+        except Exception:
+            return ts_str[:16]
+
+    today = str(_date.today())
+    lines = ["🤖 <b>Estado real del sistema</b>\n"]
+
+    lines.append("📋 <b>Briefs generados:</b>")
+    if briefs:
+        for b in briefs[:3]:
+            bdate = b.get("date", "?")
+            tag = " ← HOY" if str(bdate) == today else ""
+            lines.append(f"  • {bdate}{tag} — {b.get('actions_count','?')} acciones, {b.get('value_at_risk',0):.0f}€ en riesgo")
+    else:
+        lines.append("  (ninguno todavía — usa '🧪 Simular 7:30' para generar)")
+
+    lines.append("\n⚙️ <b>Últimas ejecuciones de Kuine:</b>")
+    if runs:
+        for r in runs[:5]:
+            source = r.get("trigger_source", "?")
+            dur = r.get("duration_ms")
+            dur_s = f"{dur//1000}s" if dur else "?"
+            lines.append(f"  • [{source}] {_fmt_ts(r.get('started_at',''))} — {dur_s}")
+    else:
+        lines.append("  (sin ejecuciones — el scheduler arranca con el backend)")
+
+    lines.append("\n🎯 <b>Últimas decisiones de Kuine:</b>")
+    if decisions:
+        for d in decisions[:5]:
+            dtype = (d.get("decision_type") or "?").upper()
+            score = d.get("score", "?")
+            lines.append(f"  • {dtype} — score {score} — {_fmt_ts(d.get('created_at',''))}")
+    else:
+        lines.append("  (sin decisiones — genera un brief para ver decisiones reales)")
+
+    lines.append(
+        "\n⏰ <b>Ejecuciones automáticas programadas:</b>\n"
+        "  • 07:00 — Predicción merma\n  • 07:30 — Brief diario (Kuine)\n"
+        "  • 12:00 — Check mediodía\n  • 16:00 — Retrospectiva\n"
+        "  • 20:00 — Cierre\n  • Cada 2h — Escalación críticos\n"
+        "  • Cada 30min — Monitor donaciones"
+    )
+
+    text = "\n".join(lines)
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 Actualizar", callback_data="cmd:sistema"),
+         InlineKeyboardButton("↩ Menú", callback_data="cmd:menu")],
+    ])
+    if is_callback:
+        await update_or_query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+    else:
+        await _send(update_or_query, text, reply_markup=kb)
 
 
 _ACTION_MAP = {
@@ -2398,6 +2006,8 @@ _ACTION_MAP = {
     "proveedores": _action_proveedores,
     "pedido": _action_pedido,
     "runbrief": _action_runbrief,
+    "sistema": _action_sistema,
+    "simular": _action_simular,
     "scan_help": _action_scan_help,
     "ayuda": _action_ayuda,
     "tour": _action_tour,
@@ -2434,10 +2044,10 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     tg_id = update.effective_user.id
     tg_name = update.effective_user.first_name or "empleado"
 
-    # Siempre guardar el chat_id de quien haga /start
     _auto_save_chat_id(update.effective_chat.id)
 
-    user = _get_user(tg_id)
+    _loop = asyncio.get_running_loop()
+    user = await _loop.run_in_executor(None, _get_user, tg_id)
 
     # Enviar avatar si existe
     try:
@@ -2454,35 +2064,39 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     if not user:
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📱 Abrir App MermaOps", url="https://t.me/ChuwiMermaOpsBot")],
-            [InlineKeyboardButton("🏪 Ver estado de la tienda", callback_data="cmd:estado")],
-            [InlineKeyboardButton("🤖 Ver todos los agentes", callback_data="cmd:agentes_info")],
+            [InlineKeyboardButton("🏪 Ver estado sin cuenta", callback_data="cmd:estado")],
         ])
         await update.message.reply_text(
-            f"👋 Hola <b>{tg_name}</b>, soy <b>Chuwi</b>, el agente de <b>MermaOps</b>.\n\n"
-            "Para responder con datos de tu tienda, necesitas vincular tu cuenta.\n\n"
-            "┌────────────────────────┐\n"
-            "│  🔢  <b>Tu ID de Telegram</b>  │\n"
-            "└────────────────────────┘\n\n"
+            f"👋 Hola <b>{html.escape(tg_name)}</b>, soy <b>Chuwi</b>.\n\n"
+            "Soy el agente de IA de <b>MermaOps</b> — gestión inteligente\n"
+            "de merma para supermercados. Coordinado por <b>Kuine</b>.\n\n"
+            "━━━━━━━━━━━━━━━━━━━\n"
+            "🔗  <b>Para vincular tu cuenta:</b>\n\n"
+            "1️⃣  Abre la app <b>MermaOps</b>\n"
+            "2️⃣  Ve a <b>Perfil</b> → Vincular Telegram\n"
+            "3️⃣  Pega tu ID:\n\n"
             f"<code>{tg_id}</code>\n\n"
-            "👆 Cópialo, abre la app MermaOps\n"
-            "→ <b>Perfil</b> → pega el número → pulsa <b>Vincular</b>.",
+            "4️⃣  Pulsa <b>Vincular</b> y vuelve aquí\n"
+            "━━━━━━━━━━━━━━━━━━━\n\n"
+            "<i>Sin cuenta solo puedo darte info general.</i>",
             parse_mode=ParseMode.HTML,
             reply_markup=kb,
         )
         return
 
+    # Cargar estado real de la tienda para el welcome dinámico
+    stats = await _loop.run_in_executor(None, _get_store_quick_stats)
     manager = _is_manager(user)
     keyboard = _main_menu_keyboard(manager)
     await update.message.reply_text(
-        _welcome_text(tg_name, manager),
+        _welcome_text(tg_name, manager, stats),
         parse_mode=ParseMode.HTML,
         reply_markup=keyboard,
     )
 
 
 async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = _get_user(update.effective_user.id)
+    user = await asyncio.get_running_loop().run_in_executor(None, _get_user, update.effective_user.id)
     if not user:
         await update.message.reply_text(
             "Primero debes vincular tu cuenta. Escribe /start para ver las instrucciones."
@@ -2497,7 +2111,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     query = update.callback_query
     await query.answer()
 
-    user = _get_user(update.effective_user.id)
+    _loop = asyncio.get_running_loop()
+    user = await _loop.run_in_executor(None, _get_user, update.effective_user.id)
     user_id = str(update.effective_user.id)
     data = query.data or ""
 
@@ -2509,44 +2124,63 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.edit_message_text("¿Qué necesitas?", reply_markup=keyboard)
         return
 
-    # ── Confirmación de brief ──
+    # ── Confirmación de brief — lanza en background, responde inmediato ──
     if data == "confirm:runbrief":
-        await query.edit_message_text("Generando brief... esto puede tardar hasta 90 segundos.")
-        done = asyncio.Event()
-        typing_task = asyncio.create_task(
-            _typing_loop(context.bot, query.message.chat_id, done)
+        chat_id = query.message.chat_id
+        await query.edit_message_text(
+            "📋 <b>Generando brief en segundo plano...</b>\n\n"
+            "Kuine está analizando todos los productos con IA.\n"
+            "Te mando el resultado aquí en ~60 segundos.\n"
+            "Puedes seguir usando el bot mientras tanto. 👇",
+            parse_mode=ParseMode.HTML,
+            reply_markup=_back_keyboard(),
         )
+        asyncio.create_task(_generate_brief_background(context.bot, chat_id, user))
+        return
+
+    # ── Simular 07:30 — ejecuta predicción + brief en background ──
+    if data == "confirm:simular":
+        chat_id = query.message.chat_id
+        await query.edit_message_text(
+            "🧪 <b>Simulando las 07:30...</b>\n\n"
+            "Ejecutando predicción + brief en background.\n"
+            "Te mando los resultados aquí según vayan llegando.\n"
+            "Puedes seguir usando el bot. ⏳",
+            parse_mode=ParseMode.HTML,
+            reply_markup=_back_keyboard(),
+        )
+        asyncio.create_task(_simulate_730_background(context.bot, chat_id, user))
+        return
+
+    # ── Test de alerta — comprueba que las alertas llegan a tu Telegram ──
+    if data == "confirm:test_alerta":
+        chat_id = query.message.chat_id
         try:
-            loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(None, supervisor.run_daily_brief, STORE_ID)
+            from backend.agents import notifier as _notifier
+            pending = await _loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
+            critical = [a for a in pending if (a.get("priority_score") or 0) >= 85]
+            if critical:
+                a = critical[0]
+                batch = a.get("batches") or {}
+                prod = (batch.get("products") or {})
+                msg = (
+                    f"🔔 <b>TEST DE ALERTA — MermaOps</b>\n\n"
+                    f"Si ves esto, las alertas funcionan correctamente.\n\n"
+                    f"Ejemplo de alerta real:\n"
+                    f"• Producto: <b>{prod.get('name','?')}</b>\n"
+                    f"• Prioridad: {a.get('priority_score',0)}/100 (CRÍTICO)\n"
+                    f"• Acción: {a.get('action_type','?').upper()}"
+                )
+            else:
+                msg = (
+                    "🔔 <b>TEST DE ALERTA — MermaOps</b>\n\n"
+                    "Si ves esto, las alertas funcionan correctamente.\n"
+                    "Ahora mismo no hay productos críticos, pero cuando los haya "
+                    "recibirías este tipo de mensaje automáticamente."
+                )
+            await query.edit_message_text(msg, parse_mode=ParseMode.HTML, reply_markup=_back_keyboard())
         except Exception as e:
-            result = f"Error al generar el brief: {e}"
-        finally:
-            done.set()
-            await typing_task
-
-        # Log Chuwi↔Kuine: brief generado por Kuine a petición de usuario vía Chuwi
-        try:
-            chat_key = str(query.message.chat_id)
-            u_id = str(query.from_user.id)
-            conv_id = _conv_id_cache.get(chat_key) or database.get_active_conversation(STORE_ID, u_id)
-            if not conv_id:
-                conv_id = database.create_agent_conversation(STORE_ID, u_id)
-                _conv_id_cache[chat_key] = conv_id
-            database.log_agent_message(
-                conversation_id=conv_id, store_id=STORE_ID, role="system",
-                content="[coordinación] Chuwi solicitó brief diario a Kuine (supervisor.run_daily_brief)",
-                agent_source="kuine",
-            )
-            database.log_agent_message(
-                conversation_id=conv_id, store_id=STORE_ID, role="assistant",
-                content=result[:2000], tools_used=["run_daily_brief"], agent_source="kuine",
-            )
-        except Exception:
-            pass
-
-        keyboard = _smart_keyboard(result, _is_manager(user))
-        await _safe_edit(query.message, result, reply_markup=keyboard)
+            await query.edit_message_text(f"Error en test: {str(e)[:100]}", reply_markup=_back_keyboard())
         return
 
     # ── Marcar acción completada (legacy) ──
@@ -2555,14 +2189,20 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         try:
             u_id = user.get("id", "") if user else ""
             u_name = user.get("email", "empleado").split("@")[0] if user else "empleado"
-            database.complete_action(action_id, u_id)
+            # Obtener tipo de acción para el employee patterns
+            _pending_all = await _loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
+            _act = next((a for a in _pending_all if str(a.get("id")) == str(action_id)), {})
+            _atype = _act.get("action_type", "revisar")
+            await _loop.run_in_executor(None, database.complete_action, action_id, u_id)
+            # Actualizar patrones del empleado cross-session
+            _update_employee_patterns(user, _atype, datetime.now().hour)
             await query.edit_message_text(
                 f"✅ Acción marcada como completada por {u_name}.\n\nBuen trabajo.",
                 reply_markup=_main_menu_keyboard(_is_manager(user))
             )
         except Exception as e:
             await query.edit_message_text(
-                f"Error al marcar la acción: {e}",
+                "Error al marcar la acción. Inténtalo de nuevo.",
                 reply_markup=_back_keyboard()
             )
         return
@@ -2570,7 +2210,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     # ── Ver tarjeta de detalle de una acción ──
     if data.startswith("action_detail:"):
         action_id = data[14:]
-        pending = database.get_pending_actions(STORE_ID)
+        pending = await _loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
         action = next((a for a in pending if a.get("id") == action_id), None)
         if not action:
             await query.edit_message_text("Esta acción ya no está pendiente.", reply_markup=_back_keyboard())
@@ -2588,9 +2228,37 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         u_name = (user.get("email") or "empleado").split("@")[0] if user else "empleado"
         try:
             # Recuperar info antes de completar
-            pending = database.get_pending_actions(STORE_ID)
+            pending = await _loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
             action = next((a for a in pending if a.get("id") == action_id), None)
-            database.complete_action(action_id, u_id)
+            await _loop.run_in_executor(None, database.complete_action, action_id, u_id)
+
+            # Parar SLA tracking — el empleado ha confirmado la acción
+            try:
+                from backend.agents import notifier as _notifier
+                _notifier.acknowledge_alert(action_id)
+            except Exception:
+                pass
+
+            # Registrar outcome en memoria episódica
+            if action:
+                try:
+                    from backend.core import memory as _mem_mod
+                    _batch = action.get("batches") or {}
+                    _product = (_batch.get("products") or {}) if _batch else {}
+                    _atype = action.get("action_type", "revisar")
+                    _qty = int((_batch.get("quantity") or 0))
+                    _new_price = action.get("new_price")
+                    _cost = float(_product.get("cost") or 0)
+                    _result = {"rebajar": "vendido", "donar": "donado", "retirar": "retirado"}.get(_atype, "completado")
+                    _val = float(_new_price) * _qty if _new_price and _atype == "rebajar" else round(_qty * _cost * 0.35, 2) if _atype == "donar" else 0.0
+                    _mem_mod.record_decision_outcome(
+                        STORE_ID, action_id, _atype,
+                        _product.get("name", "?"),
+                        int(action.get("priority_score") or 0),
+                        _result, _val,
+                    )
+                except Exception:
+                    pass
 
             # Resumen de lo que se hizo
             if action:
@@ -2599,7 +2267,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 name = product.get("name", "Producto")
                 atype = action.get("action_type", "completar")
                 new_price = action.get("new_price")
+                original_price = float(product.get("price") or 0)
+                discount_pct = int(action.get("price_adjustment_pct") or 0)
                 qty = int(batch.get("quantity") or 0)
+                expiry = (batch.get("expiry_date") or "")
                 atype_text = {
                     "rebajar": f"Precio actualizado a {new_price:.2f}€ — etiqueta el estante",
                     "retirar": f"{qty} unidades retiradas — registra en albarán de merma",
@@ -2607,11 +2278,31 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     "revisar": "Revisado y conforme",
                 }.get(atype, "Completada")
                 summary = f"✅ <b>{name}</b>\n{atype_text}"
+
+                # Generar etiqueta PDF de precio cuando es rebajar
+                if atype == "rebajar" and new_price and original_price > 0:
+                    try:
+                        from backend.core.pdf_generator import generate_price_label
+                        import io as _io
+                        label_bytes = generate_price_label(
+                            product_name=name,
+                            original_price=original_price,
+                            new_price=float(new_price),
+                            discount_pct=discount_pct or int((1 - float(new_price)/original_price) * 100),
+                            expiry_date=expiry,
+                        )
+                        await query.message.reply_document(
+                            document=_io.BytesIO(label_bytes),
+                            filename=f"etiqueta_{name[:20].replace(' ','_')}.pdf",
+                            caption=f"🏷️ Etiqueta para imprimir y pegar en el estante de {name}",
+                        )
+                    except Exception as _pe:
+                        logger.debug(f"[label] PDF error: {_pe}")
             else:
                 summary = "✅ Acción completada"
 
             # Mostrar siguiente acción pendiente
-            remaining = database.get_pending_actions(STORE_ID)
+            remaining = await _loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
             if remaining:
                 next_a = remaining[0]
                 next_batch = next_a.get("batches") or {}
@@ -2635,13 +2326,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
             await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
         except Exception as e:
-            await query.edit_message_text(f"Error al completar la acción: {e}", reply_markup=_back_keyboard())
+            await query.edit_message_text("Error al completar la acción. Inténtalo de nuevo.", reply_markup=_back_keyboard())
         return
 
     # ── Donar desde tarjeta de acción (selección de entidad) ──
     if data.startswith("action_donate:"):
         action_id = data[14:]
-        pending = database.get_pending_actions(STORE_ID)
+        pending = await _loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
         action = next((a for a in pending if a.get("id") == action_id), None)
         if not action:
             await query.edit_message_text("Acción no encontrada.", reply_markup=_back_keyboard())
@@ -2681,7 +2372,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         u_id = user.get("id", "") if user else ""
         u_name = (user.get("email") or "empleado").split("@")[0] if user else "empleado"
         try:
-            pending = database.get_pending_actions(STORE_ID)
+            pending = await _loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
             action = next((a for a in pending if a.get("id") == action_id), None)
             batch = (action.get("batches") or {}) if action else {}
             product = (batch.get("products") or {}) if batch else {}
@@ -2690,7 +2381,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             cost = float(product.get("cost") or 0)
             batch_id = (action or {}).get("batch_id", "")
 
-            database.log_donation({
+            donation_data = {
                 "store_id": STORE_ID,
                 "batch_id": batch_id or None,
                 "entity": entity_display,
@@ -2698,11 +2389,25 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 "value_donated": round(qty * cost, 2),
                 "donated_at": datetime.now(timezone.utc).isoformat(),
                 "donated_by": u_name,
-            })
-            database.complete_action(action_id, u_id, notes=f"Donado a {entity_display}")
+            }
+            await _loop.run_in_executor(None, database.log_donation, donation_data)
+            await _loop.run_in_executor(None, lambda: database.complete_action(action_id, u_id, notes=f"Donado a {entity_display}"))
+
+            # SLA ACK + outcome tracking
+            try:
+                from backend.agents import notifier as _notifier
+                _notifier.acknowledge_alert(action_id)
+                from backend.core import memory as _mem_mod
+                _score = int((action or {}).get("priority_score") or 0)
+                _mem_mod.record_decision_outcome(
+                    STORE_ID, action_id, "donar", name, _score,
+                    "donado", round(qty * cost * 0.35, 2),
+                )
+            except Exception:
+                pass
 
             deduccion = round(qty * cost * 0.35, 2)
-            remaining = database.get_pending_actions(STORE_ID)
+            remaining = await _loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
             text = (
                 f"❤️ <b>Donación registrada</b>\n\n"
                 f"Producto: <b>{name}</b>\n"
@@ -2722,7 +2427,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 keyboard = _main_menu_keyboard(_is_manager(user))
             await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
         except Exception as e:
-            await query.edit_message_text(f"Error al registrar donación: {e}", reply_markup=_back_keyboard())
+            await query.edit_message_text("Error al registrar la donación. Inténtalo de nuevo.", reply_markup=_back_keyboard())
         return
 
     # ── Escalar revisión a acción urgente ──
@@ -2730,12 +2435,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         action_id = data[16:]
         u_id = user.get("id", "") if user else ""
         try:
-            database.get_db().table("actions").update({
+            await _loop.run_in_executor(None, lambda: database.get_db().table("actions").update({
                 "action_type": "rebajar",
                 "priority_score": 85,
                 "notes": "Escalado desde revisión — necesita acción urgente",
-            }).eq("id", action_id).execute()
-            pending = database.get_pending_actions(STORE_ID)
+            }).eq("id", action_id).execute())
+            pending = await _loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
             action = next((a for a in pending if a.get("id") == action_id), None)
             if action:
                 card = _format_action_card(action)
@@ -2747,27 +2452,27 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             else:
                 await query.edit_message_text("Actualizado.", reply_markup=_back_keyboard())
         except Exception as e:
-            await query.edit_message_text(f"Error: {e}", reply_markup=_back_keyboard())
+            await query.edit_message_text(_safe_err(e), reply_markup=_back_keyboard())
         return
 
     # ── Rebajar en vez de donar ──
     if data.startswith("action_rebajar_instead:"):
         action_id = data[23:]
         try:
-            pending = database.get_pending_actions(STORE_ID)
+            pending = await _loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
             action = next((a for a in pending if a.get("id") == action_id), None)
             if action:
                 batch = action.get("batches") or {}
                 product = (batch.get("products") or {}) if batch else {}
                 current_price = float(product.get("price") or 0)
                 new_price = round(current_price * 0.5, 2)
-                database.get_db().table("actions").update({
+                await _loop.run_in_executor(None, lambda: database.get_db().table("actions").update({
                     "action_type": "rebajar",
                     "new_price": new_price,
                     "price_adjustment_pct": -50,
                     "notes": "Cambiado de donación a rebaja de precio",
-                }).eq("id", action_id).execute()
-                updated = database.get_pending_actions(STORE_ID)
+                }).eq("id", action_id).execute())
+                updated = await _loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
                 action = next((a for a in updated if a.get("id") == action_id), action)
                 card = _format_action_card(action)
                 keyboard = _action_card_keyboard(action, remaining=len(updated) - 1)
@@ -2775,7 +2480,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             else:
                 await query.edit_message_text("Acción no encontrada.", reply_markup=_back_keyboard())
         except Exception as e:
-            await query.edit_message_text(f"Error: {e}", reply_markup=_back_keyboard())
+            await query.edit_message_text(_safe_err(e), reply_markup=_back_keyboard())
         return
 
     # ── Modo ruta: confirmar acción completada ──
@@ -2786,7 +2491,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             # Marcar como completada
             try:
                 u_id = user.get("id", "") if user else ""
-                database.complete_action(action_id, u_id)
+                await _loop.run_in_executor(None, database.complete_action, action_id, u_id)
                 state["data"]["completed"].append(action_id)
                 state["data"]["current_index"] = state["data"].get("current_index", 0) + 1
             except Exception:
@@ -2809,7 +2514,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 )
             else:
                 _set_conv_state(user_id, "route_active", state["data"])
-                actions = _get_route_actions()
+                actions = await _loop.run_in_executor(None, _get_route_actions)
                 remaining_actions = [a for a in actions if a.get("id") in action_ids[current_idx:]]
                 if remaining_actions:
                     next_action = remaining_actions[0]
@@ -2841,7 +2546,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     reply_markup=_main_menu_keyboard(_is_manager(user))
                 )
             else:
-                actions = _get_route_actions()
+                actions = await _loop.run_in_executor(None, _get_route_actions)
                 remaining = [a for a in actions if a.get("id") in action_ids[current_idx:]]
                 if remaining:
                     next_action = remaining[0]
@@ -2886,18 +2591,21 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             u_name = (user.get("email") or "empleado").split("@")[0] if user else "empleado"
             batch = None
             qty = 5
+            cost = 0.0
             if batch_id:
-                batches = database.get_batches_expiring_soon(STORE_ID, days=3)
+                batches = database.get_batches_expiring_soon(STORE_ID, days=14)
                 batch = next((b for b in batches if b.get("id") == batch_id), None)
                 if batch:
                     qty = int(batch.get("quantity", 5))
+                    p_info = batch.get("products") or {}
+                    cost = float(p_info.get("cost", 0) or 0)
 
             database.log_donation({
                 "store_id": STORE_ID,
                 "batch_id": batch_id or None,
                 "entity": entity_display,
                 "quantity": qty,
-                "value_donated": 0.0,
+                "value_donated": round(qty * cost, 2),
                 "donated_at": datetime.now(timezone.utc).isoformat(),
                 "donated_by": u_name,
             })
@@ -2917,7 +2625,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
         except Exception as e:
             await query.edit_message_text(
-                f"Error al registrar la donación: {e}",
+                "Error al registrar la donación. Inténtalo de nuevo.",
                 reply_markup=_back_keyboard()
             )
         return
@@ -2995,7 +2703,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             # payload = action_id
             action_id = payload
             try:
-                actions = database.get_pending_actions(STORE_ID)
+                actions = await _loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
                 action = next((a for a in actions if a.get("id") == action_id), None)
             except Exception:
                 action = None
@@ -3065,15 +2773,27 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             u_name = user.get("email", "empleado").split("@")[0] if user else "empleado"
 
             try:
-                database.complete_action(action_id, user.get("id", u_name))
-                database.log_donation({
+                donation_cost = 0.0
+                try:
+                    pending_actions = await _loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
+                    matched_action = next((a for a in pending_actions if a.get("id") == action_id), None)
+                    if matched_action:
+                        b_info = (matched_action.get("batches") or {})
+                        p_info = (b_info.get("products") or {}) if b_info else {}
+                        donation_cost = float(p_info.get("cost", 0) or 0)
+                except Exception:
+                    pass
+                await _loop.run_in_executor(None, database.complete_action, action_id, user.get("id", u_name))
+                donation_data_log = {
                     "store_id": STORE_ID,
                     "action_id": action_id,
                     "entity": entity_name,
                     "quantity": quantity,
                     "product_name": product_name,
                     "donated_by": user.get("email", u_name),
-                })
+                    "value_donated": round(quantity * donation_cost, 2),
+                }
+                await _loop.run_in_executor(None, database.log_donation, donation_data_log)
                 _clear_conv_state(user_id)
                 await query.edit_message_text(
                     f"✅ Donación registrada\n\n"
@@ -3086,7 +2806,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 )
             except Exception as e:
                 await query.edit_message_text(
-                    f"Error al registrar la donación: {e}",
+                    "Error al registrar la donación. Inténtalo de nuevo.",
                     reply_markup=_back_keyboard()
                 )
             return
@@ -3101,7 +2821,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     # ── Iniciar modo ruta desde callback ──
     if data == "cmd:iniciar_ruta":
-        actions = _get_route_actions()
+        actions = await _loop.run_in_executor(None, _get_route_actions)
         if not actions:
             await query.edit_message_text(
                 "Sin acciones pendientes para la ruta.",
@@ -3127,6 +2847,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     # ── Demo callbacks (avanzar días / reset) ──
     if data.startswith("demo:"):
+        from backend.core.chuwi_commands import _handle_demo_callback
         await _handle_demo_callback(query, context, data)
         return
 
@@ -3157,7 +2878,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             ])
             await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
         except Exception as e:
-            await query.edit_message_text(f"Error consultando estado: {e}", reply_markup=_back_keyboard())
+            await query.edit_message_text("No pude obtener el estado. Inténtalo de nuevo.", reply_markup=_back_keyboard())
         return
 
     # ── Críticos: lista inline ──
@@ -3190,7 +2911,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             ])
             await query.edit_message_text("\n\n".join(lines), parse_mode=ParseMode.HTML, reply_markup=kb)
         except Exception as e:
-            await query.edit_message_text(f"Error: {e}", reply_markup=_back_keyboard())
+            await query.edit_message_text(_safe_err(e), reply_markup=_back_keyboard())
         return
 
     # ── Agentes: info completa inline ──
@@ -3199,6 +2920,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             [InlineKeyboardButton("📊 Estado tienda ahora", callback_data="cmd:estado")],
             [InlineKeyboardButton("⬅️ Menú", callback_data="cmd:menu")],
         ])
+        from backend.core.chuwi_commands import _AGENTES_TEXT
         await query.edit_message_text(_AGENTES_TEXT, parse_mode=ParseMode.HTML, reply_markup=kb)
         return
 
@@ -3210,28 +2932,33 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.edit_message_text("📊 Generando informe semanal (30-60s)...")
         done = asyncio.Event()
         typing_task = asyncio.create_task(_typing_loop(context.bot, query.message.chat_id, done))
+        pdf_bytes = None
         try:
             loop = asyncio.get_running_loop()
-            pdf_bytes = await loop.run_in_executor(None, _generate_weekly_pdf_bytes)
-            done.set()
-            await typing_task
-            if pdf_bytes:
-                import io as _io
-                fecha = date.today().isoformat()
-                await context.bot.send_document(
-                    chat_id=query.message.chat_id,
-                    document=_io.BytesIO(pdf_bytes),
-                    filename=f"informe_semanal_{fecha}.pdf",
-                    caption=f"📊 <b>Informe Semanal</b> — Super Martínez · Kuine",
-                    parse_mode=ParseMode.HTML,
-                )
-                await query.edit_message_text("✅ Informe semanal enviado.")
-            else:
-                await query.edit_message_text("Error generando el informe semanal.")
+            pdf_bytes = await asyncio.wait_for(
+                loop.run_in_executor(None, __import__('backend.core.chuwi_commands', fromlist=['_generate_weekly_pdf_bytes'])._generate_weekly_pdf_bytes), timeout=120
+            )
+        except asyncio.TimeoutError:
+            pdf_bytes = None
         except Exception as e:
+            logger.error(f"[chuwi] weekly pdf error: {e}", exc_info=True)
+            pdf_bytes = None
+        finally:
             done.set()
             await typing_task
-            await query.edit_message_text(f"Error: {e}")
+        if pdf_bytes:
+            import io as _io
+            fecha = date.today().isoformat()
+            await context.bot.send_document(
+                chat_id=query.message.chat_id,
+                document=_io.BytesIO(pdf_bytes),
+                filename=f"informe_semanal_{fecha}.pdf",
+                caption=f"📊 <b>Informe Semanal</b> — Super Martínez · Kuine",
+                parse_mode=ParseMode.HTML,
+            )
+            await query.edit_message_text("✅ Informe semanal enviado.")
+        else:
+            await query.edit_message_text("No se pudo generar el informe. Inténtalo de nuevo.")
         return
 
     # ── PDF del brief ──
@@ -3239,28 +2966,39 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.edit_message_text("📄 Generando PDF del brief...")
         done = asyncio.Event()
         typing_task = asyncio.create_task(_typing_loop(context.bot, query.message.chat_id, done))
+        pdf_bytes = None
         try:
             loop = asyncio.get_running_loop()
-            pdf_bytes = await loop.run_in_executor(None, _generate_brief_pdf_bytes)
-            done.set()
-            await typing_task
-            if pdf_bytes:
-                import io as _io
-                fecha = date.today().isoformat()
-                await context.bot.send_document(
-                    chat_id=query.message.chat_id,
-                    document=_io.BytesIO(pdf_bytes),
-                    filename=f"brief_{fecha}.pdf",
-                    caption=f"📋 <b>Brief {fecha}</b> — Super Martínez\nGenerado por Kuine · MermaOps",
-                    parse_mode=ParseMode.HTML,
-                )
-                await query.edit_message_text("✅ PDF enviado.")
-            else:
-                await query.edit_message_text("No hay brief disponible para generar PDF.")
+            pdf_bytes = await asyncio.wait_for(
+                loop.run_in_executor(None, __import__('backend.core.chuwi_commands', fromlist=['_generate_brief_pdf_bytes'])._generate_brief_pdf_bytes), timeout=60
+            )
+        except asyncio.TimeoutError:
+            pdf_bytes = None
         except Exception as e:
+            logger.error(f"[chuwi] brief pdf error: {e}", exc_info=True)
+            pdf_bytes = None
+        finally:
             done.set()
             await typing_task
-            await query.edit_message_text(f"Error generando PDF: {e}")
+        if pdf_bytes:
+            import io as _io
+            fecha = date.today().isoformat()
+            await context.bot.send_document(
+                chat_id=query.message.chat_id,
+                document=_io.BytesIO(pdf_bytes),
+                filename=f"brief_{fecha}.pdf",
+                caption=f"📋 <b>Brief {fecha}</b> — Super Martínez\nGenerado por Kuine · MermaOps",
+                parse_mode=ParseMode.HTML,
+            )
+            await query.edit_message_text("✅ PDF enviado.")
+        else:
+            await query.edit_message_text("No hay brief disponible. Genera uno primero desde el dashboard.")
+        return
+
+    # ── Callbacks de alertas de stock ──────────────────────────────────────────
+    if data == "stock_skip":
+        await query.answer("Entendido.")
+        await query.edit_message_reply_markup(reply_markup=None)
         return
 
     # ── Acciones del menú estándar ──
@@ -3316,11 +3054,15 @@ async def _process_barcode(
         except Exception:
             pass
 
-        response = await loop.run_in_executor(
+        raw_scan = await loop.run_in_executor(
             None, supervisor.run_scan, STORE_ID, barcode, (user or {}).get("id", "")
         )
+        response = raw_scan["text"] if isinstance(raw_scan, dict) else raw_scan
+        _scan_thinking = raw_scan.get("thinking_summary", "") if isinstance(raw_scan, dict) else ""
+        if _scan_thinking and len(_scan_thinking) > 10:
+            response = response + f"\n\n🧠 <i>Kuine (extended thinking): {_scan_thinking[:250]}</i>"
     except Exception as e:
-        response = f"Error al analizar el producto: {e}"
+        response = "Error analizando el producto. Inténtalo de nuevo."
         product_image_url = None
     finally:
         done.set()
@@ -3338,6 +3080,37 @@ async def _process_barcode(
 
     keyboard = _scan_result_keyboard(response, barcode)
     await _safe_edit(placeholder, response, reply_markup=keyboard)
+
+
+def _update_employee_patterns(user: Optional[dict], action_type: str, hour: int) -> None:
+    """
+    Actualiza la memoria cross-session de un empleado.
+    Aprende: qué tipo de acciones hace habitualmente, a qué horas trabaja.
+    Se usa para personalizar las respuestas de Chuwi a cada persona.
+    """
+    if not user:
+        return
+    user_id = user.get("id", "")
+    if not user_id:
+        return
+    try:
+        from backend.core import memory as _mem
+        _key = f"employee_patterns_{user_id}"
+        _existing = _mem.recall(STORE_ID, _key) or ""
+
+        # Actualizar resumen con lo nuevo (no guardar toda la historia, solo el patrón)
+        _action_label = {
+            "rebajar": "rebaja precios", "donar": "dona productos",
+            "retirar": "retira productos", "mover": "mueve stock", "revisar": "revisa pasillos",
+        }.get(action_type, "completa acciones")
+        _hour_label = "mañana" if hour < 12 else "tarde" if hour < 18 else "noche"
+        _pattern = f"Habitualmente {_action_label} por la {_hour_label}."
+
+        if _pattern not in _existing:
+            _new = f"{_pattern} {_existing}"[:250]
+            _mem.remember(STORE_ID, _key, _new.strip())
+    except Exception:
+        pass
 
 
 def _build_agent_system(user: Optional[dict]) -> str:
@@ -3361,18 +3134,32 @@ def _build_agent_system(user: Optional[dict]) -> str:
         pass
 
     role_hint = ""
+    employee_memory = ""
     if user:
         role = user.get("role", "staff")
         name = user.get("email", "").split("@")[0] or "empleado"
+        user_id = user.get("id", "")
         if role in ("admin", "manager"):
             role_hint = f"\nHablas con {name}, encargado/gestor. Da respuestas con contexto estratégico y acceso completo."
         else:
             role_hint = f"\nHablas con {name}, personal de tienda. Da instrucciones concretas e inmediatas."
 
+        # Cross-session memory: patrones de este empleado específico
+        if user_id:
+            try:
+                from backend.core import memory as _mem
+                _emp_key = f"employee_patterns_{user_id}"
+                _emp_data = _mem.recall(STORE_ID, _emp_key)
+                if _emp_data:
+                    employee_memory = f"\n\nPATRONES DE {name.upper()}: {_emp_data[:200]}"
+            except Exception:
+                pass
+
     context_block = "\n".join(context_lines)
     return (
         CHUWI_SYSTEM
         + role_hint
+        + employee_memory
         + (f"\n\nCONTEXTO TIENDA AHORA:\n{context_block}" if context_block else "")
         + f"\n\nFecha y hora: {date.today().isoformat()} {datetime.now().strftime('%H:%M')}"
     )
@@ -3437,6 +3224,7 @@ async def _do_unlink_telegram(update: Update, user: Optional[dict]) -> None:
         database.get_db().table("users").update(
             {"telegram_user_id": None}
         ).eq("id", user_id).execute()
+        _invalidate_user_cache(update.effective_user.id)
         await update.message.reply_text(
             f"✅ Cuenta desvinculada, {tg_name}.\n\n"
             "Tu Telegram ya no está conectado a MermaOps.\n"
@@ -3444,112 +3232,42 @@ async def _do_unlink_telegram(update: Update, user: Optional[dict]) -> None:
         )
         logger.info(f"[chuwi] Usuario {user_id} desvinculado de Telegram")
     except Exception as e:
-        await update.message.reply_text(f"Error al desvincular: {e}")
+        await update.message.reply_text("Error al desvincular tu cuenta. Inténtalo de nuevo.")
 
 
 async def _cmd_logout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Desvincula el Telegram del usuario autenticado."""
-    user = _get_user(update.effective_user.id)
+    user = await asyncio.get_running_loop().run_in_executor(None, _get_user, update.effective_user.id)
     await _do_unlink_telegram(update, user)
-
-
-def _upsert_telegram_user(
-    telegram_user_id: str,
-    telegram_username: Optional[str],
-    telegram_chat_id: str,
-    linked_user: Optional[dict],
-) -> None:
-    """Registra o actualiza al usuario de Telegram en la tabla telegram_users."""
-    try:
-        from datetime import datetime
-        now = datetime.utcnow().isoformat()
-        data: dict = {
-            "telegram_user_id": telegram_user_id,
-            "telegram_username": telegram_username,
-            "telegram_chat_id": telegram_chat_id,
-            "last_seen_at": now,
-        }
-        if linked_user:
-            data["user_id"] = linked_user.get("id")
-            data["store_id"] = linked_user.get("store_id") or STORE_ID
-            data["status"] = "linked"
-            data["linked_at"] = now
-        else:
-            data["status"] = "pending"
-        database.get_db().table("telegram_users").upsert(
-            data, on_conflict="telegram_user_id"
-        ).execute()
-    except Exception:
-        pass  # no bloquear el flujo por error de tracking
-
-
-def _persist_conversation_message(
-    chat_key: str,
-    store_id: str,
-    telegram_user_id: str,
-    user_text: str,
-    response: str,
-    tools_used: list[str],
-    intent_tag: str = "pregunta_libre",
-) -> None:
-    """
-    Persiste el turno de conversación en Supabase:
-    - Crea o recupera la conversation_id del cache
-    - Inserta mensaje de usuario y respuesta de Chuwi en agent_messages
-    - Fallback silencioso si Supabase falla
-    """
-    try:
-        conv_id = _conv_id_cache.get(chat_key)
-        if not conv_id:
-            conv_id = database.get_active_conversation(store_id, telegram_user_id)
-        if not conv_id:
-            conv_id = database.create_agent_conversation(store_id, telegram_user_id)
-        _conv_id_cache[chat_key] = conv_id
-
-        database.log_agent_message(
-            conversation_id=conv_id,
-            store_id=store_id,
-            role="user",
-            content=user_text,
-            intent_tag=intent_tag,
-            agent_source="telegram",
-        )
-        database.log_agent_message(
-            conversation_id=conv_id,
-            store_id=store_id,
-            role="assistant",
-            content=response,
-            tools_used=tools_used,
-            intent_tag=intent_tag,
-            agent_source="chuwi",
-        )
-        # Log explícito de coordinación Chuwi → Kuine cuando se delega análisis
-        if "analyze_product" in tools_used:
-            database.log_agent_message(
-                conversation_id=conv_id,
-                store_id=store_id,
-                role="system",
-                content="[coordinación] Chuwi delegó análisis de producto a Kuine (supervisor.run_scan)",
-                agent_source="kuine",
-            )
-        if tools_used:
-            logger.info(f"[chuwi] persisted conv {conv_id[:8]}, tools={tools_used}")
-    except Exception as exc:
-        logger.warning(f"[chuwi] persist_conversation fallback (Supabase no disponible): {exc}")
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Maneja cualquier mensaje de texto — el núcleo conversacional del agente."""
-    tg_user = update.effective_user
-    user = _get_user(tg_user.id)
+    # Solo chats privados
+    if update.effective_chat and update.effective_chat.type != "private":
+        return
 
-    # Registrar/actualizar en telegram_users (tracking de todos los usuarios)
-    _upsert_telegram_user(
-        telegram_user_id=str(tg_user.id),
-        telegram_username=tg_user.username,
-        telegram_chat_id=str(update.effective_chat.id),
-        linked_user=user,
-    )
+    tg_user = update.effective_user
+    _loop = asyncio.get_running_loop()
+
+    # Rate limiting: máximo 1 mensaje cada 2 segundos por usuario
+    import time as _time
+    _now = _time.monotonic()
+    _last = _user_last_msg.get(str(tg_user.id), 0.0)
+    if _now - _last < _RATE_LIMIT_SECONDS:
+        await update.message.reply_text("⏳ Un momento, proceso tu mensaje anterior...")
+        return
+    _user_last_msg[str(tg_user.id)] = _now
+    _cleanup_stale_caches()
+    # _get_user hace una llamada síncrona a Supabase — mover a executor para no bloquear
+    user = await _loop.run_in_executor(None, _get_user, tg_user.id)
+
+    # Registrar/actualizar en telegram_users: fire-and-forget para no bloquear
+    asyncio.ensure_future(_loop.run_in_executor(
+        None, _upsert_telegram_user,
+        str(tg_user.id), tg_user.username,
+        str(update.effective_chat.id), user,
+    ))
 
     if not user:
         tg_id = tg_user.id
@@ -3644,6 +3362,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await _process_barcode(update, context, user, barcode, chat_id)
         return
 
+    # ── Proactive intent trigger detection ──────────────────────────────────
+    # Detecta "avísame cuando X". Si lo encuentra, guarda trigger y responde directamente.
+    # No continúa al loop del agente — evitar doble respuesta.
+    _trigger = detect_proactive_trigger(user_text, user_id, STORE_ID)
+    if _trigger:
+        await update.message.reply_text(
+            f"✅ Listo. Te avisaré cuando: <b>{_trigger['condition'][:100]}</b>\n\n"
+            f"Monitorizo esto automáticamente cada 30 minutos y te mando un DM si se cumple.",
+            parse_mode="HTML",
+            reply_markup=_back_keyboard()
+        )
+        return  # no continuar — la respuesta ya está dada
+
     # ── Fase 2: Clasificación de intención (0 tokens, 0ms) ──
     intent_tag = _classify_intent(user_text)
     intent_context = _build_intent_context(intent_tag, STORE_ID)
@@ -3660,13 +3391,64 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # ── Agente real: Claude decide qué herramientas usar y cómo responder ──
     chat_history = _get_chat_history(chat_key)
-    placeholder = await update.message.reply_text("⌛")
-    await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+    _INTENT_LOADING = {
+        "consulta_acciones":   "⚡ Revisando acciones pendientes...",
+        "consulta_estado":     "📊 Cargando estado de la tienda...",
+        "consulta_brief":      "📋 Leyendo el brief del día...",
+        "consulta_ruta":       "🗺 Generando ruta del día...",
+        "completar_accion":    "✅ Procesando acción...",
+        "consulta_stats":      "📈 Calculando estadísticas...",
+        "consulta_donaciones": "❤️ Cargando datos de donaciones...",
+        "consulta_prediccion": "🔮 Consultando predicción...",
+        "escaneo_producto":    "📸 Analizando producto...",
+        "pregunta_libre":      "💬 Chuwi está pensando...",
+    }
+    _loading_msg = _INTENT_LOADING.get(intent_tag, "⌛ Un momento...")
+    placeholder = await update.message.reply_text(_loading_msg)
 
-    response, tools_used = await _run_agent_loop(
-        context.bot, placeholder, chat_history, user_text, user,
-        intent_tag=intent_tag, intent_context=intent_context,
-    )
+    # Typing indicator continuo mientras el agente trabaja (cada 4s)
+    async def _keep_typing():
+        while True:
+            try:
+                await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+                await asyncio.sleep(4.0)
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                break
+
+    typing_task = asyncio.create_task(_keep_typing())
+
+    try:
+        response, tools_used = await asyncio.wait_for(
+            _run_agent_loop(
+                context.bot, placeholder, chat_history, user_text, user,
+                intent_tag=intent_tag, intent_context=intent_context,
+            ),
+            timeout=55.0,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(f"[chuwi] timeout 55s en agent loop para user={user_id[:8] if user_id else '?'}")
+        response = (
+            "⏱ <b>Tardé demasiado.</b>\n\n"
+            "Kuine está procesando algo complejo. Prueba de nuevo o sé más específico.\n"
+            "<i>Ej: «¿qué acciones hay?» · «muéstrame los críticos»</i>"
+        )
+        tools_used = []
+        retry_kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("🔄 Reintentar", callback_data="cmd:acciones"),
+            InlineKeyboardButton("📋 Brief", callback_data="cmd:brief"),
+        ]])
+        try:
+            await placeholder.edit_text(response, parse_mode=ParseMode.HTML, reply_markup=retry_kb)
+        except Exception:
+            pass
+    finally:
+        typing_task.cancel()
+        try:
+            await typing_task
+        except asyncio.CancelledError:
+            pass
 
     chat_history.append({"role": "user", "content": user_text})
     chat_history.append({"role": "assistant", "content": response})
@@ -3732,7 +3514,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     El empleado manda la foto — Chuwi detecta frescura, daños y fecha visible.
     No necesita barcode. Funciona solo con la imagen.
     """
-    user = _get_user(update.effective_user.id)
+    _loop = asyncio.get_running_loop()
+    user = await _loop.run_in_executor(None, _get_user, update.effective_user.id)
     if not user:
         await update.message.reply_text(
             "Primero debes vincular tu cuenta. Escribe /start."
@@ -3749,24 +3532,46 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         tg_file = await context.bot.get_file(photo.file_id)
         photo_bytes = await tg_file.download_as_bytearray()
 
-        # Caption del mensaje como contexto adicional (si lo hay)
         caption = (update.message.caption or "").strip()
 
         loop = asyncio.get_running_loop()
 
+        # Detectar si es análisis de estantería/sección completa
+        _shelf_keywords = ["pasillo", "sección", "seccion", "lineal", "estantería", "estanteria", "zona", "área", "area"]
+        _is_shelf = any(kw in caption.lower() for kw in _shelf_keywords) or len(photo_bytes) > 400_000
+
         def run_vision():
-            from backend.agents.vision import analyze_from_telegram_file, format_vision_result
-            result = analyze_from_telegram_file(
-                file_bytes=bytes(photo_bytes),
-                product_name=caption or "",
-            )
-            return result, format_vision_result(result)
+            if _is_shelf:
+                from backend.agents.vision import analyze_shelf, format_shelf_result
+                import base64 as _b64
+                _img_b64 = _b64.b64encode(bytes(photo_bytes)).decode()
+                # Extraer pasillo del caption si lo dice
+                _pasillo = ""
+                for word in caption.split():
+                    if word.isdigit():
+                        _pasillo = word
+                        break
+                productos = analyze_shelf(_img_b64, pasillo=_pasillo)
+                return {"_shelf": True, "productos": productos}, format_shelf_result(productos, _pasillo)
+            else:
+                from backend.agents.vision import analyze_from_telegram_file, format_vision_result
+                result = analyze_from_telegram_file(
+                    file_bytes=bytes(photo_bytes),
+                    product_name=caption or "",
+                )
+                return result, format_vision_result(result)
 
         result, formatted = await loop.run_in_executor(None, run_vision)
 
-        # Teclado según acción recomendada
-        action = result.get("action", "revisar")
-        urgency = result.get("urgency", "normal")
+        action = "revisar"
+        urgency = "normal"
+        if result.get("_shelf"):
+            productos = result.get("productos", [])
+            action = "revisar"
+            urgency = "hoy" if any(p.get("urgencia") in ("inmediata", "hoy") for p in productos) else "normal"
+        else:
+            action = result.get("action", "revisar")
+            urgency = result.get("urgency", "normal")
 
         buttons = []
         if action == "rebajar":
@@ -3800,6 +3605,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         })
         _persist_chat_history(chat_key, _compact_history(hist))
 
+        # Actualizar patrones del empleado — usa análisis visual regularmente
+        _update_employee_patterns(user, "revisar", datetime.now().hour)
+
     except Exception as e:
         logger.error(f"[chuwi] Error en análisis visual: {e}", exc_info=True)
         await placeholder.edit_text(
@@ -3808,11 +3616,112 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
 
 
+async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Inline query — el empleado escribe @ChuwiMermaOpsBot <producto> en cualquier chat
+    y recibe en tiempo real el estado de ese producto: urgencia, días restantes y acción recomendada.
+    No requiere abrir el bot. Responde en <2s usando solo datos de BD (sin LLM).
+    """
+    query = update.inline_query
+    if not query:
+        return
+
+    search = (query.query or "").strip().lower()
+    results: list[InlineQueryResultArticle] = []
+
+    try:
+        # Buscar productos que coincidan con el texto
+        batches = database.get_batches_expiring_soon(STORE_ID, days=30)
+
+        matches = [
+            b for b in batches
+            if search == "" or search in (b.get("products") or {}).get("name", "").lower()
+        ][:8]
+
+        if not matches and search:
+            # Nada encontrado
+            results.append(InlineQueryResultArticle(
+                id="noresult",
+                title=f"Sin resultados para '{search}'",
+                description="Prueba con otro nombre de producto",
+                input_message_content=InputTextMessageContent(
+                    f"Kuine: no encontré productos que coincidan con '{search}'."
+                ),
+            ))
+        elif not matches:
+            results.append(InlineQueryResultArticle(
+                id="hint",
+                title="Escribe el nombre de un producto",
+                description="Ej: baguette, leche, pollo...",
+                input_message_content=InputTextMessageContent(
+                    "Escribe @ChuwiMermaOpsBot + nombre del producto para ver su estado."
+                ),
+            ))
+        else:
+            for i, batch in enumerate(matches):
+                product = batch.get("products") or {}
+                name = product.get("name", "Producto")
+                pasillo = product.get("pasillo", "?")
+                qty = batch.get("quantity", 0)
+                exp = batch.get("expiry_date", "")
+                urgency = batch.get("urgency", "normal")
+
+                try:
+                    from datetime import date
+                    days_left = (date.fromisoformat(exp) - date.today()).days if exp else 999
+                except Exception:
+                    days_left = 999
+
+                urgency_icon = {
+                    "critico": "🔴", "alto": "🟡", "normal": "🟢", "caducado": "⚫"
+                }.get(urgency, "⚪")
+
+                if days_left <= 0:
+                    estado = "CADUCADO"
+                    urgency_icon = "⚫"
+                elif days_left <= 2:
+                    estado = f"CRÍTICO — {days_left} día(s)"
+                    urgency_icon = "🔴"
+                elif days_left <= 5:
+                    estado = f"ALTO — {days_left} días"
+                    urgency_icon = "🟡"
+                else:
+                    estado = f"{days_left} días"
+
+                title = f"{urgency_icon} {name}"
+                desc = f"Pasillo {pasillo} | {qty} uds | {estado}"
+                msg = (
+                    f"{urgency_icon} <b>{name}</b>\n"
+                    f"Pasillo {pasillo} | {qty} unidades\n"
+                    f"Caduca: {exp} ({estado})\n"
+                    f"Abre Chuwi para gestionar esta acción."
+                )
+                results.append(InlineQueryResultArticle(
+                    id=f"batch_{i}_{batch.get('id','')[:8]}",
+                    title=title,
+                    description=desc,
+                    input_message_content=InputTextMessageContent(
+                        msg, parse_mode=ParseMode.HTML
+                    ),
+                ))
+    except Exception as e:
+        logger.warning(f"[inline_query] error: {e}")
+        results.append(InlineQueryResultArticle(
+            id="error",
+            title="Error al consultar datos",
+            description="El sistema está procesando. Inténtalo en un momento.",
+            input_message_content=InputTextMessageContent("Kuine no pudo responder. Inténtalo en el chat."),
+        ))
+
+    await query.answer(results, cache_time=30, is_personal=True)
+
+
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Transcribe nota de voz con Google Speech Recognition y la procesa con el agente."""
     tg_user = update.effective_user
     user_id = str(tg_user.id)
-    user = _get_user(tg_user.id)
+    _loop = asyncio.get_running_loop()
+    user = await _loop.run_in_executor(None, _get_user, tg_user.id)
 
     if not user:
         await update.message.reply_text(
@@ -3885,8 +3794,15 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         chat_history.append({"role": "user", "content": f"[Voz] {transcription}"})
         chat_history.append({"role": "assistant", "content": response})
         _persist_chat_history(chat_key, _compact_history(chat_history))
-        await _persist_conversation_message(chat_key, user_id, f"[Voz] {transcription}",
-                                            response, tools_used, intent_tag)
+        _persist_conversation_message(
+            chat_key=chat_key,
+            store_id=STORE_ID,
+            telegram_user_id=user_id,
+            user_text=f"[Voz] {transcription}",
+            response=response,
+            tools_used=tools_used,
+            intent_tag=intent_tag,
+        )
 
         session_id = _session_cache.get(user_id)
         if session_id:
@@ -3896,6 +3812,16 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             except Exception:
                 pass
 
+        # Reflexion Loop: aprende de las voz también (fire-and-forget)
+        if "analyze_product" in tools_used:
+            from backend.core import reflexion as _rfx
+            asyncio.ensure_future(_rfx.async_generate_and_save(
+                STORE_ID, f"[Voz] {transcription}", response
+            ))
+
+        # Actualizar patrones del empleado — usa voz regularmente
+        _update_employee_patterns(user, "revisar", datetime.now().hour)
+
         keyboard = _smart_keyboard(response, _is_manager(user))
         await placeholder.edit_text(
             _md_to_html(f"🎙️ Escuché: {transcription}\n\n{response}"),
@@ -3903,678 +3829,28 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             reply_markup=keyboard,
         )
 
+        # Respuesta de voz TTS — Chuwi responde también con nota de voz
+        try:
+            _tts_client = _get_openai()
+            if _tts_client:
+                import io as _io
+                _tts_resp = _tts_client.audio.speech.create(
+                    model="tts-1",
+                    voice="nova",  # voz femenina, clara, natural
+                    input=response[:500],  # limitar para no generar audio muy largo
+                )
+                _audio_bytes = _io.BytesIO(_tts_resp.content)
+                _audio_bytes.name = "chuwi_response.mp3"
+                await update.message.reply_voice(
+                    voice=_audio_bytes,
+                    caption="🔊 Chuwi también te responde en voz",
+                )
+        except Exception as _tts_e:
+            logger.debug(f"[chuwi_tts] TTS no disponible: {_tts_e}")
+
     except Exception as e:
         logger.error(f"[chuwi] voice error: {e}")
-        await placeholder.edit_text(f"Error procesando el audio: {e}")
-
-
-# ── Nuevos comandos — información del sistema y demo ─────────────────────────
-
-_AGENTES_TEXT = """🤖 <b>LOS 11 AGENTES DE MERMAOPS</b>
-
-<b>KUINE</b> — Orquestador (Claude Opus 4.7)
-El cerebro del sistema. Investiga la tienda con 25 herramientas, razona con adaptive thinking y coordina todo. Funciona solo: 7 cron jobs (07:30, 12:00, 20:00…).
-<i>Demo: /brief genera el análisis completo ahora mismo.</i>
-
-<b>EVALUADOR</b> — Riesgo por producto (Claude Sonnet 4.6)
-Score 0-100 por lote. Para score ≥65: extended thinking con normativa y margen mínimo. Para score ≥90 y >30€: consenso de 3 instancias en paralelo.
-<i>Demo: /criticos muestra los productos con score más alto.</i>
-
-<b>VALIDADOR</b> — Adversarial
-El único agente que puede REVERTIR decisiones. Detecta: precio &lt; coste, CRÍTICO sin acción, FEFO violations. 23 ataques adversariales probados → 100% neutralizados.
-
-<b>CONSENSO</b> — Votación paralela
-3 evaluadores en paralelo para casos extremos (score ≥90 AND valor ≥30€). Árbitro con Claude Opus en empate.
-
-<b>PREDICTOR</b> — Anticipación 7 días
-Combina historial de merma + Open-Meteo (clima) + día de semana. Predice qué va a caducar ANTES de que sea urgente.
-<i>Demo: /prediccion</i>
-
-<b>VISIÓN</b> — Análisis visual (Claude Vision)
-Analiza fotos de productos. Detecta estado, daños, fecha visible. Sin barcode. Manda una foto aquí y funciona solo.
-
-<b>ESG</b> — Impacto ambiental
-CO2 evitado, agua ahorrada, deducción fiscal Ley 49/2002 (35%). Cada donación genera un registro contable.
-<i>Demo: /esg</i>
-
-<b>REPORTERO</b> — Briefs e informes
-Brief apertura (07:30), revisión mediodía (12:00), cierre (20:00). Informe semanal con ROI. Informe mensual para el dueño.
-
-<b>NOTIFICADOR</b> — Telegram inteligente
-Mensajes con botones de acción directa. Donaciones con un toque. Alertas automáticas si crítico lleva >4h sin resolver.
-
-<b>SCANNER</b> — OpenFoodFacts
-Enriquece productos con nombre, imagen y categoría desde la base de datos global de alimentos.
-
-<b>RUTAS</b> — Optimizador de pasillos
-Ruta más eficiente por urgencia + ubicación física. Modo ruta guía al empleado acción por acción.
-<i>Demo: /ruta</i>"""
-
-
-async def _cmd_agentes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Explica cada agente con nombre, modelo, función y cómo demostrar que funciona."""
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📊 Estado tienda ahora", callback_data="cmd:estado")],
-        [InlineKeyboardButton("⬅️ Menú", callback_data="cmd:menu")],
-    ])
-    await update.message.reply_text(
-        _AGENTES_TEXT,
-        parse_mode=ParseMode.HTML,
-        reply_markup=kb,
-    )
-
-
-async def _cmd_kuine(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Estado de Kuine: último brief, próxima ejecución, herramientas disponibles."""
-    user = _get_user(update.effective_user.id)
-    await update.message.reply_text("Consultando estado de Kuine...")
-    try:
-        loop = asyncio.get_running_loop()
-        brief = await loop.run_in_executor(None, database.get_latest_brief, STORE_ID)
-        pending = await loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
-        critical = [a for a in pending if a.get("priority_score", 0) >= 85]
-        alto = [a for a in pending if 65 <= a.get("priority_score", 0) < 85]
-
-        last_brief_date = brief.get("date", "nunca") if brief else "sin brief hoy"
-        last_summary = (brief.get("summary") or "")[:200] if brief else ""
-
-        text = (
-            f"🧠 <b>KUINE — Estado del orquestador</b>\n\n"
-            f"Modelo: Claude Opus 4.7 (adaptive thinking)\n"
-            f"Herramientas disponibles: 25\n"
-            f"Iteraciones máximas por ciclo: 20\n"
-            f"Cron jobs activos: 7\n\n"
-            f"━━━ Último análisis ━━━\n"
-            f"Fecha: {last_brief_date}\n"
-            f"Acciones generadas: {len(pending)} ({len(critical)} CRÍTICAS, {len(alto)} ALTAS)\n"
-        )
-        if last_summary:
-            text += f"\nResumen:\n<i>{last_summary}...</i>\n"
-
-        text += (
-            f"\n━━━ Próximas ejecuciones ━━━\n"
-            f"• 07:30 — Brief apertura\n"
-            f"• 12:00 — Revisión mediodía\n"
-            f"• 20:00 — Cierre del día\n"
-            f"• Cada 30min — Monitor proactivo\n"
-            f"• Cada 2h — Escalación de críticos\n\n"
-            f"Escribe /brief para forzar análisis ahora."
-        )
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Generar brief ahora", callback_data="confirm:runbrief")],
-            [InlineKeyboardButton("📋 Ver acciones", callback_data="cmd:acciones")],
-        ])
-        await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
-    except Exception as e:
-        await update.message.reply_text(f"Error consultando Kuine: {e}")
-
-
-async def _cmd_demo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Controla la simulación temporal de la demo: /demo 2, /demo reset, /demo estado."""
-    user = _get_user(update.effective_user.id)
-    args = context.args or []
-    cmd = args[0].lower() if args else "ayuda"
-
-    if cmd == "reset":
-        await update.message.reply_text("♻️ Reiniciando estado del Super Martínez...")
-        try:
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, lambda: __import__(
-                "backend.data.advance_demo", fromlist=["reset"]
-            ).reset(STORE_ID))
-            await update.message.reply_text(
-                "✅ Estado reiniciado al día de hoy.\n"
-                "Usa /demo 2 para avanzar días y ver cómo Kuine reacciona."
-            )
-        except Exception as e:
-            await update.message.reply_text(f"Error: {e}")
-        return
-
-    try:
-        days = float(cmd)
-    except ValueError:
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("⏩ Avanzar 1 día", callback_data="demo:advance:1")],
-            [InlineKeyboardButton("⏩⏩ Avanzar 3 días", callback_data="demo:advance:3")],
-            [InlineKeyboardButton("♻️ Reset al estado inicial", callback_data="demo:reset")],
-        ])
-        await update.message.reply_text(
-            "🎬 <b>MODO DEMO — Control temporal</b>\n\n"
-            "Simula el paso del tiempo en la tienda. Kuine reacciona automáticamente.\n\n"
-            "Comandos:\n"
-            "• <code>/demo 1</code> — avanza 1 día\n"
-            "• <code>/demo 3</code> — avanza 3 días (aparecen CRÍTICOS)\n"
-            "• <code>/demo reset</code> — vuelve al estado inicial\n\n"
-            "O usa los botones:",
-            parse_mode=ParseMode.HTML,
-            reply_markup=kb,
-        )
-        return
-
-    if days < 0.5 or days > 14:
-        await update.message.reply_text("Usa un número entre 0.5 y 14 días.")
-        return
-
-    msg = await update.message.reply_text(
-        f"⏩ Simulando {days:.0f} día(s) en la tienda...\n"
-        "Kuine actualizará caducidades, creará acciones y enviará mensajes."
-    )
-    done = asyncio.Event()
-    task = asyncio.create_task(_typing_loop(context.bot, update.effective_chat.id, done))
-    try:
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
-            None,
-            lambda: __import__(
-                "backend.data.advance_demo", fromlist=["advance"]
-            ).advance(days, store_id=STORE_ID)
-        )
-        done.set()
-        await task
-        await msg.edit_text(
-            f"✅ <b>Simulación completada: +{days:.0f} días</b>\n\n"
-            f"• Lotes actualizados: {result.get('batches_updated', 0)}\n"
-            f"• Acciones nuevas creadas: {result.get('actions_created', 0)}\n"
-            f"• Acciones completadas (simuladas): {result.get('actions_completed', 0)}\n"
-            f"• Unidades vendidas (simuladas): {result.get('stock_reduced', 0)}\n"
-            f"• Mensajes Telegram enviados: {result.get('telegram_messages_sent', 0)}\n\n"
-            "Usa /estado para ver el nuevo estado de la tienda.",
-            parse_mode=ParseMode.HTML,
-        )
-    except Exception as e:
-        done.set()
-        await task
-        await msg.edit_text(f"Error en la simulación: {e}")
-
-
-async def _cmd_yo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Muestra el perfil del usuario: ID Telegram, vinculación con app, rol."""
-    tg_id = update.effective_user.id
-    tg_name = update.effective_user.first_name or "Usuario"
-    user = _get_user(tg_id)
-
-    if not user:
-        await update.message.reply_text(
-            f"👤 <b>Tu perfil</b>\n\n"
-            f"Nombre: {tg_name}\n"
-            f"ID Telegram: <code>{tg_id}</code>\n"
-            f"Estado: ❌ No vinculado con la app\n\n"
-            "Para vincular:\n"
-            "1. Abre la app → Perfil → Telegram\n"
-            f"2. Pega tu ID: <code>{tg_id}</code>\n"
-            "3. Pulsa Vincular\n\n"
-            "Una vez vinculado tendrás acceso a todas las funciones.",
-            parse_mode=ParseMode.HTML,
-        )
-        return
-
-    role = user.get("role", "staff")
-    role_info = {
-        "admin":   ("👑", "ADMIN",    "Acceso completo — todas las funciones del sistema"),
-        "manager": ("🔑", "ENCARGADO","Acceso completo — proveedores, informes, brief manual"),
-        "staff":   ("👷", "EMPLEADO", "Acciones diarias — ruta, estado, completar acciones"),
-    }.get(role, ("👷", role.upper(), "Personal de tienda"))
-    role_emoji, role_label, role_desc = role_info
-
-    # Mostrar qué puede y qué no puede hacer según su rol
-    if role in ("admin", "manager"):
-        access_lines = (
-            "Tienes acceso a TODO:\n"
-            "- /brief — generar brief manualmente\n"
-            "- /proveedores — ficha de proveedores\n"
-            "- /pedido — pedido semanal\n"
-            "- /esg — impacto CO2 y deducción fiscal\n"
-            "- /prediccion — riesgo a 7 dias\n"
-            "- /demo — simular paso del tiempo"
-        )
-    else:
-        access_lines = (
-            "Tienes acceso a operaciones del dia:\n"
-            "- /estado — semaforo de la tienda\n"
-            "- /acciones — que hacer ahora\n"
-            "- /ruta — ruta guiada por pasillos\n"
-            "- /merma — merma registrada\n"
-            "- /donaciones — impacto social\n"
-            "Necesitas rol encargado para: brief, proveedores, pedido, ESG"
-        )
-
-    await update.message.reply_text(
-        f"┌{'─' * 30}┐\n"
-        f"│  👤  <b>TU PERFIL</b>\n"
-        f"└{'─' * 30}┘\n\n"
-        f"Nombre: <b>{html.escape(tg_name)}</b>\n"
-        f"Email: {html.escape(user.get('email', '?'))}\n"
-        f"ID Telegram: <code>{tg_id}</code>\n"
-        f"Tienda: <code>{STORE_ID}</code>\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Rol: {role_emoji} <b>{role_label}</b>\n"
-        f"<i>{role_desc}</i>\n\n"
-        f"{access_lines}\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"Estado: ✅ Vinculado\n"
-        f"Para desvincular: <code>desconectar telegram</code>",
-        parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("⬅️ Menu", callback_data="cmd:menu"),
-        ]]),
-    )
-
-
-async def _cmd_estado(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Estado de la tienda en tiempo real — funciona sin estar vinculado."""
-    msg = await update.message.reply_text("🔍 Consultando estado de la tienda...")
-    try:
-        loop = asyncio.get_running_loop()
-        pending = await loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
-        batches = await loop.run_in_executor(
-            None, database.get_batches_expiring_soon, STORE_ID, 7
-        )
-        brief = await loop.run_in_executor(None, database.get_latest_brief, STORE_ID)
-
-        critical = [a for a in pending if a.get("priority_score", 0) >= 85]
-        alto = [a for a in pending if 65 <= a.get("priority_score", 0) < 85]
-        total_value = sum(
-            b.get("quantity", 0) * (b.get("products") or {}).get("price", 0)
-            for b in batches
-        )
-
-        if len(critical) >= 3:
-            semaforo = "🔴 ALERTA"
-        elif len(critical) >= 1 or len(alto) >= 3:
-            semaforo = "🟡 ATENCIÓN"
-        else:
-            semaforo = "🟢 NORMAL"
-
-        text = (
-            f"📊 <b>SUPER MARTÍNEZ — Estado actual</b>\n"
-            f"Semáforo: {semaforo}\n\n"
-            f"Acciones pendientes: {len(pending)}\n"
-            f"  🔴 CRÍTICAS: {len(critical)}\n"
-            f"  🟡 ALTAS: {len(alto)}\n"
-            f"  🟢 Resto: {len(pending) - len(critical) - len(alto)}\n\n"
-            f"Lotes próximos a caducar (7d): {len(batches)}\n"
-            f"Valor en riesgo: {total_value:.2f} €\n"
-        )
-        if brief:
-            text += f"\nÚltimo brief: {brief.get('date', '?')}"
-
-        if critical:
-            text += "\n\n━━ CRÍTICOS AHORA ━━"
-            for a in critical[:3]:
-                b = (a.get("batches") or {})
-                p = (b.get("products") or {}) if b else {}
-                text += f"\n• {p.get('name', 'Producto')} | Pasillo {p.get('pasillo', '?')} | {a.get('action_type', '?').upper()}"
-
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📋 Ver todas las acciones", callback_data="cmd:acciones")],
-            [InlineKeyboardButton("🗺 Iniciar ruta del día", callback_data="cmd:iniciar_ruta")],
-            [InlineKeyboardButton("🔄 Actualizar", callback_data="cmd:estado")],
-        ])
-        await msg.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
-    except Exception as e:
-        await msg.edit_text(f"Error consultando estado: {e}")
-
-
-async def _cmd_criticos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Lista de productos críticos (score ≥85) con pasillo y acción exacta."""
-    msg = await update.message.reply_text("🔴 Buscando productos críticos...")
-    try:
-        loop = asyncio.get_running_loop()
-        pending = await loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
-        critical = [a for a in pending if a.get("priority_score", 0) >= 85]
-
-        if not critical:
-            await msg.edit_text(
-                "✅ Sin productos críticos en este momento.\n"
-                "Usa /estado para ver el panorama completo."
-            )
-            return
-
-        lines = [f"🔴 <b>{len(critical)} PRODUCTO(S) CRÍTICO(S)</b>\n"]
-        for i, a in enumerate(critical[:8], 1):
-            b = (a.get("batches") or {})
-            p = (b.get("products") or {}) if b else {}
-            action_type = (a.get("action_type") or "revisar").upper()
-            score = a.get("priority_score", 0)
-            notes = (a.get("notes") or "")[:80]
-            lines.append(
-                f"{i}. <b>{p.get('name', 'Producto')}</b>\n"
-                f"   Pasillo {p.get('pasillo', '?')} | Score {score}/100 | {action_type}\n"
-                f"   {notes}"
-            )
-
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🗺 Iniciar ruta de críticos", callback_data="cmd:iniciar_ruta")],
-            [InlineKeyboardButton("⬅️ Menú", callback_data="cmd:menu")],
-        ])
-        await msg.edit_text("\n\n".join(lines), parse_mode=ParseMode.HTML, reply_markup=kb)
-    except Exception as e:
-        await msg.edit_text(f"Error: {e}")
-
-
-async def _cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Lista completa de comandos con descripción."""
-    user = _get_user(update.effective_user.id)
-    manager = _is_manager(user)
-    base = (
-        "📚 <b>COMANDOS DE CHUWI</b>\n\n"
-        "<b>— Información general —</b>\n"
-        "/start — Bienvenida y vinculación de cuenta\n"
-        "/yo — Tu perfil y estado de vinculación\n"
-        "/estado — Estado de la tienda en tiempo real 🚦\n"
-        "/agentes — Qué hace cada agente de IA\n"
-        "/kuine — Estado de Kuine (el orquestador)\n"
-        "/ayuda — Este mensaje\n\n"
-        "<b>— Operaciones diarias —</b>\n"
-        "/acciones — Lista de acciones pendientes\n"
-        "/criticos — Solo productos con score ≥85\n"
-        "/ruta — Iniciar ruta guiada por pasillos\n"
-        "/scan [código] — Analizar producto por barcode\n"
-        "/brief — Ver el brief de apertura de hoy\n\n"
-        "<b>— Estadísticas —</b>\n"
-        "/merma — Merma en euros (últimos 7 días)\n"
-        "/donaciones — Impacto social de donaciones\n"
-        "/prediccion — Previsión de merma 7 días + clima\n"
-        "/stats — Estadísticas del semáforo general\n"
-    )
-    manager_cmds = (
-        "\n<b>— Solo encargados —</b>\n"
-        "/proveedores — Ficha de proveedores con merma\n"
-        "/esg — Métricas ESG (CO2, agua, deducción fiscal)\n"
-        "/citar [consulta] — Citar normativa alimentaria\n"
-        "/demo [días|reset] — Simular paso del tiempo\n"
-        "/kuine — Estado del orquestador\n"
-        "/costes — Coste IA real y ahorro por prompt caching\n"
-        "/reflexiones — Lecciones aprendidas por el Reflexion Loop\n"
-    )
-    tip = (
-        "\n💡 <b>Tip:</b> También puedes escribir en lenguaje natural.\n"
-        "Ej: \"¿qué hago con las fresas del pasillo 5?\"\n"
-        "O enviar una foto de cualquier producto para analizarlo."
-    )
-    text = base + (manager_cmds if manager else "") + tip
-    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
-
-
-async def _cmd_costes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    /costes — Muestra el coste real de tokens en la sesión actual y el ahorro
-    generado por el prompt caching. Impresionante para la demo del TFM.
-    """
-    user = _get_user(update.effective_user.id)
-    if not _is_manager(user):
-        await update.message.reply_text("🔒 Solo encargados pueden ver los costes del sistema.")
-        return
-
-    stats = llm.get_cost_summary()
-    total   = stats["total_usd"]
-    saved   = stats["saved_usd"]
-    pct     = stats["saving_pct"]
-    calls   = stats["calls"]
-    hits    = stats["cache_hit_pct"]
-    inp_k   = stats["input_tokens"] // 1000
-    out_k   = stats["output_tokens"] // 1000
-    cached_k = stats["cache_read_tokens"] // 1000
-
-    # Extrapolación: si ahorro actual es X, en un mes con ~30× más llamadas...
-    monthly_saved_est = saved * 30 if calls > 0 else 0.0
-
-    lines = [
-        "┌──────────────────────────────────┐",
-        "│  💰  <b>COSTES IA — sesión actual</b>",
-        "└──────────────────────────────────┘",
-        "",
-        f"📊 Llamadas al API:    <b>{calls}</b>",
-        f"✅ Cache hits:         <b>{hits}%</b> de llamadas",
-        "",
-        "━" * 34,
-        f"💸 Coste real:         <b>${total:.4f}</b>",
-        f"🎯 Ahorro por caché:   <b>${saved:.4f}  ({pct}%)</b>",
-        "",
-        f"📥 Tokens entrada:     <b>{inp_k}K</b>",
-        f"📤 Tokens salida:      <b>{out_k}K</b>",
-        f"⚡ Tokens cacheados:   <b>{cached_k}K</b>  (10% del precio normal)",
-        "",
-        "━" * 34,
-        f"📅 Proyección mensual: <b>~${monthly_saved_est:.2f} ahorrado</b>",
-        "",
-        "<i>Prompt caching activo en sistema y herramientas.</i>",
-        "<i>Cache TTL: 5 min · Mín. 1024 tokens para activarse.</i>",
-    ]
-    await update.message.reply_text(
-        "\n".join(lines),
-        parse_mode=ParseMode.HTML,
-        reply_markup=_back_keyboard(),
-    )
-
-
-async def _cmd_reflexiones(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    /reflexiones — Muestra las lecciones operativas que Chuwi ha aprendido
-    de conversaciones anteriores (Reflexion Loop).
-    """
-    user = _get_user(update.effective_user.id)
-    if not _is_manager(user):
-        await update.message.reply_text("🔒 Solo encargados pueden ver las reflexiones del sistema.")
-        return
-
-    from backend.core import reflexion as _reflexion
-    try:
-        lessons = _reflexion.load_reflexions(STORE_ID)
-    except Exception:
-        lessons = []
-
-    if not lessons:
-        await update.message.reply_text(
-            "🧠 <b>Reflexion Loop activo</b>\n\n"
-            "Aún no hay lecciones aprendidas. Chuwi genera reflexiones automáticamente "
-            "después de analizar productos con Kuine.\n\n"
-            "<i>Tip: analiza un producto y vuelve a consultar /reflexiones.</i>",
-            parse_mode=ParseMode.HTML,
-        )
-        return
-
-    items = "\n".join(f"  {i+1}. {l}" for i, l in enumerate(lessons))
-    text = (
-        "┌──────────────────────────────────┐\n"
-        "│  🧠  <b>LECCIONES APRENDIDAS — Chuwi</b>\n"
-        "└──────────────────────────────────┘\n"
-        "\n"
-        f"<b>{len(lessons)} lecciones activas</b> (buffer rotante de 5):\n"
-        "\n"
-        f"{items}\n"
-        "\n"
-        "━" * 34 + "\n"
-        "<i>Generadas por Haiku tras cada análisis de Kuine.</i>\n"
-        "<i>Se usan automáticamente en el próximo mensaje.</i>"
-    )
-    await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=_back_keyboard())
-
-
-# ── PDF helpers ──────────────────────────────────────────────────────────────
-
-def _generate_brief_pdf_bytes() -> bytes | None:
-    """Genera el PDF del brief de hoy. Llamar desde run_in_executor."""
-    try:
-        brief = database.get_latest_brief(STORE_ID)
-        if not brief:
-            return None
-        pending = database.get_pending_actions(STORE_ID)
-        critical_actions = [a for a in pending if (a.get("priority_score") or 0) >= 85]
-        high_actions = [a for a in pending if 65 <= (a.get("priority_score") or 0) < 85]
-        value_at_risk = brief.get("value_at_risk", 0.0) or 0.0
-        from backend.core.pdf_generator import generate_brief_pdf
-        return generate_brief_pdf(
-            brief_text=brief.get("summary", ""),
-            brief_date=brief.get("date", ""),
-            critical_count=len(critical_actions),
-            high_count=len(high_actions),
-            value_at_risk=float(value_at_risk),
-            actions_count=brief.get("actions_count", len(pending)),
-            critical_actions=critical_actions,
-            high_actions=high_actions,
-        )
-    except Exception as e:
-        logger.error(f"[chuwi] _generate_brief_pdf_bytes: {e}")
-        return None
-
-
-def _generate_weekly_pdf_bytes() -> bytes | None:
-    """Genera el PDF del informe semanal. Llamar desde run_in_executor."""
-    try:
-        from backend.core.pdf_generator import generate_weekly_pdf
-        from backend.agents.reporter import generate_weekly_report
-        report_text = generate_weekly_report(STORE_ID)
-        merma_week = database.get_merma_history(STORE_ID, days=7)
-        merma_eur = sum(float(l.get("value_lost", 0)) for l in merma_week)
-        merma_qty = sum(int(l.get("quantity_lost", 0)) for l in merma_week)
-        donations = database.get_donation_stats(STORE_ID, days=7)
-        return generate_weekly_pdf(
-            report_text=report_text,
-            merma_eur=merma_eur,
-            merma_qty=merma_qty,
-            donated_qty=donations.get("total_quantity", 0),
-            donated_value=float(donations.get("total_value_donated", 0)),
-        )
-    except Exception as e:
-        logger.error(f"[chuwi] _generate_weekly_pdf_bytes: {e}")
-        return None
-
-
-async def _cmd_informe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Genera y envía el PDF del brief de hoy."""
-    user = _get_user(update.effective_user.id)
-    if not user:
-        await update.message.reply_text("Primero vincula tu cuenta. Escribe /start.")
-        return
-    if not _is_manager(user):
-        await update.message.reply_text("🔒 El informe PDF es solo para encargados.")
-        return
-
-    placeholder = await update.message.reply_text("📄 Generando PDF del brief...")
-    done = asyncio.Event()
-    task = asyncio.create_task(_typing_loop(context.bot, update.effective_chat.id, done))
-    try:
-        loop = asyncio.get_running_loop()
-        pdf_bytes = await loop.run_in_executor(None, _generate_brief_pdf_bytes)
-        done.set()
-        await task
-        if pdf_bytes:
-            import io as _io
-            fecha = date.today().isoformat()
-            await update.message.reply_document(
-                document=_io.BytesIO(pdf_bytes),
-                filename=f"brief_{fecha}.pdf",
-                caption=(
-                    f"📋 <b>Brief {fecha}</b> — Super Martínez\n"
-                    "Generado por Kuine · MermaOps"
-                ),
-                parse_mode=ParseMode.HTML,
-            )
-            await placeholder.delete()
-        else:
-            await placeholder.edit_text(
-                "❌ No hay brief disponible para hoy.\n"
-                "Genéralo con /brief o espera a las 07:30."
-            )
-    except Exception as e:
-        done.set()
-        await task
-        await placeholder.edit_text(f"Error generando PDF: {e}")
-
-
-async def _cmd_semana(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Genera y envía el PDF del informe semanal."""
-    user = _get_user(update.effective_user.id)
-    if not user:
-        await update.message.reply_text("Primero vincula tu cuenta. Escribe /start.")
-        return
-    if not _is_manager(user):
-        await update.message.reply_text("🔒 El informe semanal PDF es solo para encargados.")
-        return
-
-    placeholder = await update.message.reply_text(
-        "📊 Generando informe semanal... esto puede tardar 30-60 segundos."
-    )
-    done = asyncio.Event()
-    task = asyncio.create_task(_typing_loop(context.bot, update.effective_chat.id, done))
-    try:
-        loop = asyncio.get_running_loop()
-        pdf_bytes = await loop.run_in_executor(None, _generate_weekly_pdf_bytes)
-        done.set()
-        await task
-        if pdf_bytes:
-            import io as _io
-            from datetime import date as _dt
-            fecha = _dt.today().isoformat()
-            await update.message.reply_document(
-                document=_io.BytesIO(pdf_bytes),
-                filename=f"informe_semanal_{fecha}.pdf",
-                caption=(
-                    f"📊 <b>Informe Semanal</b> — Super Martínez\n"
-                    f"Semana del {fecha} · Generado por Kuine · MermaOps"
-                ),
-                parse_mode=ParseMode.HTML,
-            )
-            await placeholder.delete()
-        else:
-            await placeholder.edit_text("❌ Error generando el informe semanal.")
-    except Exception as e:
-        done.set()
-        await task
-        await placeholder.edit_text(f"Error: {e}")
-
-
-# ── Callbacks nuevos para los botones de demo y estado ───────────────────────
-
-async def _handle_demo_callback(
-    query, context: ContextTypes.DEFAULT_TYPE, data: str
-) -> None:
-    """Gestiona demo:advance:N y demo:reset desde botones."""
-    parts = data.split(":")
-    action = parts[1] if len(parts) > 1 else ""
-
-    if action == "reset":
-        await query.edit_message_text("♻️ Reiniciando estado...")
-        try:
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, lambda: __import__(
-                "backend.data.advance_demo", fromlist=["reset"]
-            ).reset(STORE_ID))
-            await query.edit_message_text(
-                "✅ Estado reiniciado.\nUsa /estado para ver el nuevo panorama.",
-            )
-        except Exception as e:
-            await query.edit_message_text(f"Error: {e}")
-        return
-
-    if action == "advance":
-        days = float(parts[2]) if len(parts) > 2 else 1.0
-        await query.edit_message_text(f"⏩ Simulando {days:.0f} día(s)...")
-        done = asyncio.Event()
-        task = asyncio.create_task(_typing_loop(context.bot, query.message.chat_id, done))
-        try:
-            loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(
-                None,
-                lambda: __import__(
-                    "backend.data.advance_demo", fromlist=["advance"]
-                ).advance(days, store_id=STORE_ID)
-            )
-            done.set()
-            await task
-            await query.edit_message_text(
-                f"✅ <b>+{days:.0f} días simulados</b>\n\n"
-                f"Lotes: {result.get('batches_updated', 0)} | "
-                f"Acciones: {result.get('actions_created', 0)} nuevas | "
-                f"Mensajes: {result.get('telegram_messages_sent', 0)}\n\n"
-                "Usa /estado o /criticos para ver el impacto.",
-                parse_mode=ParseMode.HTML,
-            )
-        except Exception as e:
-            done.set()
-            await task
-            await query.edit_message_text(f"Error: {e}")
+        await placeholder.edit_text("No pude procesar el audio. Inténtalo de nuevo.")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -4603,9 +3879,161 @@ async def _post_init(application) -> None:
         BotCommand("logout", "Desvincular cuenta de Telegram"),
         BotCommand("informe", "Descargar brief de hoy en PDF 📄"),
         BotCommand("semana", "Descargar informe semanal en PDF 📊"),
+        BotCommand("pedido", "Sugerencia de pedido semanal (encargado)"),
         BotCommand("costes", "Coste de IA y ahorro por caché (encargado)"),
+        BotCommand("stats", "Estadísticas de uso de IA: tokens, coste, modelos"),
         BotCommand("reflexiones", "Lecciones aprendidas por Chuwi (Reflexion Loop)"),
+        BotCommand("hoy", "Resumen express del día en segundos"),
     ])
+
+
+def chat_direct(
+    message: str,
+    history: list[dict],
+    user: Optional[dict] = None,
+) -> tuple[str, list[str]]:
+    """
+    Chat directo con Chuwi desde la app Flutter (sin Telegram).
+    Usa el mismo loop agéntico con herramientas reales y memoria conversacional.
+    """
+    system_extra = _build_agent_system(user)
+    intent = _classify_intent(message)
+    intent_ctx = _build_intent_context(intent, STORE_ID)
+
+    compact_history = _compact_history(list(history))
+
+    response, tool_trace = llm.run_agentic_loop(
+        prompt=message,
+        tools=CHUWI_TOOLS,
+        tool_executor=lambda name, inp: _execute_tool_sync(name, inp, user),
+        system_extra=system_extra + (f"\n\n{intent_ctx}" if intent_ctx else ""),
+        max_tokens=1024,
+        max_iterations=MAX_AGENT_ITERATIONS,
+        initial_messages=compact_history,
+    )
+
+    tool_names = [
+        t.get("tool") if isinstance(t, dict) else str(t)
+        for t in tool_trace if t is not None
+    ]
+
+    # Update employee cross-session patterns if they completed actions via chat
+    if user and any(t == "complete_action" for t in tool_names):
+        _update_employee_patterns(user, "completar", datetime.now().hour)
+
+    return response, tool_names
+
+
+async def chat_direct_stream(
+    message: str,
+    history: list[dict],
+    user: Optional[dict] = None,
+):
+    """
+    Versión streaming de chat_direct — genera eventos SSE en tiempo real.
+    Cada token de Claude se emite inmediatamente al cliente.
+
+    Eventos emitidos:
+    - {"type": "tool", "name": "...", "label": "..."} — cuando Claude llama una herramienta
+    - {"type": "token", "content": "..."} — cada fragmento de texto generado
+    - {"type": "done", "tools": [...], "full_response": "..."} — al finalizar
+    - {"type": "error", "message": "..."} — si algo falla
+
+    Esto transforma la UX: primer token en <400ms en vez de esperar 5-10s.
+    Patrón producción: Perplexity, Claude, ChatGPT usan SSE para sus chats.
+    """
+    system_extra = _build_agent_system(user)
+    intent = _classify_intent(message)
+    intent_ctx = _build_intent_context(intent, STORE_ID)
+
+    compact_history = _compact_history(list(history))
+    messages = compact_history + [{"role": "user", "content": message}]
+    system_full = system_extra + (f"\n\n{intent_ctx}" if intent_ctx else "")
+
+    client = llm.get_async_client()
+    all_tools_used: list[str] = []
+    full_response = ""
+    iteration = 0
+
+    try:
+        while iteration < MAX_AGENT_ITERATIONS:
+            iteration += 1
+            pending_tools: list[dict] = []
+            current_tool: Optional[dict] = None
+            final_content: list = []
+
+            stream_kwargs = {
+                "model": llm.MODEL,
+                "max_tokens": 1024,
+                "system": llm._cached_system(system_full),
+                "tools": CHUWI_TOOLS,
+                "tool_choice": {"type": "auto"},
+                "messages": messages,
+            }
+
+            async with client.messages.stream(**stream_kwargs) as stream:
+                async for event in stream:
+                    etype = getattr(event, "type", "")
+
+                    if etype == "content_block_start":
+                        block = getattr(event, "content_block", None)
+                        btype = getattr(block, "type", "")
+                        if btype == "tool_use":
+                            current_tool = {"id": block.id, "name": block.name, "input": ""}
+                            label = _TOOL_LABELS.get(block.name, block.name)
+                            yield {"type": "tool", "name": block.name, "label": label}
+
+                    elif etype == "content_block_delta":
+                        delta = getattr(event, "delta", None)
+                        dtype = getattr(delta, "type", "")
+                        if dtype == "text_delta":
+                            token = delta.text
+                            full_response += token
+                            yield {"type": "token", "content": token}
+                        elif dtype == "input_json_delta" and current_tool:
+                            current_tool["input"] += getattr(delta, "partial_json", "")
+
+                    elif etype == "content_block_stop":
+                        if current_tool:
+                            pending_tools.append(current_tool)
+                            current_tool = None
+
+                final_msg = await stream.get_final_message()
+                final_content = list(final_msg.content)
+                stop_reason = final_msg.stop_reason
+
+            if stop_reason != "tool_use" or not pending_tools:
+                break
+
+            # Ejecutar herramientas en paralelo
+            ev_loop = asyncio.get_running_loop()
+
+            async def _exec_one(tc: dict) -> dict:
+                try:
+                    t_input = json.loads(tc["input"]) if tc["input"].strip() else {}
+                except Exception:
+                    t_input = {}
+                res = await ev_loop.run_in_executor(
+                    None, _execute_tool_sync, tc["name"], t_input, user
+                )
+                return {
+                    "type": "tool_result",
+                    "tool_use_id": tc["id"],
+                    "content": json.dumps(res, ensure_ascii=False, default=str),
+                }
+
+            tool_results = list(await asyncio.gather(*[_exec_one(tc) for tc in pending_tools]))
+            all_tools_used.extend(tc["name"] for tc in pending_tools)
+            messages.append({"role": "assistant", "content": final_content})
+            messages.append({"role": "user", "content": tool_results})
+            full_response = ""  # reset buffer for next iteration
+
+    except Exception as e:
+        logger.error(f"[chat_stream] error: {e}")
+        yield {"type": "error", "message": "Error procesando la respuesta. Inténtalo de nuevo."}
+        return
+
+    yield {"type": "done", "tools": all_tools_used, "full_response": full_response}
 
 
 def run() -> None:
@@ -4618,26 +4046,26 @@ def run() -> None:
     app.add_handler(CommandHandler("menu", handle_menu))
 
     async def handle_tour(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-        user = _get_user(update.effective_user.id)
+        user = await asyncio.get_running_loop().run_in_executor(None, _get_user, update.effective_user.id)
         await _action_tour(update, ctx, user, is_callback=False)
 
     async def handle_ruta(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-        user = _get_user(update.effective_user.id)
+        user = await asyncio.get_running_loop().run_in_executor(None, _get_user, update.effective_user.id)
         await _start_route_mode(update, ctx, user)
 
     app.add_handler(CommandHandler("tour", handle_tour))
     app.add_handler(CommandHandler("ruta", handle_ruta))
 
     async def handle_donar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-        user = _get_user(update.effective_user.id)
+        user = await asyncio.get_running_loop().run_in_executor(None, _get_user, update.effective_user.id)
         await _action_donar_flow(update, ctx, user, is_callback=False)
 
     async def handle_esg(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-        user = _get_user(update.effective_user.id)
+        user = await asyncio.get_running_loop().run_in_executor(None, _get_user, update.effective_user.id)
         await _action_esg(update, ctx, user, is_callback=False)
 
     async def handle_prediccion(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-        user = _get_user(update.effective_user.id)
+        user = await asyncio.get_running_loop().run_in_executor(None, _get_user, update.effective_user.id)
         await _action_prediccion(update, ctx, user, is_callback=False)
 
     app.add_handler(CommandHandler("donar", handle_donar))
@@ -4645,28 +4073,28 @@ def run() -> None:
     app.add_handler(CommandHandler("prediccion", handle_prediccion))
 
     async def handle_merma(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-        user = _get_user(update.effective_user.id)
+        user = await asyncio.get_running_loop().run_in_executor(None, _get_user, update.effective_user.id)
         await _action_merma(update, ctx, user, is_callback=False)
 
     async def handle_donaciones(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-        user = _get_user(update.effective_user.id)
+        user = await asyncio.get_running_loop().run_in_executor(None, _get_user, update.effective_user.id)
         await _action_donaciones(update, ctx, user, is_callback=False)
 
     async def handle_proveedores(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-        user = _get_user(update.effective_user.id)
+        user = await asyncio.get_running_loop().run_in_executor(None, _get_user, update.effective_user.id)
         await _action_proveedores(update, ctx, user, is_callback=False)
 
     async def handle_brief(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-        user = _get_user(update.effective_user.id)
+        user = await asyncio.get_running_loop().run_in_executor(None, _get_user, update.effective_user.id)
         await _action_brief(update, ctx, user, is_callback=False)
 
     async def handle_acciones(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-        user = _get_user(update.effective_user.id)
+        user = await asyncio.get_running_loop().run_in_executor(None, _get_user, update.effective_user.id)
         await _action_acciones(update, ctx, user, is_callback=False)
 
     async def handle_scan_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         """Permite /scan 8410031001001 directamente como comando Telegram."""
-        user = _get_user(update.effective_user.id)
+        user = await asyncio.get_running_loop().run_in_executor(None, _get_user, update.effective_user.id)
         if not user:
             await update.message.reply_text(
                 "Para usar MermaOps necesitas vincular tu cuenta. Escribe /start."
@@ -4685,9 +4113,49 @@ def run() -> None:
         await _process_barcode(update, ctx, user, barcode)
 
     async def handle_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-        user = _get_user(update.effective_user.id)
+        user = await asyncio.get_running_loop().run_in_executor(None, _get_user, update.effective_user.id)
         await _action_stats(update, ctx, user, is_callback=False)
 
+    async def handle_hoy(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        """Resumen express del día: sin LLM, solo BD, responde en <1s."""
+        user = await asyncio.get_running_loop().run_in_executor(None, _get_user, update.effective_user.id)
+        if not user:
+            await update.message.reply_text("Vincula tu cuenta primero con /start.")
+            return
+        try:
+            pending = database.get_pending_actions(STORE_ID)
+            criticos = [a for a in pending if (a.get("priority_score") or 0) >= 85]
+            altos = [a for a in pending if 65 <= (a.get("priority_score") or 0) < 85]
+            semaforo = "🔴" if len(criticos) >= 5 else "🟡" if len(criticos) >= 2 else "🟢"
+
+            lines = [
+                f"{semaforo} <b>Estado del día — {date.today().isoformat()}</b>\n",
+                f"🔴 Críticos: <b>{len(criticos)}</b>",
+                f"🟡 Altos: <b>{len(altos)}</b>",
+                f"📋 Total pendiente: <b>{len(pending)}</b>",
+            ]
+            if criticos:
+                lines.append("\n<b>Más urgentes:</b>")
+                for a in criticos[:3]:
+                    batch = a.get("batches") or {}
+                    prod = (batch.get("products") or {})
+                    name = prod.get("name", "Producto")
+                    pasillo = prod.get("pasillo", "?")
+                    score = a.get("priority_score", 0)
+                    lines.append(f"  • {name} | Pasillo {pasillo} | {score}/100")
+
+            lines.append("\nUsa /acciones para ver la lista completa.")
+            keyboard = InlineKeyboardMarkup([[
+                InlineKeyboardButton("📋 Ver acciones", callback_data="cmd:acciones"),
+                InlineKeyboardButton("🗺 Ruta del día", callback_data="cmd:ruta"),
+            ]])
+            await update.message.reply_text(
+                "\n".join(lines), parse_mode=ParseMode.HTML, reply_markup=keyboard
+            )
+        except Exception as e:
+            await update.message.reply_text(f"Error: {e}")
+
+    app.add_handler(CommandHandler("hoy", handle_hoy))
     app.add_handler(CommandHandler("stats", handle_stats))
     app.add_handler(CommandHandler("merma", handle_merma))
     app.add_handler(CommandHandler("donaciones", handle_donaciones))
@@ -4697,30 +4165,40 @@ def run() -> None:
     app.add_handler(CommandHandler("scan", handle_scan_cmd))
 
     async def handle_citar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-        user = _get_user(update.effective_user.id)
+        user = await asyncio.get_running_loop().run_in_executor(None, _get_user, update.effective_user.id)
         args = ctx.args or []
         await _action_citar(update, ctx, user, is_callback=False, cmd_args=args)
 
     app.add_handler(CommandHandler("citar", handle_citar))
 
-    # Comandos nuevos
-    app.add_handler(CommandHandler("agentes", _cmd_agentes))
-    app.add_handler(CommandHandler("kuine", _cmd_kuine))
-    app.add_handler(CommandHandler("demo", _cmd_demo))
-    app.add_handler(CommandHandler("yo", _cmd_yo))
-    app.add_handler(CommandHandler("estado", _cmd_estado))
-    app.add_handler(CommandHandler("criticos", _cmd_criticos))
-    app.add_handler(CommandHandler("ayuda", _cmd_ayuda))
+    async def handle_pedido(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        """Sugerencia de pedido semanal para encargados."""
+        user = await asyncio.get_running_loop().run_in_executor(None, _get_user, update.effective_user.id)
+        await _action_pedido(update, ctx, user, is_callback=False)
+
+    app.add_handler(CommandHandler("pedido", handle_pedido))
+
+    # Comandos informativos y de sistema — definidos en chuwi_commands.py
+    # Import lazy para evitar circularidad (chuwi_commands importa de chuwi en runtime)
+    from backend.core import chuwi_commands as _cmds
+    app.add_handler(CommandHandler("agentes", _cmds._cmd_agentes))
+    app.add_handler(CommandHandler("kuine", _cmds._cmd_kuine))
+    app.add_handler(CommandHandler("demo", _cmds._cmd_demo))
+    app.add_handler(CommandHandler("yo", _cmds._cmd_yo))
+    app.add_handler(CommandHandler("estado", _cmds._cmd_estado))
+    app.add_handler(CommandHandler("criticos", _cmds._cmd_criticos))
+    app.add_handler(CommandHandler("ayuda", _cmds._cmd_ayuda))
     app.add_handler(CommandHandler("logout", _cmd_logout))
-    app.add_handler(CommandHandler("informe", _cmd_informe))
-    app.add_handler(CommandHandler("semana", _cmd_semana))
-    app.add_handler(CommandHandler("costes", _cmd_costes))
-    app.add_handler(CommandHandler("reflexiones", _cmd_reflexiones))
+    app.add_handler(CommandHandler("informe", _cmds._cmd_informe))
+    app.add_handler(CommandHandler("semana", _cmds._cmd_semana))
+    app.add_handler(CommandHandler("costes", _cmds._cmd_costes))
+    app.add_handler(CommandHandler("reflexiones", _cmds._cmd_reflexiones))
 
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    app.add_handler(InlineQueryHandler(handle_inline_query))
 
     logger.info("[chuwi] Agente activo. Esperando mensajes en Telegram...")
     app.run_polling(drop_pending_updates=True)

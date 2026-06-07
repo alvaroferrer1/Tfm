@@ -1,6 +1,10 @@
 """
 Knowledge base — normativa de seguridad alimentaria para decisiones de agentes.
-Búsqueda por keywords. Soporta Citations API de Anthropic para trazabilidad completa.
+
+IMPLEMENTACIÓN ACTUAL: búsqueda por keywords sobre 12 documentos en memoria Python.
+DISEÑO FUTURO: interfaz compatible con pgvector (tabla knowledge_base en Supabase, VECTOR 1536).
+La interfaz pública (query, get_context_for_decision) NO cambia al activar pgvector.
+Soporta Citations API de Anthropic para trazabilidad completa.
 """
 from __future__ import annotations
 
@@ -153,24 +157,37 @@ _FOOD_SAFETY_KB: list[dict] = [
 
 def query(query_text: str, top_k: int = 3) -> list[str]:
     """
-    Búsqueda semántica por keywords en la base de conocimiento local.
-    Devuelve los fragmentos más relevantes como lista de strings.
-    Si pgvector está disponible en el futuro, esta función se actualiza sin cambiar la interfaz.
+    Búsqueda por keywords en la base de conocimiento.
+    Usa la tabla knowledge_base de Supabase si está disponible (con datos reales).
+    Fallback a los 12 documentos en memoria si Supabase no responde.
+    Interfaz compatible con futura migración a pgvector.
     """
+    # Intentar Supabase primero (datos reales ya poblados)
+    try:
+        from backend.core.database import get_db
+        res = get_db().table("knowledge_base").select("content, category").execute()
+        if res.data:
+            db_kb = [{"content": r["content"], "category": r.get("category", ""), "keywords": []} for r in res.data]
+            return _keyword_score(query_text, db_kb, top_k)
+    except Exception:
+        pass  # fallback al KB en memoria
+
+    return _keyword_score(query_text, _FOOD_SAFETY_KB, top_k)
+
+
+def _keyword_score(query_text: str, kb: list[dict], top_k: int) -> list[str]:
     q_lower = query_text.lower()
     scored: list[tuple[int, dict]] = []
 
-    for entry in _FOOD_SAFETY_KB:
+    for entry in kb:
         score = 0
-        for kw in entry["keywords"]:
+        for kw in entry.get("keywords", []):
             if kw in q_lower:
                 score += 2
-        # Partial match on category name
-        if entry["category"].replace("_", " ") in q_lower:
+        if entry.get("category", "").replace("_", " ") in q_lower:
             score += 3
-        # Any word in the query matches content
         for word in q_lower.split():
-            if len(word) > 4 and word in entry["content"].lower():
+            if len(word) > 4 and word in entry.get("content", "").lower():
                 score += 1
         if score > 0:
             scored.append((score, entry))

@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MermaOps — Presentación TFM</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --green:#10B981;--green2:#059669;--green3:#34D399;
+  --amber:#F59E0B;--red:#EF4444;
+  --white:#FFF;--gray:#9CA3AF;--dim:#374151;
+  --dark:#111827;--darker:#0D1117;
+}
+html,body{width:100%;height:100%;background:#000;overflow:hidden;font-family:'Inter',sans-serif}
+#stage{position:fixed;inset:0;background:#000;overflow:hidden}
+#frame{
+  position:absolute;top:50%;left:50%;
+  transform:translate(-50%,-50%);
+  width:min(100vw,calc(100vh*16/9));
+  height:min(100vh,calc(100vw*9/16));
+  background:#000;overflow:hidden
+}
+canvas#bg{position:absolute;inset:0;pointer-events:none;z-index:0}
+.slide{
+  position:absolute;inset:0;
+  display:flex;flex-direction:column;
+  align-items:center;justify-content:center;
+  opacity:0;pointer-events:none;
+  transition:opacity .85s cubic-bezier(.4,0,.2,1);
+  padding:4% 8%;z-index:1
+}
+.slide.active{opacity:1;pointer-events:auto}
+#progress{
+  position:absolute;bottom:0;left:0;height:2px;
+  background:linear-gradient(90deg,var(--green),var(--green3));
+  width:0%;z-index:100;
+  box-shadow:0 0 10px rgba(16,185,129,.7)
+}
+#counter{
+  position:absolute;bottom:12px;right:2.5%;
+  color:var(--dim);font-size:clamp(9px,.9vw,13px);
+  font-weight:500;letter-spacing:.1em;z-index:100
+}
+#playbtn{
+  position:absolute;top:12px;right:2.5%;z-index:100;
+  background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);
+  color:var(--gray);font-size:clamp(9px,.85vw,12px);font-family:'Inter',sans-serif;
+  padding:.35em 1em;border-radius:20px;cursor:pointer;letter-spacing:.05em
+}
+#logo-badge{
+  position:absolute;top:12px;left:2.5%;z-index:100;
+  color:var(--green);font-size:clamp(9px,.85vw,13px);
+  font-weight:700;letter-spacing:.12em;opacity:.7
+}
+
+/* ── Typography ── */
+.eyebrow{
+  color:var(--green);font-size:clamp(9px,1vw,15px);
+  font-weight:600;letter-spacing:.25em;text-transform:uppercase;
+  margin-bottom:clamp(8px,2vh,18px)
+}
+.hero{
+  color:#fff;font-size:clamp(28px,5.5vw,88px);
+  font-weight:800;line-height:1.06;letter-spacing:-.03em;text-align:center
+}
+.hero .g{color:var(--green)}
+.hero .a{color:var(--amber)}
+.sub{
+  color:var(--gray);font-size:clamp(11px,1.4vw,22px);
+  font-weight:400;line-height:1.65;text-align:center;
+  max-width:72%;margin-top:clamp(10px,2.2vh,24px)
+}
+.divider{
+  width:clamp(28px,4vw,56px);height:2px;
+  background:linear-gradient(90deg,transparent,var(--green),transparent);
+  margin:clamp(14px,2.5vh,28px) auto
+}
+.logo-big{
+  font-size:clamp(34px,7.5vw,120px);
+  font-weight:900;letter-spacing:-.04em;color:#fff
+}
+.logo-big span{color:var(--green)}
+.badges{
+  display:flex;flex-wrap:wrap;gap:clamp(5px,.9vw,11px);
+  justify-content:center;margin-top:clamp(10px,2vh,22px)
+}
+.badge{
+  background:rgba(16,185,129,.1);
+  border:1px solid rgba(16,185,129,.28);
+  color:var(--green3);
+  font-size:clamp(7px,.82vw,12px);font-weight:600;
+  padding:.38em .95em;border-radius:20px;letter-spacing:.04em
+}
+.kpi-row{
+  display:flex;gap:clamp(14px,3.5vw,56px);
+  justify-content:center;align-items:flex-end;
+  margin-top:clamp(14px,2.8vh,36px)
+}
+.kpi{text-align:center}
+.kpi-num{
+  color:#fff;font-size:clamp(22px,4.2vw,68px);
+  font-weight:900;letter-spacing:-.03em;line-height:1
+}
+.kpi-num .u{font-size:.5em;font-weight:500;color:var(--green)}
+.kpi-label{
+  color:var(--gray);font-size:clamp(8px,.9vw,13px);
+  font-weight:500;letter-spacing:.08em;text-transform:uppercase;margin-top:.35em
+}
+.timeline{
+  display:flex;flex-direction:column;gap:clamp(7px,1.4vh,16px);
+  width:78%;margin-top:clamp(8px,1.8vh,18px)
+}
+.tl-item{display:flex;align-items:flex-start;gap:clamp(9px,1.8vw,22px)}
+.tl-dot{
+  width:clamp(7px,.9vw,11px);height:clamp(7px,.9vw,11px);
+  background:var(--green);border-radius:50%;flex-shrink:0;margin-top:.35em;
+  box-shadow:0 0 7px var(--green)
+}
+.tl-text{color:var(--gray);font-size:clamp(9px,1vw,15px);line-height:1.5}
+.tl-text strong{color:#fff}
+.agent-grid{
+  display:grid;grid-template-columns:repeat(4,1fr);
+  gap:clamp(5px,1.1vw,14px);width:88%;margin-top:clamp(10px,1.8vh,20px)
+}
+.agent-card{
+  background:rgba(255,255,255,.035);
+  border:1px solid rgba(16,185,129,.18);
+  border-radius:9px;padding:clamp(7px,1.1vw,13px);
+  text-align:center;transition:border-color .3s,background .3s
+}
+.agent-card.lit{
+  background:rgba(16,185,129,.08);
+  border-color:rgba(16,185,129,.5);
+  box-shadow:0 0 18px rgba(16,185,129,.12)
+}
+.agent-icon{font-size:clamp(13px,1.7vw,22px);margin-bottom:.28em}
+.agent-name{color:#fff;font-size:clamp(8px,.85vw,12px);font-weight:600;letter-spacing:.03em}
+.agent-role{color:var(--gray);font-size:clamp(6px,.7vw,10px);margin-top:.25em}
+
+/* ── Slide backgrounds ── */
+.bg-pure{background:#000}
+.bg-radial{background:radial-gradient(ellipse 70% 58% at 50% 50%,#091810 0%,#000 100%)}
+.bg-amber{background:radial-gradient(ellipse 60% 48% at 50% 50%,#140e00 0%,#000 100%)}
+.bg-grid{background:#000;background-image:linear-gradient(rgba(16,185,129,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(16,185,129,.025) 1px,transparent 1px);background-size:36px 36px}
+
+/* ── Animations ── */
+@keyframes fadeUp{from{opacity:0;transform:translateY(28px)}to{opacity:1;transform:translateY(0)}}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes scaleIn{from{opacity:0;transform:scale(.84)}to{opacity:1;transform:scale(1)}}
+@keyframes glow{0%,100%{text-shadow:0 0 40px rgba(16,185,129,.35)}50%{text-shadow:0 0 80px rgba(16,185,129,.7),0 0 120px rgba(16,185,129,.25)}}
+
+.slide.active .anim-up{animation:fadeUp .65s cubic-bezier(.4,0,.2,1) both}
+.slide.active .anim-up:nth-child(2){animation-delay:.12s}
+.slide.active .anim-up:nth-child(3){animation-delay:.26s}
+.slide.active .anim-up:nth-child(4){animation-delay:.42s}
+.slide.active .anim-up:nth-child(5){animation-delay:.58s}
+.slide.active .anim-fade{animation:fadeIn .75s ease both}
+.slide.active .anim-scale{animation:scaleIn .55s cubic-bezier(.4,0,.2,1) both}
+.anim-glow{animation:glow 2.8s ease-in-out infinite}
+</style>
+</head>
+<body>
+<div id="stage"><div id="frame">
+<canvas id="bg"></canvas>
+
+<!-- S1: Apertura impacto -->
+<div class="slide bg-pure" id="s1">
+  <div class="hero anim-up" style="font-size:clamp(32px,7vw,115px);letter-spacing:-.04em">
+    12 millones<br>de toneladas.
+  </div>
+  <div class="sub anim-up">Comida que se desecha cada año solo en España.</div>
+  <div class="divider anim-fade"></div>
+  <div class="sub anim-up" style="color:var(--green);font-weight:600;margin-top:0">
+    193.000 millones de euros perdidos.
+  </div>
+</div>
+
+<!-- S2: El problema -->
+<div class="slide bg-radial" id="s2">
+  <div class="eyebrow anim-up">El problema real</div>
+  <div class="hero anim-up">
+    Los supermercados<br>no pueden ver<br><span class="g">lo que está pasando</span>.
+  </div>
+  <div class="sub anim-up">
+    Sin datos en tiempo real. Sin IA. Sin decisiones automáticas.<br>
+    Solo etiquetas de papel y experiencia humana.
+  </div>
+</div>
+
+<!-- S3: El cambio -->
+<div class="slide bg-pure" id="s3">
+  <div class="hero anim-up" style="font-size:clamp(38px,8vw,128px)">Hasta hoy.</div>
+  <div class="divider anim-fade"></div>
+  <div class="logo-big anim-scale anim-glow">Merma<span>Ops</span></div>
+  <div class="sub anim-up" style="margin-top:clamp(6px,1.5vh,16px)">
+    Sistema multi-agente de IA para reducción de merma alimentaria.
+  </div>
+</div>
+
+<!-- S4: Qué es -->
+<div class="slide bg-radial" id="s4">
+  <div class="eyebrow anim-up">La solución</div>
+  <div class="hero anim-up">IA que <span class="g">actúa</span>.<br>No que advierte.</div>
+  <div class="badges anim-up">
+    <span class="badge">🤖 12 Agentes IA</span>
+    <span class="badge">⚡ Tiempo real</span>
+    <span class="badge">📱 App + Telegram</span>
+    <span class="badge">🧠 Claude API</span>
+    <span class="badge">🏪 Supabase</span>
+    <span class="badge">✅ 848 tests</span>
+  </div>
+  <div class="sub anim-up">Detecta, evalúa, decide y notifica — sin intervención humana.</div>
+</div>
+
+<!-- S5: Agentes -->
+<div class="slide bg-grid" id="s5">
+  <div class="eyebrow anim-up">Arquitectura multi-agente</div>
+  <div class="agent-grid anim-fade" id="agentGrid">
+    <div class="agent-card"><div class="agent-icon">🧠</div><div class="agent-name">Kuine</div><div class="agent-role">Orquestador · Opus</div></div>
+    <div class="agent-card"><div class="agent-icon">💬</div><div class="agent-name">Chuwi</div><div class="agent-role">Telegram AI · Sonnet</div></div>
+    <div class="agent-card"><div class="agent-icon">📊</div><div class="agent-name">Evaluador</div><div class="agent-role">Score 0-100 · Sonnet</div></div>
+    <div class="agent-card"><div class="agent-icon">🔀</div><div class="agent-name">Fork-Merge</div><div class="agent-role">Decisión paralela</div></div>
+    <div class="agent-card"><div class="agent-icon">🛡</div><div class="agent-name">Validador</div><div class="agent-role">23 ataques bloqueados</div></div>
+    <div class="agent-card"><div class="agent-icon">🤝</div><div class="agent-name">Consenso</div><div class="agent-role">3 instancias paralelas</div></div>
+    <div class="agent-card"><div class="agent-icon">🔮</div><div class="agent-name">Predictor</div><div class="agent-role">Clima + historial</div></div>
+    <div class="agent-card"><div class="agent-icon">📷</div><div class="agent-name">Visión</div><div class="agent-role">Análisis de foto</div></div>
+    <div class="agent-card"><div class="agent-icon">💰</div><div class="agent-name">Precio</div><div class="agent-role">Descuento óptimo</div></div>
+    <div class="agent-card"><div class="agent-icon">📦</div><div class="agent-name">Stock</div><div class="agent-role">FEFO automático</div></div>
+    <div class="agent-card"><div class="agent-icon">🔔</div><div class="agent-name">Notificador</div><div class="agent-role">Alertas SLA</div></div>
+    <div class="agent-card"><div class="agent-icon">📋</div><div class="agent-name">Reportero</div><div class="agent-role">Briefs diarios</div></div>
+  </div>
+</div>
+
+<!-- S6: Flujo diario -->
+<div class="slide bg-radial" id="s6">
+  <div class="eyebrow anim-up">Un día en MermaOps</div>
+  <div class="hero anim-up" style="font-size:clamp(20px,3.2vw,52px)">De la caducidad<br>a la acción en <span class="g">segundos</span>.</div>
+  <div class="timeline anim-up">
+    <div class="tl-item"><div class="tl-dot"></div><div class="tl-text"><strong>07:00</strong> — Predictor analiza clima y stock. Kuine recibe contexto completo.</div></div>
+    <div class="tl-item"><div class="tl-dot"></div><div class="tl-text"><strong>07:28</strong> — Chuwi saluda al encargado con semáforo crítico en Telegram.</div></div>
+    <div class="tl-item"><div class="tl-dot"></div><div class="tl-text"><strong>07:30</strong> — Brief automático: Evaluador + Fork-Merge + Validador deciden.</div></div>
+    <div class="tl-item"><div class="tl-dot"></div><div class="tl-text"><strong>Continuo</strong> — Alertas proactivas, SLA tracking, aprendizaje episódico.</div></div>
+    <div class="tl-item"><div class="tl-dot"></div><div class="tl-text"><strong>20:00</strong> — Retrospectiva: Kuine reflexiona y aprende para mañana.</div></div>
+  </div>
+</div>
+
+<!-- S7: Números -->
+<div class="slide bg-pure" id="s7">
+  <div class="eyebrow anim-up">Resultados</div>
+  <div class="hero anim-up" style="font-size:clamp(18px,3vw,48px)">Construido para <span class="g">producción</span>.</div>
+  <div class="kpi-row anim-up">
+    <div class="kpi"><div class="kpi-num"><span id="c1">0</span></div><div class="kpi-label">Tests pasando</div></div>
+    <div class="kpi"><div class="kpi-num"><span id="c2">0</span></div><div class="kpi-label">Agentes activos</div></div>
+    <div class="kpi"><div class="kpi-num"><span id="c3">0</span><span class="u">%</span></div><div class="kpi-label">Ataques bloqueados</div></div>
+    <div class="kpi"><div class="kpi-num"><span id="c4">0</span><span class="u">s</span></div><div class="kpi-label">Tiempo análisis</div></div>
+  </div>
+  <div class="sub anim-up" style="margin-top:clamp(14px,2.5vh,28px)">
+    Claude Opus · Sonnet · Haiku · Supabase · FastAPI · Flutter
+  </div>
+</div>
+
+<!-- S8: App -->
+<div class="slide bg-radial" id="s8">
+  <div class="eyebrow anim-up">Interfaz supervisor</div>
+  <div class="hero anim-up" style="font-size:clamp(20px,3.8vw,62px)">La app que<br>los gerentes <span class="g">necesitaban</span>.</div>
+  <div class="badges anim-up">
+    <span class="badge">📊 Dashboard en tiempo real</span>
+    <span class="badge">📸 Scan QR + foto IA</span>
+    <span class="badge">⚡ Acciones swipe</span>
+    <span class="badge">🗺 Mapa por pasillos</span>
+    <span class="badge">📄 Informes PDF</span>
+    <span class="badge">🤖 Monitor agentes live</span>
+  </div>
+  <div class="sub anim-up">Flutter · Riverpod · Supabase Realtime · Material Motion</div>
+</div>
+
+<!-- S9: Telegram -->
+<div class="slide bg-grid" id="s9">
+  <div class="eyebrow anim-up">Interfaz encargado de tienda</div>
+  <div class="hero anim-up" style="font-size:clamp(20px,3.8vw,62px)">
+    Chuwi — el agente<br>que <span class="g">entiende</span> de verdad.
+  </div>
+  <div class="timeline anim-up" style="width:68%">
+    <div class="tl-item"><div class="tl-dot"></div><div class="tl-text"><strong>No es un bot de comandos.</strong> Entiende lenguaje natural, foto y voz.</div></div>
+    <div class="tl-item"><div class="tl-dot"></div><div class="tl-text"><strong>Streaming en tiempo real.</strong> Ves la respuesta crecer token a token.</div></div>
+    <div class="tl-item"><div class="tl-dot"></div><div class="tl-text"><strong>Acciones con un toque.</strong> Completar, donar, rebajar desde el móvil.</div></div>
+    <div class="tl-item"><div class="tl-dot"></div><div class="tl-text"><strong>Alertas proactivas.</strong> Te avisa antes de que preguntes nada.</div></div>
+  </div>
+</div>
+
+<!-- S10: Impacto -->
+<div class="slide bg-amber" id="s10">
+  <div class="eyebrow anim-up" style="color:var(--amber)">Impacto potencial</div>
+  <div class="hero anim-up" style="font-size:clamp(20px,3.8vw,60px)">
+    Reducir la merma<br><span class="a">no era un problema técnico</span>.<br>Era un problema de datos.
+  </div>
+  <div class="sub anim-up">
+    MermaOps cierra ese gap — con IA que toma decisiones reales,<br>
+    en tiempo real, en cada turno de cada tienda española.
+  </div>
+</div>
+
+<!-- S11: Cierre -->
+<div class="slide bg-pure" id="s11">
+  <div class="logo-big anim-scale anim-glow" style="font-size:clamp(38px,8.5vw,136px)">Merma<span>Ops</span></div>
+  <div class="divider anim-fade"></div>
+  <div class="sub anim-up" style="font-size:clamp(12px,1.5vw,24px);color:#fff;font-weight:500">
+    Sistema multi-agente de IA para reducción de merma alimentaria
+  </div>
+  <div class="sub anim-up" style="margin-top:clamp(6px,1.2vh,12px)">
+    Álvaro Ferrer · TFM 2026 · Claude API by Anthropic
+  </div>
+  <div class="badges anim-up" style="margin-top:clamp(14px,2.5vh,28px)">
+    <span class="badge">848 tests ✓</span>
+    <span class="badge">12 agentes activos</span>
+    <span class="badge">0 fallos</span>
+    <span class="badge">Puerto 8001</span>
+  </div>
+</div>
+
+<div id="progress"></div>
+<div id="counter">1 / 11</div>
+<div id="logo-badge">MERMAOPS</div>
+<button id="playbtn">⏸ Pausar</button>
+</div></div>
+
+<script>
+// ── Particles ──────────────────────────────────────────────────────────────
+const cv=document.getElementById('bg'),cx=cv.getContext('2d');
+let W,H,pts=[];
+function resize(){const f=document.getElementById('frame');W=cv.width=f.clientWidth;H=cv.height=f.clientHeight}
+function initPts(){pts=[];const n=Math.floor(W*H/16000);for(let i=0;i<n;i++)pts.push({x:Math.random()*W,y:Math.random()*H,vx:(Math.random()-.5)*.22,vy:(Math.random()-.5)*.22,r:Math.random()*.8+.3,o:Math.random()*.45+.08})}
+function drawPts(){cx.clearRect(0,0,W,H);pts.forEach(p=>{p.x+=p.vx;p.y+=p.vy;if(p.x<0)p.x=W;if(p.x>W)p.x=0;if(p.y<0)p.y=H;if(p.y>H)p.y=0;cx.beginPath();cx.arc(p.x,p.y,p.r,0,Math.PI*2);cx.fillStyle=`rgba(16,185,129,${p.o})`;cx.fill()});requestAnimationFrame(drawPts)}
+window.addEventListener('resize',()=>{resize();initPts()});resize();initPts();drawPts();
+
+// ── Web Audio — ambient ────────────────────────────────────────────────────
+let aCtx=null,aDone=false;
+function startAudio(){
+  if(aDone)return;aDone=true;
+  try{
+    aCtx=new(window.AudioContext||window.webkitAudioContext)();
+    const master=aCtx.createGain();master.gain.value=.07;master.connect(aCtx.destination);
+    const rev=aCtx.createConvolver();
+    const bl=aCtx.sampleRate*3,bb=aCtx.createBuffer(2,bl,aCtx.sampleRate);
+    for(let c=0;c<2;c++){const d=bb.getChannelData(c);for(let i=0;i<bl;i++)d[i]=(Math.random()*2-1)*Math.pow(1-i/bl,2);}
+    rev.buffer=bb;rev.connect(master);
+    const notes=[130.81,164.81,196,261.63,329.63];
+    function playNote(f,t,d){const o=aCtx.createOscillator(),g=aCtx.createGain();o.connect(g);g.connect(rev);o.frequency.value=f;o.type='sine';g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(.16,t+.8);g.gain.exponentialRampToValueAtTime(.001,t+d);o.start(t);o.stop(t+d)}
+    function loop(t){notes.forEach((f,i)=>playNote(f,t+i*2.1,4.2));setTimeout(()=>loop(aCtx.currentTime+.1),notes.length*2100-200)}
+    loop(aCtx.currentTime+.1);
+  }catch(e){}
+}
+
+// ── Slides ─────────────────────────────────────────────────────────────────
+const slides=document.querySelectorAll('.slide');
+const total=slides.length;
+let cur=0,playing=true,timer=null;
+const DUR=[8,8,8,8,10,9,9,8,8,8,12];
+
+function showSlide(i){
+  slides.forEach((s,j)=>s.classList.toggle('active',j===i));
+  document.getElementById('counter').textContent=`${i+1} / ${total}`;
+  animProg(i);
+  if(i===4)animAgents();
+  if(i===6)animCounters();
+}
+function animProg(i){const b=document.getElementById('progress');b.style.transition='none';b.style.width='0%';setTimeout(()=>{b.style.transition=`width ${DUR[i]}s linear`;b.style.width='100%'},50)}
+function next(){cur=(cur+1)%total;showSlide(cur);if(playing)sched()}
+function sched(){clearTimeout(timer);timer=setTimeout(next,DUR[cur]*1000)}
+
+function animAgents(){const cards=document.querySelectorAll('.agent-card');cards.forEach(c=>c.classList.remove('lit'));let i=0;const t=setInterval(()=>{if(i<cards.length){cards[i].classList.add('lit');i++}else clearInterval(t)},190)}
+
+function animCounter(el,target){let v=0;const iv=setInterval(()=>{v=Math.min(v+target/60,target);el.textContent=Math.round(v);if(v>=target)clearInterval(iv)},28)}
+function animCounters(){setTimeout(()=>{animCounter(document.getElementById('c1'),848);animCounter(document.getElementById('c2'),12);animCounter(document.getElementById('c3'),100);animCounter(document.getElementById('c4'),3)},350)}
+
+const btn=document.getElementById('playbtn');
+btn.addEventListener('click',()=>{playing=!playing;btn.textContent=playing?'⏸ Pausar':'▶ Reproducir';if(playing)sched();else clearTimeout(timer)});
+
+document.addEventListener('keydown',e=>{
+  if(e.key==='ArrowRight'||e.key===' '){e.preventDefault();clearTimeout(timer);next()}
+  else if(e.key==='ArrowLeft'){e.preventDefault();clearTimeout(timer);cur=(cur-1+total)%total;showSlide(cur);if(playing)sched()}
+  else if(e.key.toLowerCase()==='p')btn.click();
+  startAudio();
+});
+document.addEventListener('click',startAudio,{once:true});
+
+showSlide(0);sched();
+</script>
+</body>
+</html>

@@ -120,3 +120,140 @@ class UrgencyColors {
     return low;
   }
 }
+
+// ── Shimmer loading — reemplaza CircularProgressIndicator ─────────────────────
+// Uso: ShimmerBox(width: double.infinity, height: 80)
+// Uso en lista: ShimmerList(count: 3, itemHeight: 88)
+
+class ShimmerBox extends StatefulWidget {
+  final double width;
+  final double height;
+  final double borderRadius;
+
+  const ShimmerBox({
+    super.key,
+    required this.width,
+    required this.height,
+    this.borderRadius = 12,
+  });
+
+  @override
+  State<ShimmerBox> createState() => _ShimmerBoxState();
+}
+
+class _ShimmerBoxState extends State<ShimmerBox>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1100),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (_, __) {
+        final t = _ctrl.value;
+        return Container(
+          width: widget.width,
+          height: widget.height,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(widget.borderRadius),
+            gradient: LinearGradient(
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+              stops: [
+                (t - 0.35).clamp(0.0, 1.0),
+                t.clamp(0.0, 1.0),
+                (t + 0.35).clamp(0.0, 1.0),
+              ],
+              colors: const [
+                Color(0xFFE5E7EB),
+                Color(0xFFF3F4F6),
+                Color(0xFFE5E7EB),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class ShimmerList extends StatelessWidget {
+  final int count;
+  final double itemHeight;
+  final EdgeInsets padding;
+
+  const ShimmerList({
+    super.key,
+    this.count = 4,
+    this.itemHeight = 88,
+    this.padding = const EdgeInsets.all(16),
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: padding,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header shimmer
+          const ShimmerBox(width: 180, height: 14),
+          const SizedBox(height: 12),
+          ...List.generate(count, (i) => Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: ShimmerBox(
+              width: double.infinity,
+              height: itemHeight,
+            ),
+          )),
+        ],
+      ),
+    );
+  }
+}
+
+// Shimmer para las KPI cards del dashboard (2 columnas)
+class ShimmerKpiGrid extends StatelessWidget {
+  const ShimmerKpiGrid({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
+      child: Column(
+        children: [
+          Row(children: const [
+            Expanded(child: ShimmerBox(width: double.infinity, height: 80)),
+            SizedBox(width: 12),
+            Expanded(child: ShimmerBox(width: double.infinity, height: 80)),
+          ]),
+          const SizedBox(height: 12),
+          Row(children: const [
+            Expanded(child: ShimmerBox(width: double.infinity, height: 80)),
+            SizedBox(width: 12),
+            Expanded(child: ShimmerBox(width: double.infinity, height: 80)),
+          ]),
+          const SizedBox(height: 20),
+          const ShimmerBox(width: double.infinity, height: 120),
+          const SizedBox(height: 16),
+          const ShimmerBox(width: double.infinity, height: 90),
+        ],
+      ),
+    );
+  }
+}

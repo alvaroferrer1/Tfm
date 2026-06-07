@@ -379,3 +379,57 @@ class TestChuwiPersistenceHelpers:
         assert "chat_history" in params
         assert "user_text" in params
         assert "user" in params
+
+
+# ── get_completed_actions_value (ROI de merma evitada) ───────────────────────
+
+class TestGetCompletedActionsValue:
+    """Tests para la función que mide el ROI del sistema: merma evitada."""
+
+    def _mock_db(self, rows):
+        mock = MagicMock()
+        (mock.table.return_value.select.return_value
+         .eq.return_value.eq.return_value
+         .in_.return_value.gte.return_value.execute.return_value) = MagicMock(data=rows)
+        return mock
+
+    def test_empty_returns_zeros(self):
+        from backend.core.database import get_completed_actions_value
+        with patch("backend.core.database.get_db", return_value=self._mock_db([])):
+            result = get_completed_actions_value("demo-store-001", days=7)
+        assert result["actions_completed"] == 0
+        assert result["value_recovered"] == 0.0
+        assert result["cost_recovered"] == 0.0
+
+    def test_calculates_value_correctly(self):
+        from backend.core.database import get_completed_actions_value
+        rows = [
+            {"action_type": "rebajar",
+             "batches": {"quantity": 10, "products": {"price": 2.5, "cost": 1.0}}},
+            {"action_type": "donar",
+             "batches": {"quantity": 5, "products": {"price": 1.2, "cost": 0.5}}},
+        ]
+        with patch("backend.core.database.get_db", return_value=self._mock_db(rows)):
+            result = get_completed_actions_value("demo-store-001", days=7)
+        assert result["actions_completed"] == 2
+        assert result["value_recovered"] == pytest.approx(10 * 2.5 + 5 * 1.2, abs=0.01)
+        assert result["cost_recovered"] == pytest.approx(10 * 1.0 + 5 * 0.5, abs=0.01)
+        assert result["period_days"] == 7
+
+    def test_handles_missing_batch_data_gracefully(self):
+        from backend.core.database import get_completed_actions_value
+        rows = [
+            {"action_type": "rebajar", "batches": None},
+            {"action_type": "donar", "batches": {"quantity": 3, "products": None}},
+        ]
+        with patch("backend.core.database.get_db", return_value=self._mock_db(rows)):
+            result = get_completed_actions_value("demo-store-001", days=7)
+        assert result["value_recovered"] == 0.0  # sin datos válidos, 0
+
+    def test_function_signature(self):
+        import inspect
+        from backend.core.database import get_completed_actions_value
+        sig = inspect.signature(get_completed_actions_value)
+        assert "store_id" in sig.parameters
+        assert "days" in sig.parameters
+        assert sig.parameters["days"].default == 7

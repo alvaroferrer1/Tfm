@@ -60,8 +60,8 @@ class TestMemory:
 
     def test_remember_silently_handles_error(self):
         with patch("backend.core.memory.database.set_memory", side_effect=Exception("DB down")):
-            # Should not raise
-            mem.remember(STORE_ID, "key", "value")
+            result = mem.remember(STORE_ID, "key", "value")
+        assert result is None  # error silenciado, no propaga excepción
 
     def test_recall_silently_handles_error(self):
         with patch("backend.core.memory.database.get_memory", side_effect=Exception("DB down")):

@@ -279,13 +279,22 @@ def generate_prediction_brief(store_id: str, forecast_days: int = 5) -> str:
         return "Sin riesgos predictivos detectados para los próximos días. La tienda va bien."
 
     # Resumen del tiempo
-    weather_summary = "Tiempo estable"
+    # Traducir datos meteorológicos a consecuencias reales en tienda
+    weather_summary = "Tiempo estable, rotación normal"
     hot_days = sum(1 for f in forecast if f.get("is_hot"))
     rain_days = sum(1 for f in forecast if f.get("is_rainy"))
     if hot_days >= 2:
-        weather_summary = f"ATENCION: {hot_days} días con temperatura alta (>30°C)"
+        weather_summary = (
+            f"Vienen {hot_days} días de mucho calor. "
+            "Las ensaladas preparadas y los frescos del pasillo frío se venderán menos "
+            "si la gente no sale a la calle. Ojo con el stock hoy mismo."
+        )
     elif rain_days >= 3:
-        weather_summary = f"Lluvia prevista {rain_days} días — esperar menor afluencia"
+        weather_summary = (
+            f"Lluvia prevista {rain_days} días. "
+            "Menos clientes — el pan del día y la fruta madura van a quedar sin vender. "
+            "Calcula pedir menos o rebajar al mediodía si no se mueve."
+        )
 
     high_risk = [p for p in predictions if p["risk_score"] >= 60]
     medium_risk = [p for p in predictions if 40 <= p["risk_score"] < 60]

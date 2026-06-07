@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>MermaOps — Pitch Ejecutivo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  @page {
+    size: A4 landscape;
+    margin: 0;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --green: #10B981;
+    --green-dark: #065F46;
+    --navy: #0F172A;
+    --white: #FFFFFF;
+    --gray: #9CA3AF;
+    --red: #EF4444;
+  }
+
+  body {
+    font-family: 'Inter', sans-serif;
+    background: #000;
+  }
+
+  /* Each .slide = one A4 landscape page */
+  .slide {
+    width: 297mm;
+    height: 210mm;
+    overflow: hidden;
+    position: relative;
+    page-break-after: always;
+    display: flex;
+    flex-direction: column;
+  }
+  .slide:last-child { page-break-after: auto; }
+
+  /* ── Dark slide ── */
+  .dark {
+    background: #000;
+    color: var(--white);
+  }
+  /* ── Light slide ── */
+  .light {
+    background: var(--white);
+    color: var(--navy);
+  }
+  /* ── Navy slide ── */
+  .navy {
+    background: var(--navy);
+    color: var(--white);
+  }
+
+  /* ── Layout helpers ── */
+  .center {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    text-align: center;
+    padding: 15mm 20mm;
+  }
+  .left-pad {
+    padding: 14mm 20mm 12mm 24mm;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+  .split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    height: 100%;
+  }
+  .split-col {
+    padding: 14mm 14mm;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  /* ── Typography ── */
+  .huge {
+    font-size: 100pt;
+    font-weight: 900;
+    line-height: 0.9;
+    letter-spacing: -0.03em;
+  }
+  .big {
+    font-size: 60pt;
+    font-weight: 900;
+    line-height: 0.95;
+    letter-spacing: -0.02em;
+  }
+  .medium {
+    font-size: 32pt;
+    font-weight: 800;
+    line-height: 1.1;
+  }
+  .sub {
+    font-size: 14pt;
+    font-weight: 400;
+    color: var(--gray);
+    margin-top: 5mm;
+    line-height: 1.5;
+  }
+  .sub.white { color: rgba(255,255,255,0.65); }
+  .label {
+    font-size: 8pt;
+    text-transform: uppercase;
+    letter-spacing: 0.25em;
+    color: var(--gray);
+    margin-bottom: 5mm;
+  }
+
+  .green { color: var(--green); }
+  .white { color: var(--white); }
+  .navy-col { color: var(--navy); }
+  .red { color: var(--red); }
+
+  /* ── Green line ── */
+  .line {
+    width: 25mm;
+    height: 3px;
+    background: var(--green);
+    margin: 5mm 0;
+  }
+  .line.center-line { margin: 5mm auto; }
+
+  /* ── Badges ── */
+  .badges {
+    display: flex;
+    gap: 4mm;
+    flex-wrap: wrap;
+    margin-top: 6mm;
+  }
+  .badge {
+    padding: 2mm 6mm;
+    border: 1.5px solid var(--green);
+    border-radius: 999px;
+    font-size: 9pt;
+    font-weight: 600;
+    color: var(--green);
+    background: rgba(16,185,129,0.08);
+  }
+
+  /* ── Tables ── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 9pt;
+  }
+  th {
+    padding: 3mm 4mm;
+    font-weight: 700;
+    text-align: left;
+    font-size: 8.5pt;
+  }
+  td {
+    padding: 2.5mm 4mm;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    vertical-align: middle;
+  }
+  .light td { border-bottom: 1px solid #E2E8F0; }
+  .light th { background: var(--navy); color: white; }
+  .dark th, .navy th { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.6); }
+  .dark td, .navy td { color: rgba(255,255,255,0.8); }
+  .merma-cell { color: var(--green) !important; font-weight: 700 !important; }
+  .merma-bg { background: rgba(16,185,129,0.08) !important; }
+
+  /* ── Metrics row ── */
+  .metrics-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4mm;
+    margin-top: 6mm;
+  }
+  .metric-box {
+    text-align: center;
+    padding: 4mm;
+    border-radius: 8px;
+    border: 1px solid rgba(16,185,129,0.25);
+    background: rgba(16,185,129,0.06);
+  }
+  .metric-box .num {
+    font-size: 22pt;
+    font-weight: 900;
+    color: var(--green);
+    line-height: 1;
+  }
+  .metric-box .lbl {
+    font-size: 7pt;
+    color: var(--gray);
+    margin-top: 1mm;
+  }
+
+  /* ── Cover slide specific ── */
+  .cover-bg {
+    position: absolute; inset: 0;
+    background: radial-gradient(ellipse at 60% 50%, rgba(16,185,129,0.2) 0%, transparent 60%);
+  }
+  .cover-content {
+    position: relative; z-index: 1;
+    padding: 16mm 24mm;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    height: 100%;
+  }
+
+  /* ── Problem big number ── */
+  .problem-glow {
+    position: absolute;
+    width: 80mm; height: 80mm;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(239,68,68,0.2) 0%, transparent 70%);
+    top: 50%; left: 35%; transform: translate(-50%, -50%);
+  }
+
+  /* ── Check list ── */
+  .checklist { list-style: none; padding: 0; margin-top: 4mm; }
+  .checklist li {
+    display: flex;
+    align-items: flex-start;
+    gap: 3mm;
+    margin-bottom: 3mm;
+    font-size: 10pt;
+  }
+  .checklist li .icon { color: var(--green); font-size: 12pt; flex-shrink: 0; margin-top: 0.5mm; }
+
+  /* ── Page number ── */
+  .page-num {
+    position: absolute;
+    bottom: 6mm; right: 8mm;
+    font-size: 7pt;
+    color: rgba(255,255,255,0.25);
+  }
+  .page-num.dark-num { color: rgba(0,0,0,0.2); }
+
+  .img-fill img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    padding: 10mm;
+  }
+
+  .section-tag {
+    display: inline-block;
+    background: rgba(16,185,129,0.15);
+    color: var(--green);
+    font-size: 7.5pt;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    padding: 1.5mm 4mm;
+    border-radius: 4px;
+    margin-bottom: 5mm;
+  }
+</style>
+</head>
+<body>
+
+<!-- ══ 1. PORTADA ══════════════════════════════════════════════════════════ -->
+<div class="slide dark">
+  <div class="cover-bg"></div>
+  <div class="cover-content">
+    <div class="label" style="color:rgba(16,185,129,0.7)">Sistema Multi-Agente de IA</div>
+    <div class="big green" style="font-size:72pt">MermaOps</div>
+    <div class="line"></div>
+    <div class="sub white" style="font-size:16pt;max-width:120mm">
+      Gestión autónoma de merma alimentaria.<br>
+      Sin hardware. Sin instalación. 0,80 €/mes.
+    </div>
+    <div class="badges" style="margin-top:8mm">
+      <span class="badge">Telegram AI</span>
+      <span class="badge">Flutter App</span>
+      <span class="badge">12 Agentes Claude</span>
+      <span class="badge">24/7 Autónomo</span>
+    </div>
+    <div style="margin-top:12mm;font-size:8pt;color:rgba(255,255,255,0.3)">
+      Álvaro Ferrer Muro · EVOLVE Madrid 2026
+    </div>
+  </div>
+  <div class="page-num">1</div>
+</div>
+
+<!-- ══ 2. EL PROBLEMA ═════════════════════════════════════════════════════ -->
+<div class="slide dark" style="position:relative">
+  <div class="problem-glow"></div>
+  <div class="center" style="position:relative;z-index:1">
+    <div class="label">El problema</div>
+    <div class="huge" style="color:#EF4444">2–5%</div>
+    <div style="font-size:20pt;color:var(--gray);margin-top:6mm;font-weight:400;max-width:140mm;line-height:1.4">
+      de los ingresos anuales se pierde en merma en supermercados españoles
+    </div>
+    <div style="margin-top:8mm;font-size:26pt;font-weight:800;color:white">
+      15.000 – 40.000 € por tienda y año
+    </div>
+    <div style="margin-top:4mm;font-size:12pt;color:rgba(255,255,255,0.45)">
+      El 95% de los establecimientos independientes no tiene herramientas para gestionarlo
+    </div>
+  </div>
+  <div class="page-num">2</div>
+</div>
+
+<!-- ══ 3. COMPETIDORES ════════════════════════════════════════════════════ -->
+<div class="slide light">
+  <div class="left-pad">
+    <div class="section-tag">Competidores</div>
+    <div class="medium navy-col" style="margin-bottom:8mm">Las alternativas existentes<br>no son accesibles</div>
+    <table>
+      <thead>
+        <tr>
+          <th style="background:#0F172A;color:white">Solución</th>
+          <th style="background:#10B981;color:#000">MermaOps</th>
+          <th style="background:#0F172A;color:white">Winnow V2</th>
+          <th style="background:#0F172A;color:white">Orbisk</th>
+          <th style="background:#0F172A;color:white">Excel</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="font-weight:600;color:#334155">Coste / mes</td>
+          <td class="merma-cell merma-bg">0,80 €</td>
+          <td style="color:#EF4444">&gt; 1.600 €</td>
+          <td style="color:#EF4444">&gt; 1.200 €</td>
+          <td style="color:#92400E">~120 €</td>
+        </tr>
+        <tr>
+          <td style="font-weight:600;color:#334155">Hardware</td>
+          <td class="merma-cell merma-bg">Ninguno ✓</td>
+          <td>Báscula + cámara</td>
+          <td>Cámara IA</td>
+          <td>Ninguno</td>
+        </tr>
+        <tr>
+          <td style="font-weight:600;color:#334155">Precisión</td>
+          <td class="merma-cell merma-bg">100% ✓</td>
+          <td style="color:#6B7280">N/D</td>
+          <td style="color:#6B7280">N/D</td>
+          <td style="color:#EF4444">16,7%</td>
+        </tr>
+        <tr>
+          <td style="font-weight:600;color:#334155">Autonomía 24/7</td>
+          <td class="merma-cell merma-bg">Sí ✓</td>
+          <td>Parcial</td>
+          <td>Parcial</td>
+          <td>No</td>
+        </tr>
+        <tr>
+          <td style="font-weight:600;color:#334155">CSRD 2026</td>
+          <td class="merma-cell merma-bg">✓</td>
+          <td style="color:#EF4444">✗</td>
+          <td style="color:#EF4444">✗</td>
+          <td style="color:#EF4444">✗</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="page-num dark-num">3</div>
+</div>
+
+<!-- ══ 4. SOLUCIÓN ════════════════════════════════════════════════════════ -->
+<div class="slide dark">
+  <div class="center">
+    <div class="label">La solución</div>
+    <div class="huge green" style="font-size:110pt">0,80 €</div>
+    <div class="line center-line"></div>
+    <div style="font-size:18pt;color:rgba(255,255,255,0.7);font-weight:400;max-width:150mm;line-height:1.5">
+      al mes. IA que gestiona tu merma. Sola.<br>
+      Sin hardware. Sin instalación. Sin mantenimiento.
+    </div>
+    <div class="badges" style="justify-content:center;margin-top:8mm">
+      <span class="badge">@ChuwiMermaOpsBot</span>
+      <span class="badge">Flutter App</span>
+      <span class="badge">PDF automático</span>
+      <span class="badge">Alertas Telegram</span>
+    </div>
+  </div>
+  <div class="page-num">4</div>
+</div>
+
+<!-- ══ 5. AGENTES ══════════════════════════════════════════════════════════ -->
+<div class="slide navy">
+  <div class="split">
+    <div class="split-col" style="border-right:1px solid rgba(255,255,255,0.08)">
+      <div class="section-tag" style="background:rgba(16,185,129,0.15)">Arquitectura</div>
+      <div class="medium white" style="font-size:26pt;margin-bottom:4mm">12 Agentes<br>Especializados</div>
+      <div style="font-size:10pt;color:rgba(255,255,255,0.6);line-height:1.8">
+        <div>🧠 <strong style="color:white">Kuine</strong> — Opus 4.7 · Orquestador</div>
+        <div>💬 <strong style="color:white">Chuwi</strong> — Sonnet 4.6 · Telegram</div>
+        <div>📊 <strong style="color:white">Evaluador</strong> — Sonnet · Extended thinking</div>
+        <div>🔀 <strong style="color:white">ForkMerge</strong> — 3× Sonnet + Opus síntesis</div>
+        <div>✅ <strong style="color:white">Consenso</strong> — 3 instancias · 2/3 acuerdo</div>
+        <div>🛡️ <strong style="color:white">Validador</strong> — 23 ataques · 100% bloqueados</div>
+        <div>🌤️ <strong style="color:white">Predictor</strong> — Haiku · Open-Meteo</div>
+        <div>👁️ <strong style="color:white">Visión</strong> — Haiku · Análisis de fotos</div>
+        <div>💰 <strong style="color:white">Precio</strong> · <strong style="color:white">Stock</strong> — Heurísticos FEFO</div>
+        <div>📢 <strong style="color:white">Notificador</strong> · <strong style="color:white">Reportero</strong></div>
+      </div>
+    </div>
+    <div class="split-col img-fill">
+      <img src="../Agentes MermaOps.png" alt="Diagrama 12 agentes MermaOps">
+    </div>
+  </div>
+  <div class="page-num">5</div>
+</div>
+
+<!-- ══ 6. 100% ═════════════════════════════════════════════════════════════ -->
+<div class="slide dark">
+  <div class="center">
+    <div class="label">Precisión validada</div>
+    <div class="huge green" style="font-size:130pt;text-shadow:0 0 60px rgba(16,185,129,0.4)">100%</div>
+    <div class="line center-line"></div>
+    <div style="font-size:15pt;color:var(--gray);font-weight:400">
+      +83 puntos porcentuales sobre baseline (16,7%)
+    </div>
+    <div style="margin-top:8mm;display:flex;gap:10mm;justify-content:center">
+      <div style="text-align:center">
+        <div style="font-size:28pt;font-weight:900;color:white">23/23</div>
+        <div style="font-size:9pt;color:var(--gray);margin-top:1mm">ataques adversariales bloqueados</div>
+      </div>
+      <div style="text-align:center">
+        <div style="font-size:28pt;font-weight:900;color:white">774</div>
+        <div style="font-size:9pt;color:var(--gray);margin-top:1mm">tests · 100% pass · 1,98 s</div>
+      </div>
+      <div style="text-align:center">
+        <div style="font-size:28pt;font-weight:900;color:white">0</div>
+        <div style="font-size:9pt;color:var(--gray);margin-top:1mm">falsos positivos</div>
+      </div>
+    </div>
+  </div>
+  <div class="page-num">6</div>
+</div>
+
+<!-- ══ 7. ROI ═══════════════════════════════════════════════════════════════ -->
+<div class="slide dark">
+  <div class="center">
+    <div class="label">Retorno de inversión</div>
+    <div class="huge green" style="font-size:115pt;text-shadow:0 0 80px rgba(16,185,129,0.45)">500:1</div>
+    <div class="line center-line"></div>
+    <div style="font-size:16pt;color:rgba(255,255,255,0.65);font-weight:400">
+      ROI mensual estimado
+    </div>
+    <div style="margin-top:6mm;font-size:13pt;color:white;font-weight:500">
+      0,80 €/mes → ~400 € de valor operativo generado
+    </div>
+    <div style="margin-top:8mm;font-size:10pt;color:rgba(255,255,255,0.35);max-width:120mm;text-align:center;line-height:1.6">
+      Basado en 483,95 € de merma identificada en datos reales de Supabase durante el período de prueba
+    </div>
+  </div>
+  <div class="page-num">7</div>
+</div>
+
+<!-- ══ 8. TECH STACK ═══════════════════════════════════════════════════════ -->
+<div class="slide navy">
+  <div class="left-pad">
+    <div class="section-tag">Stack tecnológico</div>
+    <div class="medium white" style="font-size:24pt;margin-bottom:6mm">Tecnología de nivel<br>empresarial</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Componente</th>
+          <th>Tecnología</th>
+          <th>Detalle</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>IA / LLM</td><td class="merma-cell">Claude API (Anthropic)</td><td>Opus 4.7 · Sonnet 4.6 · Haiku 4.5</td></tr>
+        <tr><td>Backend</td><td>FastAPI · Python 3.14</td><td>Puerto 8001 · 77 módulos · API REST completa</td></tr>
+        <tr><td>Base de datos</td><td>Supabase (PostgreSQL)</td><td>Realtime · Vector RAG 1536 · Auth · Storage</td></tr>
+        <tr><td>App móvil</td><td>Flutter (Dart)</td><td>Android · iOS · Windows · 8 pantallas</td></tr>
+        <tr><td>Interfaz AI</td><td>Telegram Bot</td><td>@ChuwiMermaOpsBot · Streaming · Intent clasif.</td></tr>
+        <tr><td>Scheduler</td><td>APScheduler</td><td>7 cron jobs autónomos · asyncio compatible</td></tr>
+        <tr><td>Codebase</td><td>15.675 líneas</td><td>774 tests · 100% pass · 1,98 s totales</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="page-num">8</div>
+</div>
+
+<!-- ══ 9. DATOS REALES ════════════════════════════════════════════════════ -->
+<div class="slide dark">
+  <div class="left-pad">
+    <div class="section-tag">Datos reales — Supabase producción</div>
+    <div class="medium white" style="font-size:24pt;margin-bottom:4mm">Validado con datos<br>de producción real</div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4mm;margin-top:4mm">
+      <div class="metric-box"><div class="num">483 €</div><div class="lbl">Merma identificada y gestionada</div></div>
+      <div class="metric-box"><div class="num">69 €</div><div class="lbl">Donaciones a banco de alimentos</div></div>
+      <div class="metric-box"><div class="num">45</div><div class="lbl">Acciones completadas</div></div>
+      <div class="metric-box"><div class="num">7</div><div class="lbl">Briefs generados con datos reales</div></div>
+      <div class="metric-box"><div class="num">9</div><div class="lbl">Runs completos de Kuine</div></div>
+      <div class="metric-box"><div class="num">0,03 €</div><div class="lbl">Coste por brief (Claude API)</div></div>
+    </div>
+  </div>
+  <div class="page-num">9</div>
+</div>
+
+<!-- ══ 10. NORMATIVA ══════════════════════════════════════════════════════ -->
+<div class="slide light">
+  <div class="left-pad">
+    <div class="section-tag">Cumplimiento normativo</div>
+    <div class="medium navy-col" style="font-size:24pt;margin-bottom:6mm">Preparado para<br>la regulación de 2026</div>
+    <ul class="checklist">
+      <li>
+        <span class="icon">✅</span>
+        <span><strong>CSRD (Directiva 2022/464/UE)</strong> — Registro automático de merma y CO₂eq evitado para reporting ESG obligatorio desde 2026.</span>
+      </li>
+      <li>
+        <span class="icon">✅</span>
+        <span><strong>Real Decreto 1801/2003</strong> — El Validador bloquea cualquier decisión de venta de producto caducado.</span>
+      </li>
+      <li>
+        <span class="icon">✅</span>
+        <span><strong>Reglamento UE 1169/2011</strong> — Etiquetado y precio transparente en todas las acciones de rebaja generadas.</span>
+      </li>
+      <li>
+        <span class="icon">✅</span>
+        <span><strong>Ley 17/2011</strong> — Priorización de donación a banco de alimentos para lotes CRÍTICO dentro de fecha.</span>
+      </li>
+      <li>
+        <span class="icon">✅</span>
+        <span><strong>RGPD (2016/679)</strong> — Datos de inventario no personales. Usuarios Telegram con consentimiento explícito y derecho a supresión.</span>
+      </li>
+    </ul>
+  </div>
+  <div class="page-num dark-num">10</div>
+</div>
+
+<!-- ══ 11. ESCALABILIDAD ══════════════════════════════════════════════════ -->
+<div class="slide navy">
+  <div class="left-pad">
+    <div class="section-tag">Escalabilidad</div>
+    <div class="medium white" style="font-size:24pt;margin-bottom:6mm">Diseñado para escalar</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Escenario</th>
+          <th>Tiendas</th>
+          <th>Coste/mes</th>
+          <th>Valor estimado/mes</th>
+          <th>ROI</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Demo (actual)</td>
+          <td>1</td>
+          <td>0,80 €</td>
+          <td>~400 €</td>
+          <td class="merma-cell">500:1</td>
+        </tr>
+        <tr>
+          <td>Piloto regional</td>
+          <td>10</td>
+          <td>~8 €</td>
+          <td>~4.000 €</td>
+          <td class="merma-cell">500:1</td>
+        </tr>
+        <tr>
+          <td>Cadena mediana</td>
+          <td>50</td>
+          <td>~40 €</td>
+          <td>~20.000 €</td>
+          <td class="merma-cell">500:1</td>
+        </tr>
+        <tr>
+          <td>Mercado nacional</td>
+          <td>3.500</td>
+          <td>~2.800 €</td>
+          <td>~1.400.000 €</td>
+          <td class="merma-cell">500:1</td>
+        </tr>
+      </tbody>
+    </table>
+    <div style="margin-top:5mm;font-size:9pt;color:rgba(255,255,255,0.4)">
+      El ROI se mantiene constante porque el coste Claude API escala linealmente con el uso.<br>
+      Optimización adicional posible con prompt caching (–85% tokens de contexto) y batch processing.
+    </div>
+  </div>
+  <div class="page-num">11</div>
+</div>
+
+<!-- ══ 12. CIERRE ══════════════════════════════════════════════════════════ -->
+<div class="slide dark">
+  <div class="center" style="position:relative">
+    <div style="position:absolute;inset:0;background:radial-gradient(ellipse at center, rgba(16,185,129,0.15) 0%, transparent 65%);pointer-events:none"></div>
+    <div style="position:relative;z-index:1;display:flex;flex-direction:column;align-items:center">
+      <div class="huge green" style="font-size:80pt;text-shadow:0 0 60px rgba(16,185,129,0.45)">MermaOps</div>
+      <div class="line center-line"></div>
+      <div style="font-size:14pt;color:rgba(255,255,255,0.6);margin-bottom:8mm;line-height:1.6;text-align:center">
+        IA que gestiona tu merma. Sola.<br>
+        0,80 €/mes · 12 agentes · 100% precisión · 24/7 autónomo
+      </div>
+      <div style="font-size:20pt;font-weight:700;color:white;margin-bottom:6mm">
+        @ChuwiMermaOpsBot
+      </div>
+      <div class="badges" style="justify-content:center">
+        <span class="badge">Telegram</span>
+        <span class="badge">Flutter App</span>
+        <span class="badge">FastAPI · Supabase</span>
+        <span class="badge">Claude Opus 4.7</span>
+      </div>
+      <div style="margin-top:10mm;font-size:9pt;color:rgba(255,255,255,0.25)">
+        Álvaro Ferrer Muro · EVOLVE Madrid 2026
+      </div>
+    </div>
+  </div>
+  <div class="page-num">12</div>
+</div>
+
+</body>
+</html>

@@ -14,11 +14,34 @@ para retail pequeño con Claude Vision.
 """
 from __future__ import annotations
 import base64
+import hashlib
 import logging
+import time
 from datetime import date, timedelta
 from backend.core import llm
 
 logger = logging.getLogger("mermaops.vision")
+
+_vision_cache: dict[str, tuple[dict, float]] = {}
+_CACHE_TTL = 1800.0  # 30 minutes
+
+
+def _cache_key(image_b64: str, name: str, days_left: int, category: str) -> str:
+    h = hashlib.sha256(f"{image_b64[:200]}|{name}|{days_left}|{category}".encode()).hexdigest()
+    return h
+
+
+def _cache_get(key: str) -> dict | None:
+    entry = _vision_cache.get(key)
+    if entry and (time.monotonic() - entry[1]) < _CACHE_TTL:
+        return entry[0]
+    if entry:
+        del _vision_cache[key]
+    return None
+
+
+def _cache_set(key: str, result: dict) -> None:
+    _vision_cache[key] = (result, time.monotonic())
 
 # CO2 por kg por categoría (kg CO2eq / kg alimento) — fuente: Poore & Nemecek 2018, FAO 2023
 _CO2_KG: dict[str, float] = {
@@ -67,6 +90,7 @@ def analyze_product_photo(
     days_left: int = -1,
     category: str = "",
     media_type: str = "image/jpeg",
+    weight_kg: float = 0.0,
 ) -> dict:
     """
     Analiza visualmente un producto alimentario.
@@ -82,11 +106,24 @@ def analyze_product_photo(
       diagnosis       — texto de una línea para el empleado
       full_analysis   — texto completo del análisis
     """
+    # Cache: evitar re-analizar la misma imagen (SHA256, 30min TTL)
+    _ck = _cache_key(image_base64, product_name, days_left, category)
+    _cached = _cache_get(_ck)
+    if _cached is not None:
+        logger.info(f"[vision] Cache hit para '{product_name}' — ahorrando tokens")
+        return _cached
+
+    # Sanitizar entradas para evitar prompt injection via nombres de producto.
+    # Un barcode mal parseado podría incluir instrucciones en el nombre.
+    import re as _re
+    _safe_name = _re.sub(r'[\x00-\x1f\x7f]', '', str(product_name))[:100] if product_name else ""
+    _safe_cat = _re.sub(r'[\x00-\x1f\x7f]', '', str(category))[:50] if category else ""
+
     context_lines = []
-    if product_name:
-        context_lines.append(f"Producto esperado: {product_name}")
-    if category:
-        context_lines.append(f"Categoría: {category}")
+    if _safe_name:
+        context_lines.append(f"Producto esperado: {_safe_name}")
+    if _safe_cat:
+        context_lines.append(f"Categoría: {_safe_cat}")
     if days_left >= 0:
         context_lines.append(
             f"Días hasta caducidad según sistema: {days_left} días"
@@ -94,13 +131,22 @@ def analyze_product_photo(
 
     context = "\n".join(context_lines)
 
-    prompt = f"""Analiza visualmente este producto alimentario de un supermercado español.
+    prompt = f"""Eres el agente de visión de MermaOps mirando este producto en el lineal de un supermercado español.
 
 {context}
 
-Sé específico: si hay manchas, di dónde. Si el envase está roto, describe dónde.
-Si la fecha de caducidad visible no coincide con {days_left if days_left >= 0 else 'N/A'} días del sistema, indícalo.
-La acción debe ser inmediatamente ejecutable por un empleado de tienda."""
+Actúa como si lo estuvieras inspeccionando con tus propios ojos. Busca específicamente:
+- ENVASE: ¿abollado, roto, rajado, húmedo por condensación, etiqueta despegada?
+- PRODUCTO: ¿fruta con golpes o moho, carne con color anómalo, pan aplastado?
+- FECHA: ¿hay fecha visible en la foto? ¿coincide con los {days_left if days_left >= 0 else '?'} días del sistema?
+- POSICIÓN: ¿está bien colocado en el lineal o caído/volcado?
+
+Si hay desperfecto físico, recomienda directamente:
+- "Ponle el fleje amarillo de rebaja por tara" — si el producto está bien pero el envase dañado
+- "Retira del lineal y pica merma" — si hay riesgo sanitario
+- "Prepáralo para donación rápida" — si está en condición de donar pero no de vender
+
+Responde como si le hablaras al empleado que sostiene el producto."""
 
     _VISION_SCHEMA = {
         "type": "object",
@@ -153,8 +199,8 @@ La acción debe ser inmediatamente ejecutable por un empleado de tienda."""
 
         t0 = _time.monotonic()
         response = get_client().messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=800,
+            model="claude-haiku-4-5-20251001",
+            max_tokens=600,
             system=_cached_system(_VISION_SYSTEM),
             tools=[{
                 "name": "vision_analysis",
@@ -224,9 +270,9 @@ La acción debe ser inmediatamente ejecutable por un empleado de tienda."""
     # pero nunca se había usado en el resultado de análisis
     co2_kg_wasted: float | None = None
     if action == "retirar" and category:
-        weight_kg = 0.4  # peso medio estimado por unidad (400g) si no hay dato
+        effective_weight = weight_kg if weight_kg > 0 else 0.4
         co2_factor = _get_co2_factor(category)
-        co2_kg_wasted = round(weight_kg * co2_factor, 3)
+        co2_kg_wasted = round(effective_weight * co2_factor, 3)
 
     result = {
         "condition": structured.get("condition", "no_identificado"),
@@ -241,6 +287,7 @@ La acción debe ser inmediatamente ejecutable por un empleado de tienda."""
         "co2_kg_wasted": co2_kg_wasted,
     }
 
+    _cache_set(_ck, result)
     return result
 
 
@@ -259,6 +306,130 @@ def analyze_from_telegram_file(
         category=category,
         media_type="image/jpeg",
     )
+
+
+def analyze_shelf(
+    image_base64: str,
+    pasillo: str = "",
+    media_type: str = "image/jpeg",
+) -> list[dict]:
+    """
+    Analiza una foto completa de una sección de tienda o pasillo.
+    Detecta TODOS los productos visibles y evalúa su estado.
+    El empleado manda una foto del pasillo — Chuwi identifica qué necesita atención.
+
+    Returns lista de productos detectados con su estado y acción recomendada.
+    """
+    prompt = (
+        f"Eres el inspector visual de MermaOps. Esta foto muestra {'el pasillo ' + pasillo if pasillo else 'una sección de tienda'}.\n\n"
+        "Identifica TODOS los productos o grupos de productos visibles.\n"
+        "Para cada uno, indica:\n"
+        "- Nombre o descripción del producto\n"
+        "- Estado visual (bueno/deteriorado/dañado/posiblemente_expirado)\n"
+        "- Problemas detectados (si los hay)\n"
+        "- Acción recomendada (ok/rebajar/retirar/revisar)\n"
+        "- Urgencia (inmediata/hoy/normal)\n"
+        "- Fecha visible si aparece en la foto\n\n"
+        "Si no identificas ningún producto específico, describe lo que ves.\n"
+        "Sé conciso: una línea por producto."
+    )
+
+    _SHELF_SCHEMA = {
+        "type": "object",
+        "properties": {
+            "productos": {
+                "type": "array",
+                "description": "Lista de productos detectados",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "nombre": {"type": "string"},
+                        "estado": {"type": "string", "enum": ["bueno", "deteriorado", "danado", "posiblemente_expirado", "no_identificado"]},
+                        "problemas": {"type": "array", "items": {"type": "string"}},
+                        "accion": {"type": "string", "enum": ["ok", "rebajar", "retirar", "revisar"]},
+                        "urgencia": {"type": "string", "enum": ["inmediata", "hoy", "normal", "ninguna"]},
+                        "fecha_visible": {"type": "string"},
+                        "confianza": {"type": "integer"},
+                    },
+                    "required": ["nombre", "estado", "accion", "urgencia"],
+                },
+            },
+            "resumen_pasillo": {"type": "string", "description": "Resumen general de la sección en 1-2 frases."},
+            "accion_prioritaria": {"type": "string", "description": "La acción más urgente que debe tomar el empleado ahora mismo."},
+        },
+        "required": ["productos", "resumen_pasillo"],
+    }
+
+    try:
+        import anthropic as _anthropic
+        from backend.core.llm import get_client, _cached_system, _log_usage
+        import time as _time
+
+        t0 = _time.monotonic()
+        response = get_client().messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=1200,
+            system=_cached_system(_VISION_SYSTEM),
+            tools=[{"name": "shelf_analysis", "description": "Análisis visual completo de la sección.", "input_schema": _SHELF_SCHEMA}],
+            tool_choice={"type": "any"},
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": image_base64}},
+                    {"type": "text", "text": prompt},
+                ],
+            }],
+        )
+        _log_usage(response, "vision_shelf", prompt=prompt[:100], duration_ms=(_time.monotonic() - t0) * 1000)
+
+        for block in response.content:
+            if hasattr(block, "type") and block.type == "tool_use" and block.name == "shelf_analysis":
+                data = block.input
+                logger.info(f"[vision_shelf] {len(data.get('productos', []))} productos detectados en pasillo {pasillo}")
+                return data.get("productos", [])
+
+    except Exception as e:
+        logger.error(f"[vision_shelf] Error: {e}")
+
+    return []
+
+
+def format_shelf_result(productos: list[dict], pasillo: str = "") -> str:
+    """Formatea análisis de estantería para Telegram."""
+    if not productos:
+        return "No he podido identificar productos en la foto. Prueba con una imagen más cercana."
+
+    urgency_icon = {"inmediata": "🔴", "hoy": "🟡", "normal": "🟢", "ninguna": "⚪"}
+    action_label = {"retirar": "RETIRAR", "rebajar": "REBAJAR", "revisar": "REVISAR", "ok": "OK"}
+
+    urgentes = [p for p in productos if p.get("urgencia") in ("inmediata", "hoy")]
+    ok = [p for p in productos if p.get("urgencia") not in ("inmediata", "hoy")]
+
+    lines = [
+        f"📷 ANÁLISIS DE {'PASILLO ' + pasillo if pasillo else 'SECCIÓN'}",
+        f"{len(productos)} productos analizados — {len(urgentes)} requieren atención",
+        "",
+    ]
+
+    if urgentes:
+        lines.append("⚠️ REQUIEREN ATENCIÓN:")
+        for p in urgentes:
+            icon = urgency_icon.get(p.get("urgencia", ""), "⚪")
+            accion = action_label.get(p.get("accion", ""), "REVISAR")
+            problems = ", ".join(p.get("problemas", [])) or ""
+            fecha = f" | Fecha: {p['fecha_visible']}" if p.get("fecha_visible") else ""
+            lines.append(f"{icon} {p.get('nombre', '?')} — {accion}{fecha}")
+            if problems:
+                lines.append(f"  ↳ {problems}")
+
+    if ok:
+        lines += ["", "✅ SIN URGENCIA:"]
+        for p in ok[:3]:
+            lines.append(f"🟢 {p.get('nombre', '?')} — OK")
+        if len(ok) > 3:
+            lines.append(f"  ...y {len(ok) - 3} más en buen estado")
+
+    return "\n".join(lines)
 
 
 def format_vision_result(result: dict) -> str:

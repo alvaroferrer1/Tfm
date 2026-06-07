@@ -12,12 +12,14 @@ Sin emulador. Sin cables. Sin que nada falle en el peor momento.
 
 ---
 
-## Antes de entrar (30 min antes)
+## Antes de entrar (30 min antes) — UN SOLO COMANDO
 
 ```bash
-# 1. Arrancar backend completo con datos cargados
-make demo-defensa
-# Espera a que diga "Uvicorn running on http://0.0.0.0:8001"
+# Todo automático: avanza demo + genera brief + verifica Telegram + imprime estado
+make pre-defensa
+
+# Luego arrancar la app en Chrome
+make arranca
 
 # 2. Verificar que responde
 curl http://localhost:8001/health
@@ -70,7 +72,7 @@ Qué dices:
 Qué muestras en Chrome:
 
 - Demo HTML escena S1 (el problema)
-- Escena S2 (arquitectura — los 11 agentes con modelos reales)
+- Escena S2 (arquitectura — los 12 agentes con modelos reales)
 
 ---
 
@@ -99,7 +101,7 @@ Qué dices mientras avanza la demo:
 
 1. Abrir Chrome en `localhost:3000` (app Flutter web, ya compilada)
    - Dashboard: 4 KPIs + acciones pendientes con scores
-   - Tab Agentes: los 11 agentes con modelo y estado
+   - Tab Agentes: los 12 agentes con modelo y estado
 
 2. Simular paso del tiempo desde terminal:
 
@@ -116,13 +118,13 @@ Qué dices mientras avanza la demo:
 
 4. Escenas S12-S13 en el demo HTML:
    - Métricas ESG con animación (CO2, agua, deducción fiscal 35%)
-   - Resultados: 439/439 tests, 100% precisión, 23/23 adversarial
+   - Resultados: 800/800 tests, 100% precisión, 23/23 adversarial
 
 ---
 
 ### Bloque 4 — Resultados cuantitativos (2 min)
 
-- "439 tests deterministas, pasan en 1.5 segundos sin conectarse a nada"
+- "800 tests deterministas, pasan en 1.5 segundos sin conectarse a nada"
 - "100% de precisión sobre baseline de 16.7% — mejora de 83 puntos porcentuales"
 - "El sistema cumple CSRD — reporting ESG obligatorio para PYMEs en 2026"
 - "El brief diario de Kuine cuesta 0.03 € en tokens con prompt caching activo"
@@ -166,7 +168,7 @@ Esto es madurez técnica — demuestra que entiendes los límites del sistema.
 | Web Flutter en blanco     | `make flutter-web` de nuevo                           |
 | Chuwi no responde         | verificar `TELEGRAM_BOT_TOKEN` en `.env`              |
 | Sin datos críticos        | `make advance N=2`                                    |
-| Tests fallando            | `python -m pytest backend/tests/ -q` (439/439)        |
+| Tests fallando            | `python -m pytest backend/tests/ -q` (800/800)        |
 
 ---
 
@@ -182,19 +184,30 @@ make status           # resumen del estado actual
 
 ---
 
-## Checklist ANTES de dormir
+## Checklist NOCHE ANTES de la defensa
 
 - [ ] `.env` tiene todas las credenciales correctas
-- [ ] `make demo-defensa` arranca sin errores
-- [ ] `curl localhost:8001/health` responde `ok`
-- [ ] `make flutter-web` compila sin errores
-- [ ] `localhost:3000` muestra el dashboard con datos reales
-- [ ] Telegram: `/yo` muestra perfil con rol **ENCARGADO**
-- [ ] Telegram: "qué hay crítico" recibe respuesta con streaming
-- [ ] `python -m pytest backend/tests/ -q` — 439/439
+- [ ] `curl localhost:8001/health` responde `{"status":"ok",...}`
+- [ ] `make arranca` abre Chrome con la app sin errores
+- [ ] Login en app funciona con tu usuario
+- [ ] Dashboard muestra acciones con scores reales
+- [ ] Telegram `/start` → aparece menú completo
+- [ ] Telegram "qué hay crítico" → respuesta con streaming visible
+- [ ] Brief del día en BD (hoy) → `make status` lo muestra
+- [ ] `python -m pytest backend/tests/ -q` → **774/774**
 - [ ] `make advance N=2` y `make demo-reset` funcionan
-- [ ] Modo No Molestar activado en el móvil
-- [ ] Chrome sin notificaciones
+- [ ] Modo No Molestar en el móvil ACTIVADO
+- [ ] Chrome: sin otras pestañas abiertas, sin notificaciones
+- [ ] Guión de 8 min releído (docs/guion_video.txt)
+
+## ⚠️ NO hagas esto en la demo en vivo
+
+- ❌ **NO pulses "Generar brief ahora"** — tarda 60s y bloquea el ritmo.
+  En su lugar: navega directamente al brief ya generado y léelo.
+- ❌ **NO hagas `make advance` en la demo** si no tienes datos para mostrar.
+  Hazlo antes, en `make pre-defensa`.
+- ❌ **NO expliques el código** — el tribunal quiere ver el sistema funcionando,
+  no leer Python.
 
 ---
 

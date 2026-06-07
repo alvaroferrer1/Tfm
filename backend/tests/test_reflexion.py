@@ -87,7 +87,8 @@ class TestSaveReflexion:
     def test_db_error_does_not_raise(self):
         from backend.core.reflexion import save_reflexion
         with patch("backend.core.database.get_memory", side_effect=RuntimeError("boom")):
-            save_reflexion("store", "leccion")  # must not raise
+            result = save_reflexion("store", "leccion")
+        assert result is None  # silently handled, returns None not exception
 
     def test_pointer_increments(self):
         from backend.core.reflexion import save_reflexion
@@ -130,11 +131,13 @@ class TestAsyncGenerateAndSave:
     def test_llm_error_does_not_raise(self):
         import asyncio
         from backend.core.reflexion import async_generate_and_save
-        with patch("backend.core.llm.call_fast", side_effect=RuntimeError("API error")):
+        with patch("backend.core.llm.call_fast", side_effect=RuntimeError("API error")), \
+             patch("backend.core.reflexion.save_reflexion") as mock_save:
             asyncio.run(
                 async_generate_and_save(
                     "store",
                     "Pregunta larga de prueba que supere el umbral mínimo de 80 chars totales",
                     "Respuesta también larga de prueba para asegurarnos de que pasa el filtro",
                 )
-            )  # must not raise
+            )
+        mock_save.assert_not_called()  # LLM error → no reflexion guardada

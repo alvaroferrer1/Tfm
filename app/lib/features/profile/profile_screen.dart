@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/api_service.dart';
+import '../../core/error_widget.dart';
 import '../../core/supabase_client.dart';
 import '../../core/user_role_provider.dart';
 
@@ -32,6 +34,15 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   bool _linking = false;
   bool _unlinking = false;
 
+  Future<int> _pendingOfflineCount() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return (prefs.getStringList('offline_actions_queue') ?? []).length;
+    } catch (_) {
+      return 0;
+    }
+  }
+
   @override
   void dispose() {
     _tgController.dispose();
@@ -50,7 +61,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       ),
       body: profileAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => _ErrorBody(error: '$e', onRetry: () => ref.invalidate(_userProfileProvider)),
+        error: (e, _) => _ErrorBody(error: friendlyError(e), onRetry: () => ref.invalidate(_userProfileProvider)),
         data: (profile) => ListView(
           padding: const EdgeInsets.all(20),
           children: [
@@ -107,7 +118,35 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 ],
               ),
             ),
-            const SizedBox(height: 32),
+            const SizedBox(height: 20),
+
+            // Indicador de cola offline (si hay acciones sin sincronizar)
+            FutureBuilder<int>(
+              future: _pendingOfflineCount(),
+              builder: (context, snap) {
+                final count = snap.data ?? 0;
+                if (count == 0) return const SizedBox.shrink();
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 16),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEF3C7),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFF59E0B).withValues(alpha: 0.4)),
+                  ),
+                  child: Row(children: [
+                    const Icon(Icons.cloud_off_rounded, color: Color(0xFFF59E0B), size: 18),
+                    const SizedBox(width: 10),
+                    Expanded(child: Text(
+                      '$count acción${count > 1 ? 'es' : ''} pendiente${count > 1 ? 's' : ''} de sincronizar — se enviarán al conectarse.',
+                      style: const TextStyle(fontSize: 12, color: Color(0xFF92400E)),
+                    )),
+                  ]),
+                );
+              },
+            ),
+
+            const SizedBox(height: 12),
 
             // Sección Telegram
             const Text(
@@ -163,7 +202,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                           foregroundColor: Colors.white,
                           padding: const EdgeInsets.symmetric(vertical: 13),
                         ),
-                        onPressed: () => _openTelegram(ref),
+                        onPressed: () => _openTelegram(context, ref),
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -214,7 +253,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                           foregroundColor: Colors.white,
                           padding: const EdgeInsets.symmetric(vertical: 13),
                         ),
-                        onPressed: () => _openTelegram(ref),
+                        onPressed: () => _openTelegram(context, ref),
                       ),
                     ),
                     const SizedBox(height: 14),
@@ -306,12 +345,18 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     );
   }
 
-  Future<void> _openTelegram(WidgetRef ref) async {
+  Future<void> _openTelegram(BuildContext context, WidgetRef ref) async {
     final status = await ref.read(_telegramStatusProvider.future);
     final username = (status['bot_username'] as String? ?? '').replaceAll('@', '');
     final url = Uri.parse(username.isNotEmpty ? 'https://t.me/$username' : 'https://t.me');
-    if (await canLaunchUrl(url)) {
-      await launchUrl(url, mode: LaunchMode.externalApplication);
+    if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No se pudo abrir Telegram. ¿Está instalado en el dispositivo?'),
+          ),
+        );
+      }
     }
   }
 
@@ -330,6 +375,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     try {
       await api.linkTelegram(id);
       ref.invalidate(_userProfileProvider);
+      ref.invalidate(_telegramStatusProvider);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -342,7 +388,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error: $e'),
+            content: Text(friendlyError(e)),
             backgroundColor: Colors.red,
           ),
         );
@@ -379,6 +425,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     try {
       await api.unlinkTelegram();
       ref.invalidate(_userProfileProvider);
+      ref.invalidate(_telegramStatusProvider);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Telegram desvinculado.')),
@@ -387,7 +434,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),
         );
       }
     } finally {

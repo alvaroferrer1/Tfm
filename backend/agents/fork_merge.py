@@ -166,7 +166,42 @@ def evaluate_fork_merge(
             "price_adjustment_pct": 0, "thinking_summary": "", "method": "fork_merge",
         }
 
-    # ── MERGE: Opus sintetiza la decisión ────────────────────────────────────
+    # ── Semantic deduplication: si 2/3 ramas coinciden en acción, skip Opus ─
+    # Esto ahorra la llamada más cara (Opus) cuando el consenso es evidente.
+    # Pattern: producción 2025 — deduplicar antes de síntesis reduce coste ~33%.
+    from collections import Counter
+    action_votes = Counter(r.get("action", "revisar") for r in branch_results)
+    majority_action, majority_count = action_votes.most_common(1)[0]
+
+    if majority_count >= 2 and len(branch_results) >= 2:
+        # Dos o más ramas coinciden — tomar la de mayor confianza entre las coincidentes
+        agreeing = [r for r in branch_results if r.get("action") == majority_action]
+        best = max(agreeing, key=lambda r: r.get("confidence", 0))
+        avg_score = int(sum(r.get("score", 60) for r in agreeing) / len(agreeing))
+        risk_level = "CRÍTICO" if avg_score >= 85 else "ALTO" if avg_score >= 65 else "MEDIO" if avg_score >= 40 else "BAJO"
+        logger.info(
+            f"[fork_merge] {name}: consenso {majority_count}/3 en '{majority_action}' — skip Opus"
+        )
+        return {
+            "risk_level": risk_level,
+            "score": avg_score,
+            "action": majority_action,
+            "price_adjustment_pct": best.get("price_adjustment_pct", 0),
+            "reasoning": best.get("reasoning", ""),
+            "thinking_summary": (
+                f"Fork-merge: consenso {majority_count}/3 ramas en '{majority_action}' (sin Opus)."
+            ),
+            "days_left": days_left,
+            "total_value_at_risk": total_value,
+            "method": "fork_merge_consensus",
+            "branches": [
+                {"name": r["branch_name"], "action": r.get("action"),
+                 "confidence": r.get("confidence"), "reasoning": r.get("reasoning", "")[:80]}
+                for r in branch_results
+            ],
+        }
+
+    # ── MERGE: Opus sintetiza la decisión (solo cuando hay desacuerdo real) ──
     merge_prompt = (
         f"Producto: {name} | {days_left}d | {total_value}€ en riesgo\n\n"
         f"Tres hipótesis de evaluación:\n"

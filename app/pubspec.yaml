@@ -43,9 +43,16 @@ dependencies:
   # Local notifications (alertas en tiempo real sin FCM)
   flutter_local_notifications: ^18.0.0
 
+  # Voice input
+  speech_to_text: ^7.0.0
+
   cupertino_icons: ^1.0.8
   flutter_svg: ^2.0.10+1
   qr_flutter: ^4.1.0
+
+  # UX premium
+  skeletonizer: ^1.4.2       # skeleton loading que envuelve widgets reales
+  animations: ^2.0.11        # Material Motion transitions (SharedAxis, OpenContainer)
 
 dev_dependencies:
   flutter_test:

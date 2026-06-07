@@ -1,5 +1,42 @@
 # MermaOps — comandos de desarrollo
-.PHONY: install run seed test test-fast lint clean check migrate demo-ready hero create-users
+.PHONY: install run seed test test-fast lint clean check migrate demo-ready hero create-users arranca para pre-defensa
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PRE-DEFENSA — ejecutar 30 min antes del tribunal
+# Avanza demo + genera brief + verifica todo + imprime estado
+# ─────────────────────────────────────────────────────────────────────────────
+pre-defensa:
+	python scripts/pre_defensa.py
+
+# Generar todos los PDFs académicos
+pdfs:
+	python scripts/gen_pdfs.py
+
+# Generar el video MP4 de presentacion (2 min, 1080p, con musica)
+video:
+	python scripts/gen_video.py
+
+# Abrir presentacion HTML animada en Chrome
+slides:
+	start "" "docs\video_presentacion.html"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DESARROLLO RÁPIDO — un comando, Chrome siempre, cero tokens de diagnóstico
+# ─────────────────────────────────────────────────────────────────────────────
+arranca:
+	python scripts/dev.py
+
+para:
+	@python -c "import subprocess; subprocess.run(['pkill','-f','uvicorn'], capture_output=True)" 2>nul || taskkill /F /IM python.exe /FI "WINDOWTITLE eq uvicorn*" 2>nul || echo Procesos parados
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ARRANQUE COMPLETO — un solo comando levanta TODO
+# Terminal 1: make todo
+# Abre Chrome automaticamente con la app Flutter en localhost:3000
+# Backend en localhost:8001 con Chuwi activo en Telegram
+# ─────────────────────────────────────────────────────────────────────────────
+todo:
+	python scripts/start_all.py
 
 # Arrancar el sistema con guia de pruebas (verifica + arranca + guia)
 start:
@@ -83,6 +120,18 @@ advance:
 # Vuelve al estado inicial del día de hoy
 demo-reset:
 	python -m backend.data.advance_demo --reset
+
+# Prepara el entorno 10 minutos antes de la defensa (reset + advance + brief)
+demo-prep:
+	python scripts/demo_prep.py
+
+# Evaluación cuantitativa vs. baseline aleatorio
+baseline:
+	python scripts/compute_baseline.py
+
+# Resumen ejecutivo del sistema (requiere backend corriendo)
+overview:
+	curl -s http://localhost:8001/api/v1/stats/overview | python -m json.tool
 
 # Arrancar app Flutter con credenciales desde .env
 # Requiere: flutter instalado, emulador Android o dispositivo conectado

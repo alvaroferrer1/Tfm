@@ -16,7 +16,7 @@ def generate_daily_brief(
 ) -> str:
     today = date.today()
     total_value = sum(
-        batch.get("quantity", 0) * batch.get("products", {}).get("price", 0)
+        batch.get("quantity", 0) * (batch.get("products") or {}).get("price", 0)
         for batch, _ in risk_reports
     )
 
@@ -32,7 +32,7 @@ def generate_daily_brief(
     # Detalle de críticos
     critical_lines = []
     for batch, risk in critical[:8]:
-        product = batch.get("products", {})
+        product = batch.get("products") or {}
         action = risk.get("action", "revisar") if isinstance(risk, dict) else "revisar"
         days = risk.get("days_left", "?") if isinstance(risk, dict) else "?"
         reasoning = risk.get("reasoning", "") if isinstance(risk, dict) else str(risk)[:100]
@@ -81,17 +81,22 @@ RUTA PROPUESTA:
 CONTEXTO HISTORICO (patrones anteriores):
 {memory_context or "Sin historial disponible todavia."}"""
 
+    store_name = (database.get_store(store_id) or {}).get("name", "la tienda")
     brief_text = llm.call(
-        f"Genera el brief de apertura para el encargado del Super Martinez:\n\n{context}",
+        f"Genera el brief de apertura para el encargado de {store_name}:\n\n{context}",
         system_extra=(
-            "El brief de apertura debe ser claro, directo y operativo. "
-            "Empieza con un resumen ejecutivo de una línea (la situacion de hoy en dos datos). "
-            "Luego los críticos con instrucción específica para cada uno. "
-            "Luego la ruta resumida. "
-            "Cierra con el valor total en riesgo y el tiempo estimado. "
-            "Máximo 350 palabras. Sin asteriscos ni markdown. Usa mayúsculas para énfasis."
+            "Eres Kuine generando el brief. Habla como si le explicaras la situación "
+            "al encargado mientras toma un café antes de abrir. Se lee en 30 segundos.\n"
+            "ESTRUCTURA CONVERSACIONAL (no tablas, no listas largas):\n"
+            "1. Una frase de resumen: 'Hoy abrimos con X críticos en [sección], [sección] bien cubierta.'\n"
+            "2. CRÍTICOS: guión por producto. Nombre, pasillo, acción, precio si hay. Sin tablas.\n"
+            "3. Resto del día: qué hacer antes del mediodía y qué puede esperar.\n"
+            "4. Cierre económico: 'Ayer se salvaron X€ en rebajas y las donaciones a Cáritas salieron a tiempo.'\n"
+            "Máximo 250 palabras. Sin asteriscos. Sin markdown. Sin negritas.\n"
+            "Jerga de tienda española: lineal, frescos, flejes, picar merma, FEFO, pasillo frío.\n"
+            "MAYÚSCULAS solo para: REBAJAR, RETIRAR, DONAR, URGENTE."
         ),
-        max_tokens=700,
+        max_tokens=800,
     )
 
     # Añadir justificación normativa citada para el producto más crítico
@@ -99,7 +104,7 @@ CONTEXTO HISTORICO (patrones anteriores):
         try:
             from backend.core import knowledge
             top_batch, top_risk = critical[0]
-            top_product = top_batch.get("products", {})
+            top_product = top_batch.get("products") or {}
             top_name = top_product.get("name", "Producto crítico")
             top_cat = top_product.get("category", "general")
             top_days = top_risk.get("days_left", 0) if isinstance(top_risk, dict) else 0
@@ -144,8 +149,8 @@ def generate_intraday_alert(critical_actions: list[dict], store_id: str = "") ->
 
     items = []
     for action in critical_actions[:6]:
-        batch_info = action.get("batches", {})
-        product_info = batch_info.get("products", {}) if batch_info else {}
+        batch_info = action.get("batches") or {}
+        product_info = (batch_info.get("products") or {})
         name = product_info.get("name", "Producto desconocido")
         pasillo = product_info.get("pasillo", "?")
         score = action.get("priority_score", 0)
@@ -240,8 +245,9 @@ def generate_weekly_report(store_id: str) -> str:
     except Exception:
         supplier_line = "Sin datos de proveedores"
 
+    store_name = (database.get_store(store_id) or {}).get("name", "la tienda")
     return llm.call(
-        f"""Genera el informe semanal de merma para el Super Martinez.
+        f"""Genera el informe semanal de merma para {store_name}.
 
 DATOS DE LA SEMANA:
 - Merma registrada: {merma_value:.2f} euros ({merma_qty} uds)
@@ -316,8 +322,9 @@ def generate_monthly_report(store_id: str) -> str:
         f"- {k}: {v}" for k, v in list(patterns.items())[:5]
     ) if patterns else "Sin patrones disponibles."
 
+    store_name = (database.get_store(store_id) or {}).get("name", "la tienda")
     return llm.call(
-        f"""Genera el informe mensual de {month_name} {today.year} para el dueño del Súper Martínez.
+        f"""Genera el informe mensual de {month_name} {today.year} para el dueño de {store_name}.
 
 RESUMEN OPERATIVO DEL MES:
 - Merma registrada: {merma_value:.2f} euros — {merma_qty} unidades perdidas

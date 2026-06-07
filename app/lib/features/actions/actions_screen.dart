@@ -1,13 +1,17 @@
-import 'dart:typed_data';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/api_service.dart';
+import '../../core/error_widget.dart';
 import '../../core/supabase_client.dart';
-import '../../core/theme.dart';
+import '../../core/theme.dart' show UrgencyColors, ShimmerList;
 import 'actions_provider.dart';
 
 class ActionsScreen extends ConsumerStatefulWidget {
@@ -93,6 +97,7 @@ class _ActionsScreenState extends ConsumerState<ActionsScreen>
     // State declared outside builder so it persists across setState calls
     var loading = false;
     String? result;
+    var resultIsError = false;
 
     showModalBottomSheet(
       context: context,
@@ -143,7 +148,7 @@ class _ActionsScreenState extends ConsumerState<ActionsScreen>
                 Container(
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    color: result!.startsWith('Error')
+                    color: resultIsError
                         ? const Color(0xFFFEE2E2)
                         : const Color(0xFFD1FAE5),
                     borderRadius: BorderRadius.circular(8),
@@ -152,7 +157,7 @@ class _ActionsScreenState extends ConsumerState<ActionsScreen>
                     result!,
                     style: TextStyle(
                       fontSize: 12,
-                      color: result!.startsWith('Error')
+                      color: resultIsError
                           ? const Color(0xFFDC2626)
                           : const Color(0xFF059669),
                     ),
@@ -194,6 +199,7 @@ class _ActionsScreenState extends ConsumerState<ActionsScreen>
                               setModalState(() {
                                 result = 'Importados: $imp lotes'
                                     '${err > 0 ? ' · $err errores' : ''}.';
+                                resultIsError = false;
                                 loading = false;
                               });
                               if (imp > 0) {
@@ -201,7 +207,8 @@ class _ActionsScreenState extends ConsumerState<ActionsScreen>
                               }
                             } catch (e) {
                               setModalState(() {
-                                result = 'Error: $e';
+                                result = friendlyError(e);
+                                resultIsError = true;
                                 loading = false;
                               });
                             }
@@ -593,17 +600,18 @@ class _ActionsScreenState extends ConsumerState<ActionsScreen>
     final price = (product?['price'] as num?)?.toDouble() ?? 0;
 
     try {
+      final nowUtc = DateTime.now().toUtc().toIso8601String();
       // Mark action completed — completed_by stores email for legible historial
       await supabase.from('actions').update({
         'status': 'completed',
         'completed_by': userLabel,
-        'completed_at': DateTime.now().toIso8601String(),
+        'completed_at': nowUtc,
         'notes': notes.isEmpty ? 'Donado a $entity — $quantity uds' : notes,
         'donation_entity': entity,
         'donation_quantity': quantity,
       }).eq('id', actionId);
 
-      // Register in donations table
+      // Register in donations table (donated_at required for stats queries)
       await supabase.from('donations').insert({
         'store_id': storeId,
         'batch_id': action['batch_id'],
@@ -613,14 +621,17 @@ class _ActionsScreenState extends ConsumerState<ActionsScreen>
         'product_name': productName,
         'value_donated': (price * quantity),
         'donated_by': userLabel,
+        'donated_at': nowUtc,
         'notes': notes,
       });
     } catch (_) {
+      // Fallback: si falla la escritura directa a Supabase, completa vía API backend
       await api.completeAction(
         actionId: actionId,
         completedBy: userLabel,
         notes: 'Donado a $entity — $quantity uds',
       );
+      // Si este segundo intento también falla, deja que la excepción llegue al caller
     }
     ref.invalidate(pendingActionsProvider);
     ref.invalidate(completedActionsProvider);
@@ -645,28 +656,180 @@ class _ActionsScreenState extends ConsumerState<ActionsScreen>
             'actions/$actionId/${DateTime.now().millisecondsSinceEpoch}.jpg';
         await supabase.storage.from('evidence').uploadBinary(path, bytes);
         photoUrl = supabase.storage.from('evidence').getPublicUrl(path);
-      } catch (_) {
-        // Upload failed — proceed without photo
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('Foto no guardada: ${e.toString().split(':').first}'),
+            backgroundColor: Colors.orange,
+            duration: const Duration(seconds: 3),
+          ));
+        }
       }
     }
 
+    bool synced = false;
     try {
       await supabase.from('actions').update({
         'status': 'completed',
         'completed_by': userId,
-        'completed_at': DateTime.now().toIso8601String(),
+        'completed_at': DateTime.now().toUtc().toIso8601String(),
         'notes': notes,
         if (photoUrl.isNotEmpty) 'photo_url': photoUrl,
       }).eq('id', actionId);
-    } catch (e) {
-      await api.completeAction(
-        actionId: actionId,
-        completedBy: userId,
-        notes: notes,
-        photoUrl: photoUrl,
-      );
+      synced = true;
+    } catch (_) {
+      try {
+        await api.completeAction(
+          actionId: actionId,
+          completedBy: userId,
+          notes: notes,
+          photoUrl: photoUrl,
+        );
+        synced = true;
+      } catch (e2) {
+        // Red no disponible → guardar en cola offline
+        await _OfflineQueue.enqueue(actionId, userId, notes, photoUrl);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Sin conexión — acción guardada. Se sincronizará automáticamente.'),
+            backgroundColor: Color(0xFFF59E0B),
+            duration: Duration(seconds: 4),
+          ));
+        }
+      }
     }
-    ref.invalidate(pendingActionsProvider);
+    if (synced) {
+      ref.invalidate(pendingActionsProvider);
+      ref.invalidate(completedActionsProvider);
+      // Intentar sincronizar pendientes anteriores también
+      await _OfflineQueue.flush(ref);
+    }
+
+    // Celebración visual para acciones críticas
+    if (mounted) {
+      HapticFeedback.heavyImpact();
+      _showCompletionCelebration(context);
+    }
+  }
+
+  void _showCompletionCelebration(BuildContext context) {
+    final overlay = Overlay.of(context);
+    late OverlayEntry entry;
+    entry = OverlayEntry(builder: (_) => _CelebrationOverlay(onDone: () => entry.remove()));
+    overlay.insert(entry);
+  }
+}
+
+// ── Celebration overlay — aparece al completar una acción crítica ─────────────
+// Animación de checkmark + partículas que desaparece sola en 1.5s.
+
+// ── Offline action queue ──────────────────────────────────────────────────────
+// Persiste acciones completadas en SharedPreferences cuando no hay red.
+// Se sincronizan automáticamente cuando la conexión se restaura.
+
+class _OfflineQueue {
+  static const _key = 'offline_actions_queue';
+
+  static Future<void> enqueue(
+    String actionId, String userId, String notes, String photoUrl,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getStringList(_key) ?? [];
+    raw.add('$actionId|$userId|${Uri.encodeComponent(notes)}|$photoUrl');
+    await prefs.setStringList(_key, raw);
+  }
+
+  static Future<void> flush(WidgetRef ref) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getStringList(_key) ?? [];
+    if (raw.isEmpty) return;
+
+    final remaining = <String>[];
+    for (final item in raw) {
+      final parts = item.split('|');
+      if (parts.length < 2) continue;
+      final actionId = parts[0];
+      final userId = parts[1];
+      final notes = parts.length > 2 ? Uri.decodeComponent(parts[2]) : '';
+      final photoUrl = parts.length > 3 ? parts[3] : '';
+      try {
+        await supabase.from('actions').update({
+          'status': 'completed',
+          'completed_by': userId,
+          'completed_at': DateTime.now().toUtc().toIso8601String(),
+          'notes': notes,
+          if (photoUrl.isNotEmpty) 'photo_url': photoUrl,
+        }).eq('id', actionId);
+        ref.invalidate(pendingActionsProvider);
+        ref.invalidate(completedActionsProvider);
+      } catch (_) {
+        remaining.add(item); // mantener en cola si aún falla
+      }
+    }
+    await prefs.setStringList(_key, remaining);
+  }
+
+}
+
+class _CelebrationOverlay extends StatefulWidget {
+  final VoidCallback onDone;
+  const _CelebrationOverlay({required this.onDone});
+
+  @override
+  State<_CelebrationOverlay> createState() => _CelebrationOverlayState();
+}
+
+class _CelebrationOverlayState extends State<_CelebrationOverlay>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+  late Animation<double> _scaleAnim;
+  late Animation<double> _fadeAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 1200));
+    _scaleAnim = TweenSequence([
+      TweenSequenceItem(tween: Tween<double>(begin: 0.3, end: 1.2).chain(CurveTween(curve: Curves.elasticOut)), weight: 60),
+      TweenSequenceItem(tween: Tween<double>(begin: 1.2, end: 1.0), weight: 20),
+      TweenSequenceItem(tween: Tween<double>(begin: 1.0, end: 0.0), weight: 20),
+    ]).animate(_ctrl);
+    _fadeAnim = Tween<double>(begin: 1.0, end: 0.0).animate(
+      CurvedAnimation(parent: _ctrl, curve: const Interval(0.7, 1.0)),
+    );
+    _ctrl.forward().whenComplete(widget.onDone);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (_, __) => Opacity(
+        opacity: _fadeAnim.value,
+        child: Center(
+          child: Transform.scale(
+            scale: _scaleAnim.value,
+            child: Container(
+              width: 120, height: 120,
+              decoration: BoxDecoration(
+                color: const Color(0xFF059669),
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(color: const Color(0xFF059669).withValues(alpha: 0.4), blurRadius: 30, spreadRadius: 10),
+                ],
+              ),
+              child: const Icon(Icons.check_rounded, color: Colors.white, size: 60),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -680,8 +843,8 @@ class _PendingTab extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final actionsAsync = ref.watch(pendingActionsProvider);
     return actionsAsync.when(
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) => Center(child: Text('Error: $e')),
+      loading: () => const ShimmerList(count: 4, itemHeight: 92),
+      error: (e, _) => AppErrorWidget(error: e, onRetry: () => ref.invalidate(pendingActionsProvider)),
       data: (actions) {
         if (actions.isEmpty) {
           return const Center(
@@ -719,7 +882,7 @@ class _PendingTab extends ConsumerWidget {
                 label: 'CRÍTICAS (${critical.length})',
                 color: UrgencyColors.critical,
               ),
-              ...critical.map((a) => _ActionCard(
+              ...critical.map((a) => _SwipeableActionCard(
                     action: a,
                     onComplete: () => onComplete(context, ref, a),
                     onDonate: () => onDonate(context, ref, a),
@@ -728,7 +891,7 @@ class _PendingTab extends ConsumerWidget {
             ],
             if (others.isNotEmpty) ...[
               _SectionHeader(label: 'OTRAS (${others.length})'),
-              ...others.map((a) => _ActionCard(
+              ...others.map((a) => _SwipeableActionCard(
                     action: a,
                     onComplete: () => onComplete(context, ref, a),
                     onDonate: () => onDonate(context, ref, a),
@@ -748,8 +911,8 @@ class _HistorialTab extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final async = ref.watch(completedActionsProvider);
     return async.when(
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) => Center(child: Text('Error: $e')),
+      loading: () => const ShimmerList(count: 3, itemHeight: 72),
+      error: (e, _) => AppErrorWidget(error: e, onRetry: () => ref.invalidate(completedActionsProvider)),
       data: (actions) {
         if (actions.isEmpty) {
           return const Center(
@@ -1010,6 +1173,73 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
+// ── Swipeable wrapper — desliza para completar o donar ────────────────────────
+// Deslizar derecha → completar (✅ verde)
+// Deslizar izquierda → donar (❤️ morado)
+// Con haptic feedback en cada dirección.
+
+class _SwipeableActionCard extends StatelessWidget {
+  final Map<String, dynamic> action;
+  final VoidCallback onComplete;
+  final VoidCallback onDonate;
+
+  const _SwipeableActionCard({
+    required this.action,
+    required this.onComplete,
+    required this.onDonate,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final actionId = action['id']?.toString() ?? UniqueKey().toString();
+    return Dismissible(
+      key: ValueKey(actionId),
+      // Deslizar derecha → completar
+      background: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        decoration: BoxDecoration(
+          color: const Color(0xFF059669),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        alignment: Alignment.centerLeft,
+        child: const Row(children: [
+          Icon(Icons.check_circle_rounded, color: Colors.white, size: 28),
+          SizedBox(width: 10),
+          Text('Completar', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15)),
+        ]),
+      ),
+      // Deslizar izquierda → donar
+      secondaryBackground: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        decoration: BoxDecoration(
+          color: const Color(0xFF7C3AED),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        alignment: Alignment.centerRight,
+        child: const Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+          Text('Donar', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15)),
+          SizedBox(width: 10),
+          Icon(Icons.favorite_rounded, color: Colors.white, size: 28),
+        ]),
+      ),
+      confirmDismiss: (direction) async {
+        if (direction == DismissDirection.startToEnd) {
+          HapticFeedback.mediumImpact();
+          onComplete();
+          return false; // el dialog maneja la lógica real
+        } else {
+          HapticFeedback.selectionClick();
+          onDonate();
+          return false;
+        }
+      },
+      child: _ActionCard(action: action, onComplete: onComplete, onDonate: onDonate),
+    );
+  }
+}
+
 class _ActionCard extends StatelessWidget {
   final Map<String, dynamic> action;
   final VoidCallback onComplete;
@@ -1222,9 +1452,10 @@ class _ActionCard extends StatelessWidget {
     final product = batch?['products'] as Map<String, dynamic>?;
     final productName = product?['name'] as String? ?? 'Producto';
     final originalPrice = (product?['price'] as num?)?.toDouble() ?? 0;
+    final cost = (product?['cost'] as num?)?.toDouble() ?? 0;
     final expiryDate = batch?['expiry_date'] as String? ?? '';
+    final actionId = action['id'] as String? ?? '';
 
-    // Prefer stored pct, then parse from notes, then default 30%
     int discountPct = (action['price_adjustment_pct'] as int?) ?? 0;
     if (discountPct == 0) {
       final notes = action['notes'] as String? ?? '';
@@ -1244,27 +1475,92 @@ class _ActionCard extends StatelessWidget {
         productName: productName,
         originalPrice: originalPrice,
         newPrice: newPrice,
+        cost: cost,
         discountPct: discountPct,
         expiryDate: expiryDate,
+        actionId: actionId,
       ),
     );
   }
 }
 
-class _DiscountLabelSheet extends StatelessWidget {
+class _DiscountLabelSheet extends StatefulWidget {
   final String productName;
   final double originalPrice;
   final double newPrice;
+  final double cost;
   final int discountPct;
   final String expiryDate;
+  final String actionId;
 
   const _DiscountLabelSheet({
     required this.productName,
     required this.originalPrice,
     required this.newPrice,
+    this.cost = 0.0,
     required this.discountPct,
     required this.expiryDate,
+    required this.actionId,
   });
+
+  @override
+  State<_DiscountLabelSheet> createState() => _DiscountLabelSheetState();
+}
+
+class _DiscountLabelSheetState extends State<_DiscountLabelSheet> {
+  bool _downloading = false;
+  late double _customDiscount;  // 0.0 - 0.70
+
+  @override
+  void initState() {
+    super.initState();
+    _customDiscount = (widget.discountPct / 100.0).clamp(0.0, 0.70);
+  }
+
+  double get _customPrice {
+    if (widget.originalPrice <= 0) return widget.newPrice;
+    final raw = widget.originalPrice * (1 - _customDiscount);
+    return (raw / 0.05).round() * 0.05;  // redondeo comercial .x0/.x5
+  }
+
+  int get _effectiveDiscountPct =>
+      widget.originalPrice > 0
+          ? ((_customDiscount) * 100).round()
+          : widget.discountPct;
+
+  Color get _marginColor {
+    if (widget.cost <= 0) return const Color(0xFF059669);
+    if (_customPrice < widget.cost * 1.05) return const Color(0xFFEF4444);
+    if (_customPrice < widget.cost * 1.15) return const Color(0xFFF59E0B);
+    return const Color(0xFF059669);
+  }
+
+  String get _marginLabel {
+    if (widget.cost <= 0) return '';
+    final margin = _customPrice - widget.cost;
+    if (_customPrice < widget.cost * 1.05) return 'Por debajo del coste — sube el precio';
+    return 'Margen: ${margin.toStringAsFixed(2)} €/ud';
+  }
+
+  Future<void> _downloadPdf() async {
+    if (_downloading) return;
+    setState(() => _downloading = true);
+    try {
+      final bytes = await api.getPriceLabel(widget.actionId);
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}/etiqueta_${widget.actionId.substring(0, 8)}.pdf');
+      await file.writeAsBytes(bytes);
+      await Share.shareXFiles([XFile(file.path)], text: '🏷️ Etiqueta de descuento: ${widget.productName}');
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error descargando PDF: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _downloading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1284,7 +1580,6 @@ class _DiscountLabelSheet extends StatelessWidget {
               style: TextStyle(fontSize: 14, color: Colors.grey),
             ),
             const SizedBox(height: 16),
-            // Label preview card
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(20),
@@ -1295,7 +1590,6 @@ class _DiscountLabelSheet extends StatelessWidget {
               ),
               child: Column(
                 children: [
-                  // Discount badge
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                     decoration: BoxDecoration(
@@ -1303,78 +1597,89 @@ class _DiscountLabelSheet extends StatelessWidget {
                       borderRadius: BorderRadius.circular(30),
                     ),
                     child: Text(
-                      '-$discountPct%',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 22,
-                        fontWeight: FontWeight.w900,
-                      ),
+                      '-${widget.discountPct}%',
+                      style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900),
                     ),
                   ),
                   const SizedBox(height: 14),
                   Text(
-                    productName,
+                    widget.productName,
                     textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800,
-                    ),
+                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
                   ),
                   const SizedBox(height: 14),
-                  // Prices
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      if (originalPrice > 0) ...[
+                      if (widget.originalPrice > 0) ...[
                         Text(
-                          '${originalPrice.toStringAsFixed(2)} €',
-                          style: const TextStyle(
-                            fontSize: 16,
-                            color: Colors.grey,
-                            decoration: TextDecoration.lineThrough,
-                          ),
+                          '${widget.originalPrice.toStringAsFixed(2)} €',
+                          style: const TextStyle(fontSize: 16, color: Colors.grey, decoration: TextDecoration.lineThrough),
                         ),
                         const SizedBox(width: 12),
                       ],
                       Text(
-                        '${newPrice.toStringAsFixed(2)} €',
-                        style: const TextStyle(
-                          fontSize: 36,
-                          fontWeight: FontWeight.w900,
-                          color: Color(0xFFEF4444),
-                          letterSpacing: -1,
-                        ),
+                        '${widget.newPrice.toStringAsFixed(2)} €',
+                        style: const TextStyle(fontSize: 36, fontWeight: FontWeight.w900, color: Color(0xFFEF4444), letterSpacing: -1),
                       ),
                     ],
                   ),
-                  if (expiryDate.isNotEmpty) ...[
+                  if (widget.expiryDate.isNotEmpty) ...[
                     const SizedBox(height: 10),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFEE2E2),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
+                      decoration: BoxDecoration(color: const Color(0xFFFEE2E2), borderRadius: BorderRadius.circular(6)),
                       child: Text(
-                        'Caduca: $expiryDate',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Color(0xFF991B1B),
-                          fontWeight: FontWeight.w600,
-                        ),
+                        'Caduca: ${widget.expiryDate}',
+                        style: const TextStyle(fontSize: 12, color: Color(0xFF991B1B), fontWeight: FontWeight.w600),
                       ),
                     ),
                   ],
                   const SizedBox(height: 14),
-                  const Text(
-                    'Precio especial por proximidad a caducidad',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 11, color: Colors.grey),
-                  ),
+                  const Text('Precio especial por proximidad a caducidad',
+                      textAlign: TextAlign.center, style: TextStyle(fontSize: 11, color: Colors.grey)),
                 ],
               ),
             ),
+            // ── Slider de ajuste manual del descuento ──────────────────────
+            if (widget.originalPrice > 0) ...[
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF9FAFB),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: const Color(0xFFE5E7EB)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text('Ajustar descuento',
+                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF374151))),
+                        Text('$_effectiveDiscountPct% → ${_customPrice.toStringAsFixed(2)} €',
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: Color(0xFFEF4444))),
+                      ],
+                    ),
+                    Slider(
+                      value: _customDiscount,
+                      min: 0.10,
+                      max: 0.70,
+                      divisions: 12,
+                      activeColor: _marginColor,
+                      onChanged: (v) => setState(() => _customDiscount = v),
+                    ),
+                    if (_marginLabel.isNotEmpty)
+                      Text(_marginLabel,
+                          style: TextStyle(fontSize: 11, color: _marginColor, fontWeight: FontWeight.w500)),
+                  ],
+                ),
+              ),
+            ],
+            const SizedBox(height: 8),
             const SizedBox(height: 16),
             Row(
               children: [
@@ -1384,26 +1689,32 @@ class _DiscountLabelSheet extends StatelessWidget {
                     child: const Text('Cerrar'),
                   ),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 8),
                 Expanded(
                   child: ElevatedButton.icon(
                     icon: const Icon(Icons.share_outlined, size: 18),
                     label: const Text('Compartir'),
                     onPressed: () {
                       Navigator.pop(context);
-                      final text = '🏷️ OFERTA — $productName\n'
-                          '${originalPrice > 0 ? 'Antes: ${originalPrice.toStringAsFixed(2)} €\n' : ''}'
-                          '-$discountPct% DESCUENTO\n'
-                          'Ahora: ${newPrice.toStringAsFixed(2)} €\n'
-                          '${expiryDate.isNotEmpty ? 'Caduca: $expiryDate\n' : ''}'
+                      final text = '🏷️ OFERTA — ${widget.productName}\n'
+                          '${widget.originalPrice > 0 ? 'Antes: ${widget.originalPrice.toStringAsFixed(2)} €\n' : ''}'
+                          '-${widget.discountPct}% DESCUENTO\n'
+                          'Ahora: ${widget.newPrice.toStringAsFixed(2)} €\n'
+                          '${widget.expiryDate.isNotEmpty ? 'Caduca: ${widget.expiryDate}\n' : ''}'
                           'Precio especial por proximidad a caducidad.';
                       Share.share(text);
                     },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFFF59E0B),
-                      foregroundColor: Colors.white,
-                    ),
+                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFF59E0B), foregroundColor: Colors.white),
                   ),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton.icon(
+                  icon: _downloading
+                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : const Icon(Icons.download_rounded, size: 18),
+                  label: const Text('PDF'),
+                  onPressed: widget.actionId.isEmpty ? null : _downloadPdf,
+                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF059669), foregroundColor: Colors.white),
                 ),
               ],
             ),

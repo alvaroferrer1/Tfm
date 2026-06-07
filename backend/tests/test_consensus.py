@@ -158,4 +158,8 @@ class TestBuildResult:
                 with patch("backend.agents.consensus._vote_operations", return_value=votes[2]):
                     result = reach_consensus(PRODUCT_CARNE, days_left=1, qty=12)
 
-        assert "operaciones" in result["reasoning"].lower() or "Disiente" in result["reasoning"]
+        # El reasoning ahora es lenguaje cotidiano de tienda (no técnico)
+        # Debe mencionar el producto y la acción de forma comprensible para el empleado
+        reasoning = result["reasoning"].lower()
+        assert any(word in reasoning for word in ["lote", "carne", "rebajar", "donar", "fleje", "mejor"]), \
+            f"Reasoning debe ser en lenguaje cotidiano de tienda, fue: {result['reasoning'][:100]}"

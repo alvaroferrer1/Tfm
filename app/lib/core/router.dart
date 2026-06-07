@@ -1,3 +1,5 @@
+import 'package:animations/animations.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -10,9 +12,37 @@ import '../features/map/map_screen.dart';
 import '../features/reports/reports_screen.dart';
 import '../features/profile/profile_screen.dart';
 import '../features/agents/agents_screen.dart';
+import '../features/chat/chat_screen.dart';
 import '../features/onboarding/onboarding_screen.dart';
 import '../features/demo/demo_control_screen.dart';
 import 'shell_scaffold.dart';
+
+CustomTransitionPage<void> _sharedAxisPage(
+  GoRouterState state,
+  Widget child, {
+  SharedAxisTransitionType axis = SharedAxisTransitionType.horizontal,
+}) =>
+    CustomTransitionPage<void>(
+      key: state.pageKey,
+      child: child,
+      transitionDuration: const Duration(milliseconds: 280),
+      transitionsBuilder: (context, animation, secondaryAnimation, child) =>
+          SharedAxisTransition(
+        animation: animation,
+        secondaryAnimation: secondaryAnimation,
+        transitionType: axis,
+        child: child,
+      ),
+    );
+
+CustomTransitionPage<void> _fadePage(GoRouterState state, Widget child) =>
+    CustomTransitionPage<void>(
+      key: state.pageKey,
+      child: child,
+      transitionDuration: const Duration(milliseconds: 220),
+      transitionsBuilder: (context, animation, secondaryAnimation, child) =>
+          FadeTransition(opacity: animation, child: child),
+    );
 
 /// Inicializado en main() desde SharedPreferences — solo controla la pantalla inicial.
 final onboardingDoneProvider = Provider<bool>((ref) => true);
@@ -49,37 +79,58 @@ final routerProvider = Provider<GoRouter>((ref) {
         routes: [
           GoRoute(
             path: '/',
-            builder: (context, state) => const DashboardScreen(),
+            pageBuilder: (context, state) => _sharedAxisPage(
+              state, const DashboardScreen(),
+            ),
           ),
           GoRoute(
             path: '/scan',
-            builder: (context, state) => const ScanScreen(),
+            pageBuilder: (context, state) => _sharedAxisPage(
+              state, const ScanScreen(),
+            ),
           ),
           GoRoute(
             path: '/actions',
-            builder: (context, state) => const ActionsScreen(),
+            pageBuilder: (context, state) => _sharedAxisPage(
+              state, const ActionsScreen(),
+            ),
           ),
           GoRoute(
             path: '/map',
-            builder: (context, state) => MapScreen(
-              initialPasillo: state.uri.queryParameters['pasillo'],
+            pageBuilder: (context, state) => _sharedAxisPage(
+              state,
+              MapScreen(initialPasillo: state.uri.queryParameters['pasillo']),
             ),
           ),
           GoRoute(
             path: '/reports',
-            builder: (context, state) => const ReportsScreen(),
+            pageBuilder: (context, state) => _sharedAxisPage(
+              state, const ReportsScreen(),
+            ),
           ),
           GoRoute(
             path: '/profile',
-            builder: (context, state) => const ProfileScreen(),
+            pageBuilder: (context, state) => _fadePage(
+              state, const ProfileScreen(),
+            ),
           ),
           GoRoute(
             path: '/agents',
-            builder: (context, state) => const AgentsScreen(),
+            pageBuilder: (context, state) => _sharedAxisPage(
+              state, const AgentsScreen(),
+            ),
           ),
           GoRoute(
             path: '/demo',
-            builder: (context, state) => const DemoControlScreen(),
+            pageBuilder: (context, state) => _fadePage(
+              state, const DemoControlScreen(),
+            ),
+          ),
+          GoRoute(
+            path: '/chat',
+            pageBuilder: (context, state) => _sharedAxisPage(
+              state, const ChatScreen(), axis: SharedAxisTransitionType.vertical,
+            ),
           ),
         ],
       ),

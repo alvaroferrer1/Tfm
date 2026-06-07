@@ -340,7 +340,7 @@ ORDER BY table_name;
 | `/api/v1/actions` | GET | No | Acciones pendientes |
 | `/api/v1/actions/complete` | POST | Sí | Completar acción |
 | `/api/v1/products/expiring` | GET | No | Productos caducando |
-| `/api/v1/agent/status` | GET | No | Estado de los 11 agentes |
+| `/api/v1/agent/status` | GET | No | Estado de los 12 agentes |
 | `/api/v1/agent/conversations` | GET | Sí | Conversaciones recientes |
 | `/api/v1/agent/conversations/{id}/messages` | GET | Sí | Mensajes de una conversación |
 | `/api/v1/agent/sessions` | GET | Sí | Sesiones del agente |

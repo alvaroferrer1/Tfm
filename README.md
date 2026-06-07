@@ -24,7 +24,7 @@ Sistema de IA multi-agente que convierte datos de productos, lotes y caducidades
 Producto próximo a caducar
         ↓
    Kuine (orquestador, Opus 4.7)
-     analiza el riesgo con 25 herramientas
+     analiza el riesgo con 16 herramientas
      adaptive thinking en todo el loop
         ↓
   Evaluator + Validator + Consensus
@@ -52,7 +52,7 @@ Producto próximo a caducar
 | Precisión del sistema de evaluación | **100%** (5/5 casos) |
 | Mejora sobre baseline sin IA | **+83.3 puntos porcentuales** |
 | Baseline (clasificación aleatoria) | 16.7% |
-| Tests automatizados | **439 / 439** (< 1 s) |
+| Tests automatizados | **800 / 800** (< 1 s) |
 | Robustez adversarial | **23 / 23** ataques neutralizados |
 | Modelos Claude integrados | 3 (Haiku 4.5, Sonnet 4.6, Opus 4.7) |
 | Agentes especializados | 11 |
@@ -66,10 +66,10 @@ Producto próximo a caducar
 
 ### Kuine — el orquestador (Claude Opus 4.7)
 
-Kuine es el cerebro del sistema. Ejecuta un **loop agéntico con 25 herramientas y hasta 20 iteraciones**, razona con **adaptive thinking** entre tool calls, y coordina todos los subagentes en paralelo. Cada decisión queda registrada en `supervisor_decisions` con score, razón y trazabilidad completa.
+Kuine es el cerebro del sistema. Ejecuta un **loop agéntico con 16 herramientas y hasta 20 iteraciones**, razona con **adaptive thinking** entre tool calls, y coordina todos los subagentes en paralelo. Cada decisión queda registrada en `supervisor_decisions` con score, razón y trazabilidad completa.
 
 ```text
-Kuine (Opus 4.7, adaptive thinking, 25 tools, 20 iter)
+Kuine (Opus 4.7, adaptive thinking, 16 tools, 20 iter)
 ├── Evaluator  (Sonnet 4.6, extended thinking)
 │   └── Consenso 3 instancias en paralelo — score ≥ 90 para casos extremos
 ├── Validator  (Sonnet 4.6) — 29 ataques adversariales, 100% bloqueados
@@ -126,7 +126,7 @@ Mensajería      Telegram Bot API · python-telegram-bot 21.x
 Observabilidad  Langfuse · OpenTelemetry · AnthropicInstrumentor
 Datos externos  Open-Meteo (clima) · OpenFoodFacts (productos)
 Voz             Google Speech Recognition (sin API key adicional)
-Tests           pytest · 439 tests deterministas · < 1 s
+Tests           pytest · 800 tests deterministas · < 1 s
 ```
 
 ---
@@ -137,7 +137,7 @@ Tests           pytest · 439 tests deterministas · < 1 s
 mermaops/
 ├── backend/
 │   ├── agents/
-│   │   ├── supervisor.py      # Kuine — orquestador, 25 tools, adaptive thinking
+│   │   ├── supervisor.py      # Kuine — orquestador, 16 tools, adaptive thinking
 │   │   ├── evaluator.py       # Análisis de riesgo con extended thinking
 │   │   ├── consensus.py       # Consenso 3 instancias paralelas
 │   │   ├── validator.py       # Validación adversarial (29 ataques)
@@ -165,7 +165,7 @@ mermaops/
 │   │   ├── seed.py            # Datos demo Super Martínez
 │   │   ├── advance_demo.py    # Simulación temporal (make advance N=3)
 │   │   └── demo_actions.py    # Acciones + merma + donaciones + comparativa tiendas
-│   └── tests/                 # 439 tests (unitarios + adversariales + integración)
+│   └── tests/                 # 800 tests (unitarios + adversariales + integración)
 ├── app/                       # Flutter (6 pantallas + nav)
 │   └── lib/
 │       ├── features/
@@ -174,7 +174,7 @@ mermaops/
 │       │   ├── actions/       # Lista priorizada con badge críticos
 │       │   ├── map/           # Mapa de pasillos por urgencia
 │       │   ├── reports/       # Briefs, merma CSV, ESG
-│       │   ├── agents/        # Estado 11 agentes + conversaciones + runs + decisiones
+│       │   ├── agents/        # Estado 12 agentes + conversaciones + runs + decisiones
 │       │   └── profile/       # Vinculación Telegram (botón directo al bot)
 │       └── core/
 │           ├── api_service.dart   # Cliente FastAPI (20+ endpoints)
@@ -270,7 +270,7 @@ make advance N=2    # simula 2 días de paso del tiempo
 make demo-reset     # vuelve al estado inicial
 make brief          # fuerza generación de brief ahora
 make flutter-run    # imprime el comando flutter run con vars del .env
-make test           # ejecuta los 439 tests
+make test           # ejecuta los 800 tests
 make test-fast      # tests sin red ni LLM
 make lint           # flake8
 ```
@@ -395,7 +395,7 @@ Ataques testados: inyección de prompt, datos falsos, precio < coste, fechas inc
 
 ```bash
 python -m pytest backend/tests/ -q
-# 439 passed in < 1s — sin conexión a Supabase ni llamadas LLM
+# 800 passed in < 2s — sin conexión a Supabase ni llamadas LLM
 ```
 
 ---
@@ -442,7 +442,7 @@ El sistema calcula y registra automáticamente:
 | Acciones | `/actions` | Lista priorizada con badge rojo si hay críticos |
 | Mapa | `/map` | Pasillos con código de color por urgencia |
 | Informes | `/reports` | Briefs diarios, merma CSV, proveedores, ESG |
-| Agentes | `/agents` | Estado 11 agentes, conversaciones Chuwi, runs Kuine, decisiones |
+| Agentes | `/agents` | Estado 12 agentes, conversaciones Chuwi, runs Kuine, decisiones |
 
 Perfil accesible desde el Dashboard → vinculación Telegram con botón directo al bot.
 

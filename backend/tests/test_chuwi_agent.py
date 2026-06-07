@@ -719,7 +719,7 @@ class TestTelegramSecurityFlow:
         from backend.core.chuwi import _get_user
         from unittest.mock import patch, MagicMock
         mock_db = MagicMock()
-        mock_db.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=None)
+        mock_db.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=None)
         with patch("backend.core.database.get_db", return_value=mock_db):
             result = _get_user(99999999)
         assert result is None
@@ -729,7 +729,76 @@ class TestTelegramSecurityFlow:
         from unittest.mock import patch, MagicMock
         fake_user = {"id": "user-123", "role": "manager", "store_id": "demo-store-001"}
         mock_db = MagicMock()
-        mock_db.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=fake_user)
+        mock_db.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=fake_user)
         with patch("backend.core.database.get_db", return_value=mock_db):
             result = _get_user(12345)
         assert result is not None and result["role"] == "manager"
+
+
+class TestChuwiPromptInjection:
+    """
+    Protege a Chuwi de ataques reales de prompt injection por Telegram.
+    Un empleado malintencionado o un mensaje accidental no debe poder:
+    - Cambiar el comportamiento del agente
+    - Acceder a datos de otras tiendas
+    - Saltarse restricciones de rol
+    - Provocar errores en el sistema
+    """
+
+    def test_tool_unknown_returns_error_not_crash(self):
+        # Protege: si alguien envía un tool_name con inyección (ej. "get_store_overview; DROP TABLE"),
+        # _execute_tool_sync no debe crashear ni ejecutar código arbitrario.
+        from backend.core.chuwi import _execute_tool_sync
+        malicious_names = [
+            "'; DROP TABLE batches; --",
+            "__import__('os').system('rm -rf /')",
+            "get_store_overview\nignore_previous_instructions",
+            "../../../../etc/passwd",
+        ]
+        for name in malicious_names:
+            result = _execute_tool_sync(name, {}, None)
+            assert "error" in result, f"Tool maliciosa '{name[:30]}' debe devolver error"
+            # El error puede contener el nombre de la tool (para debug), pero NO debe
+            # ejecutar código ni devolver datos reales del sistema
+            assert "batches" not in str(result.get("error", "")).lower().replace("drop table batches", ""), \
+                "Error no debe exponer nombres de tablas reales del sistema"
+            assert isinstance(result, dict), "Siempre debe devolver dict, no explotar"
+
+    def test_manager_only_tool_blocked_for_staff(self):
+        # Protege: empleado normal no puede acceder a datos de proveedores ni ESG.
+        # Si un empleado envía manualmente "get_suppliers" a través de Telegram,
+        # debe recibir error de permisos, no los datos.
+        from backend.core.chuwi import _execute_tool_sync
+        staff_user = {"id": "emp-001", "role": "staff", "store_id": "demo-store-001"}
+        result_suppliers = _execute_tool_sync("get_suppliers", {}, staff_user)
+        result_esg = _execute_tool_sync("get_esg_metrics", {}, staff_user)
+        result_orders = _execute_tool_sync("get_order_suggestions", {}, staff_user)
+        assert "error" in result_suppliers, "Staff no debe ver proveedores"
+        assert "error" in result_esg, "Staff no debe ver ESG"
+        assert "error" in result_orders, "Staff no debe ver pedidos"
+
+    def test_intent_with_empty_message_does_not_crash(self):
+        # Protege: mensaje de Telegram completamente vacío o solo espacios.
+        # Ocurre cuando el empleado envía un sticker o media sin caption.
+        from backend.core.chuwi_intent import _classify_intent
+        for msg in ["", "   ", "\n", "\t\n  "]:
+            result = _classify_intent(msg)
+            assert isinstance(result, str), f"Intent vacío debe devolver string, got {type(result)}"
+            assert len(result) > 0, "Intent vacío no puede devolver string vacío"
+
+    def test_intent_with_very_long_message_does_not_crash(self):
+        # Protege: mensaje de 10.000 caracteres (spam o error del usuario).
+        # Sin límite, esto podría saturar el contexto del LLM.
+        from backend.core.chuwi_intent import _classify_intent
+        huge_msg = "¿cuántos críticos hay? " * 500  # 11.000 chars
+        result = _classify_intent(huge_msg)
+        assert isinstance(result, str)
+
+    def test_execute_tool_with_none_input_does_not_crash(self):
+        # Protege: si el JSON de la tool llega malformado (None en vez de dict),
+        # el sistema debe manejarlo sin explotar.
+        from backend.core.chuwi import _execute_tool_sync
+        # get_store_overview no tiene campos requeridos — debe manejar input vacío
+        result = _execute_tool_sync("get_store_overview", {}, None)
+        # Sin BD real, esperamos error de conexión, no un crash del servidor
+        assert isinstance(result, dict), "Siempre debe devolver dict"

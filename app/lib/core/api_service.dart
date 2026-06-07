@@ -4,6 +4,46 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'supabase_client.dart';
 
+// ── SSE streaming event model ─────────────────────────────────────────────────
+
+enum ChatStreamEventType { tool, token, done, error }
+
+class ChatStreamEvent {
+  final ChatStreamEventType type;
+  final String content;    // token text or error message
+  final String toolName;   // for type=tool
+  final String toolLabel;  // human-readable tool label
+  final List<String> tools; // for type=done
+
+  const ChatStreamEvent({
+    required this.type,
+    this.content = '',
+    this.toolName = '',
+    this.toolLabel = '',
+    this.tools = const [],
+  });
+
+  factory ChatStreamEvent.fromJson(Map<String, dynamic> json) {
+    final typeStr = json['type'] as String? ?? 'token';
+    final type = switch (typeStr) {
+      'tool'  => ChatStreamEventType.tool,
+      'done'  => ChatStreamEventType.done,
+      'error' => ChatStreamEventType.error,
+      _       => ChatStreamEventType.token,
+    };
+    return ChatStreamEvent(
+      type: type,
+      content: json['content'] as String? ?? json['full_response'] as String? ?? json['message'] as String? ?? '',
+      toolName: json['name'] as String? ?? '',
+      toolLabel: json['label'] as String? ?? '',
+      tools: (json['tools'] as List?)?.map((e) => e.toString()).toList() ?? [],
+    );
+  }
+
+  factory ChatStreamEvent.error(String message) =>
+      ChatStreamEvent(type: ChatStreamEventType.error, content: message);
+}
+
 // API_URL se pasa en tiempo de build:
 //   flutter run -d chrome --dart-define=API_URL=http://localhost:8001/api/v1
 //   flutter run -d android --dart-define=API_URL=http://10.0.2.2:8001/api/v1  (emulador)
@@ -37,7 +77,8 @@ class ApiService {
         'barcode': barcode,
         'user_id': userId,
       }),
-    ).timeout(const Duration(seconds: 45));
+    ).timeout(const Duration(seconds: 90));
+    // Returns: result, barcode, action_id?, action_type?, product_name, days_left, final_action, location, price_rec
     return _parse(resp);
   }
 
@@ -162,6 +203,14 @@ class ApiService {
     }
   }
 
+  Future<Map<String, dynamic>> runWeeklyReport() async {
+    final resp = await http.post(
+      Uri.parse('$_baseUrl/reports/weekly'),
+      headers: _headers,
+    ).timeout(const Duration(seconds: 120));
+    return _parse(resp);
+  }
+
   Future<Map<String, dynamic>> runMonthlyReport() async {
     final resp = await http.post(
       Uri.parse('$_baseUrl/reports/monthly/run'),
@@ -247,6 +296,14 @@ class ApiService {
     return _parse(resp);
   }
 
+  Future<Map<String, dynamic>> getSystemOverview() async {
+    final resp = await http.get(
+      Uri.parse('$_baseUrl/stats/overview'),
+      headers: _headers,
+    ).timeout(const Duration(seconds: 15));
+    return _parse(resp);
+  }
+
   // ── Fase 5: Agent activity endpoints ────────────────────────────────────────
 
   Future<Map<String, dynamic>> getAgentStatus() async {
@@ -272,6 +329,15 @@ class ApiService {
     ).timeout(const Duration(seconds: 10));
     final data = _parse(resp);
     return List<Map<String, dynamic>>.from(data['conversations'] ?? []);
+  }
+
+  Future<List<Map<String, dynamic>>> getConversationMessages(String conversationId) async {
+    final resp = await http.get(
+      Uri.parse('$_baseUrl/agent/conversations/$conversationId/messages'),
+      headers: _headers,
+    ).timeout(const Duration(seconds: 10));
+    final data = _parse(resp);
+    return List<Map<String, dynamic>>.from(data['messages'] ?? []);
   }
 
   Future<List<Map<String, dynamic>>> getAgentRuns({int limit = 20}) async {
@@ -330,9 +396,20 @@ class ApiService {
     throw Exception('Error descargando informe semanal PDF: ${resp.statusCode}');
   }
 
+  /// Descarga la presentación PDF del TFM (10 diapositivas).
+  Future<List<int>> downloadPresentationPdf() async {
+    final uri = Uri.parse('$_baseUrl/reports/presentation/pdf');
+    final resp = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 30));
+    if (resp.statusCode >= 200 && resp.statusCode < 300) {
+      return resp.bodyBytes;
+    }
+    throw Exception('Error descargando presentación PDF: ${resp.statusCode}');
+  }
+
   /// Descarga el PDF del informe mensual y devuelve los bytes.
-  Future<List<int>> downloadMonthlyPdf() async {
-    final uri = Uri.parse('$_baseUrl/reports/monthly/pdf');
+  /// [month] puede ser "2026-04" para descargar un mes específico.
+  Future<List<int>> downloadMonthlyPdf({String? month}) async {
+    final uri = Uri.parse('$_baseUrl/reports/monthly/pdf${month != null ? '?month=$month' : ''}');
     final resp = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 90));
     if (resp.statusCode >= 200 && resp.statusCode < 300) {
       return resp.bodyBytes;
@@ -353,6 +430,112 @@ class ApiService {
     final streamed = await request.send().timeout(const Duration(seconds: 120));
     final resp = await http.Response.fromStream(streamed);
     return _parse(resp);
+  }
+
+  Future<List<int>> getPriceLabel(String actionId) async {
+    final resp = await http.get(
+      Uri.parse('$_baseUrl/actions/$actionId/price-label'),
+      headers: _headers,
+    ).timeout(const Duration(seconds: 15));
+    if (resp.statusCode >= 200 && resp.statusCode < 300) {
+      return resp.bodyBytes.toList();
+    }
+    throw Exception('Error ${resp.statusCode} generando etiqueta');
+  }
+
+  Future<List<Map<String, dynamic>>> getWeeklyReports({int limit = 8}) async {
+    final resp = await http.get(
+      Uri.parse('$_baseUrl/reports/weekly?limit=$limit'),
+      headers: _headers,
+    ).timeout(const Duration(seconds: 15));
+    final data = _parse(resp);
+    return List<Map<String, dynamic>>.from(data['reports'] ?? []);
+  }
+
+  Future<List<Map<String, dynamic>>> getMonthlyReports({int limit = 6}) async {
+    final resp = await http.get(
+      Uri.parse('$_baseUrl/reports/monthly?limit=$limit'),
+      headers: _headers,
+    ).timeout(const Duration(seconds: 15));
+    final data = _parse(resp);
+    return List<Map<String, dynamic>>.from(data['reports'] ?? []);
+  }
+
+  Future<List<Map<String, dynamic>>> getMermaHistory({int days = 30}) async {
+    final resp = await http.get(
+      Uri.parse('$_baseUrl/reports/merma-history?days=$days'),
+      headers: _headers,
+    ).timeout(const Duration(seconds: 15));
+    final data = _parse(resp);
+    return List<Map<String, dynamic>>.from(data['logs'] ?? []);
+  }
+
+  Future<Map<String, dynamic>> getStoreBenchmark({int days = 30}) async {
+    final resp = await http.get(
+      Uri.parse('$_baseUrl/stats/benchmark?days=$days'),
+      headers: _headers,
+    ).timeout(const Duration(seconds: 15));
+    return _parse(resp);
+  }
+
+  Future<Map<String, dynamic>> chatWithKuine({
+    required String message,
+    List<Map<String, dynamic>> history = const [],
+  }) async {
+    final resp = await http.post(
+      Uri.parse('$_baseUrl/agent/chat'),
+      headers: _headers,
+      body: jsonEncode({'message': message, 'history': history}),
+    ).timeout(const Duration(seconds: 60));
+    return _parse(resp);
+  }
+
+  /// Streaming SSE chat — yields events as they arrive from the backend.
+  /// Events: ChatStreamEvent with type (tool/token/done/error) and content.
+  /// First token arrives in <400ms vs 5-10s with the sync endpoint.
+  Stream<ChatStreamEvent> chatWithKuineStream({
+    required String message,
+    List<Map<String, dynamic>> history = const [],
+  }) async* {
+    final client = http.Client();
+    try {
+      final request = http.Request(
+        'POST',
+        Uri.parse('$_baseUrl/agent/chat/stream'),
+      );
+      request.headers.addAll({..._headers, 'Accept': 'text/event-stream'});
+      request.body = jsonEncode({'message': message, 'history': history});
+
+      final streamedResponse = await client.send(request).timeout(
+        const Duration(seconds: 90),
+      );
+
+      String buffer = '';
+      await for (final chunk in streamedResponse.stream.transform(
+        const Utf8Decoder(allowMalformed: true),
+      )) {
+        buffer += chunk;
+        // Process complete SSE lines
+        while (buffer.contains('\n\n')) {
+          final idx = buffer.indexOf('\n\n');
+          final block = buffer.substring(0, idx);
+          buffer = buffer.substring(idx + 2);
+
+          for (final line in block.split('\n')) {
+            if (line.startsWith('data: ')) {
+              try {
+                final data = jsonDecode(line.substring(6)) as Map<String, dynamic>;
+                yield ChatStreamEvent.fromJson(data);
+              } catch (_) {}
+            }
+          }
+        }
+      }
+    } catch (e) {
+      yield ChatStreamEvent.error('Error de conexión: $e');
+    } finally {
+      client.close();
+    }
   }
 
   Map<String, dynamic> _parse(http.Response resp) {

@@ -28,7 +28,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     title: 'Kuine',
     subtitle: 'El orquestador inteligente',
     body:
-        'Kuine analiza toda la tienda cada mañana a las 7:30 con 25 herramientas de IA.\n\n'
+        'Kuine analiza toda la tienda cada mañana a las 7:30 con 16 herramientas de IA.\n\n'
         'Evalúa cada lote, calcula descuentos exactos, propone donaciones al banco de alimentos '
         'y genera el brief diario con trazabilidad completa.\n\n'
         'Funciona solo. Sin que nadie se lo pida.',

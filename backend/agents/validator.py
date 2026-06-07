@@ -4,6 +4,7 @@ El único agente que puede REVERTIR decisiones de otros agentes con justificaci�
 Opera sobre hechos, no suposiciones.
 """
 from __future__ import annotations
+import concurrent.futures
 from datetime import date, datetime, timedelta
 from backend.core import llm
 
@@ -126,6 +127,29 @@ def _check_contradictions(
     return issues
 
 
+def _load_runtime_policies(store_id: str | None = None) -> list[str]:
+    """
+    Policy-as-code: carga reglas adicionales desde memoria episódica en tiempo real.
+    El encargado puede añadir reglas sin tocar código.
+    Ejemplo guardado en agent_memory:
+      key = "policy_rules", value = "No donar lácteos — proveedor X tiene historial de salmonela"
+
+    Returns lista de reglas adicionales como strings.
+    """
+    if not store_id:
+        return []
+    try:
+        from backend.core import memory as _mem
+        raw = _mem.recall(store_id, "policy_rules")
+        if not raw:
+            return []
+        # Dividir por líneas o punto y coma
+        rules = [r.strip() for r in raw.replace(";", "\n").split("\n") if r.strip()]
+        return rules[:10]  # máximo 10 reglas runtime
+    except Exception:
+        return []
+
+
 def validate_scan_result(
     product: dict,
     batch: dict,
@@ -139,6 +163,20 @@ def validate_scan_result(
     """
     # Detección determinista primero — rápida y sin tokens
     issues = _check_contradictions(product, batch, risk, stock_decision, price_recommendation)
+
+    # Policy-as-code: aplicar reglas runtime del encargado
+    import os as _os
+    store_id = product.get("store_id") or _os.getenv("STORE_ID", "demo-store-001")
+    runtime_rules = _load_runtime_policies(store_id)
+    if runtime_rules:
+        for rule in runtime_rules:
+            rule_lower = rule.lower()
+            category = (product.get("category") or "").lower()
+            name = (product.get("name") or "").lower()
+            action = risk.get("action", "")
+            # Si la regla menciona la categoría o el producto actual, incluirla como issue
+            if any(word in rule_lower for word in [category, name[:10]] if word):
+                issues.append(f"POLÍTICA ACTIVA: {rule}")
 
     if not issues:
         # Validación rápida por LLM para detectar problemas semánticos sutiles
@@ -159,9 +197,19 @@ Busca contradicciones sutiles que las reglas automáticas no detectan:
 
 Responde VALIDADO si todo es coherente, o OBSERVACIÓN: [una línea] si hay algo a revisar."""
 
-        llm_check = llm.call(prompt, max_tokens=120)
-        if "OBSERVACIÓN" in llm_check or "CORRECCIÓN" in llm_check:
-            issues.append(llm_check)
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _pool:
+                _fut = _pool.submit(llm.call, prompt, max_tokens=120)
+                try:
+                    llm_check = _fut.result(timeout=10.0)
+                    if "OBSERVACIÓN" in llm_check or "CORRECCIÓN" in llm_check:
+                        issues.append(llm_check)
+                except concurrent.futures.TimeoutError:
+                    import logging as _log
+                    _log.getLogger("mermaops.validator").warning("[validator] LLM check timeout — usando solo reglas deterministas")
+        except Exception as _ve:
+            import logging as _log
+            _log.getLogger("mermaops.validator").warning(f"[validator] LLM check failed, usando solo reglas deterministas: {_ve}")
 
     if not issues:
         return {
@@ -169,40 +217,67 @@ Responde VALIDADO si todo es coherente, o OBSERVACIÓN: [una línea] si hay algo
             "issues": [],
             "override": False,
             "final_action": risk.get("action"),
-            "explanation": "Todas las decisiones son coherentes entre sí.",
+            "explanation": "Todo correcto.",
         }
 
-    # Hay problemas — pedir a Claude que decida si revertir y cómo corregir
+    # Hay problemas — corregir con mensaje humano para Chuwi
     issues_text = "\n".join(f"- {i}" for i in issues)
-    correction_prompt = f"""Eres el Validador de MermaOps. Has detectado las siguientes inconsistencias:
+    name = product.get("name", "el producto")
+    days = risk.get("days_left", "?")
+    action_orig = risk.get("action", "revisar")
+    category = (product.get("category") or "").lower()
 
+    correction_prompt = f"""Eres el Validador de MermaOps. Actúas como un compañero veterano que corrige con educación.
+
+Has detectado:
 {issues_text}
 
-Producto: {product.get('name')} | Días hasta caducidad: {risk.get('days_left', '?')}
-Acción original: {risk.get('action')} | Score: {risk.get('score')}/100
+Producto: {name} | Categoría: {category} | Caduca en: {days} días
+Acción propuesta: {action_orig}
 
-Decide:
-1. ¿Debe revertirse la decisión original? (SÍ/NO)
-2. Si SÍ, ¿cuál es la acción corregida?
-3. Explicación en una línea para el log del sistema."""
+Genera:
+1. Una corrección de la acción si es necesaria (override=true)
+2. Una explicación en lenguaje cotidiano de tienda española, como si le dijeras al empleado en persona.
+   Ejemplo: "Ojo, ese lote caducó ayer. Por ley no podemos venderlo ni rebajarlo, hay que retirarlo del lineal y registrarlo antes de que acabe el turno."
+   Usa jerga de tienda: lineal, fleje, picar merma, FEFO, pasillo frío. Sin lenguaje técnico."""
 
-    correction = llm.call_structured(
-        correction_prompt,
-        output_schema={
-            "type": "object",
-            "properties": {
-                "override": {"type": "boolean"},
-                "corrected_action": {
-                    "type": "string",
-                    "enum": ["rebajar", "retirar", "donar", "revisar", "reponer", "ok"],
-                },
-                "explanation": {"type": "string"},
+    _correction_schema = {
+        "type": "object",
+        "properties": {
+            "override": {"type": "boolean"},
+            "corrected_action": {
+                "type": "string",
+                "enum": ["rebajar", "retirar", "donar", "revisar", "reponer", "ok"],
             },
-            "required": ["override", "corrected_action", "explanation"],
+            "explanation": {"type": "string"},
         },
+        "required": ["override", "corrected_action", "explanation"],
+    }
+    _correction_kwargs = dict(
+        output_schema=_correction_schema,
         system_extra="Eres el Validador adversarial. Tus correcciones tienen prioridad sobre todos los demás agentes.",
         max_tokens=256,
     )
+    correction: dict = {}
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _pool:
+            _fut = _pool.submit(llm.call_structured, correction_prompt, **_correction_kwargs)
+            try:
+                correction = _fut.result(timeout=15.0) or {}
+            except concurrent.futures.TimeoutError:
+                import logging as _log
+                _log.getLogger("mermaops.validator").warning("[validator] correction LLM timeout — fallback conservador")
+                # Fallback conservador: si el riesgo es CRÍTICO → retirar, si no → revisar
+                _safe_action = "retirar" if risk.get("risk_level") == "CRÍTICO" else "revisar"
+                correction = {
+                    "override": True,
+                    "corrected_action": _safe_action,
+                    "explanation": f"Validador sin respuesta. Acción conservadora: {_safe_action}.",
+                }
+    except Exception as _ve:
+        import logging as _log
+        _log.getLogger("mermaops.validator").warning(f"[validator] correction LLM failed, conservando decisión original: {_ve}")
+        correction = {}
 
     final_action = correction.get("corrected_action", risk.get("action")) if correction.get("override") else risk.get("action")
 
