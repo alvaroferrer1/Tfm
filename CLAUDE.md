@@ -2,6 +2,7 @@
 
 > Fuente de verdad para futuras sesiones. Actualizar cuando cambie la arquitectura.
 > Última actualización: junio 2026 — sistema completo, 774/774 tests, demo-ready.
+> Build: Flutter web ✓ · Backend 774/774 tests · Telegram 30+ comandos · plano real CustomPainter · weather Open-Meteo · insights Haiku IA
 
 ---
 
@@ -12,7 +13,7 @@
 - Backend: FastAPI + Python 3.14, puerto **8001** (8000 bloqueado por Manager.exe)
 - Base de datos: Supabase (PostgreSQL + Auth + Realtime)
 - Telegram: @ChuwiMermaOpsBot — agente real con 30+ comandos
-- App móvil: Flutter (Android/iOS) — 8 pantallas, Riverpod, Supabase Realtime
+- App móvil: Flutter (Android/iOS/Web) — 9 pantallas, Riverpod, Supabase Realtime
 - Tests: **774/774** en < 3s (sin conexión real a Supabase)
 
 ---
@@ -77,12 +78,15 @@ backend/api/routes.py              — todos los endpoints REST
 ## Archivos clave — Flutter
 
 ```
-app/lib/features/dashboard/dashboard_screen.dart  — KPIs streaming, shimmer, donut chart, área chart
+app/lib/features/dashboard/dashboard_screen.dart  — KPIs streaming, shimmer, donut chart, área chart, tarjeta tiempo Open-Meteo
 app/lib/features/actions/actions_screen.dart       — FEFO, rol-based (staff/manager), swipe, export/import CSV
-app/lib/features/map/map_screen.dart               — mapa interactivo pasillos, FEFO tab, QR por pasillo
+app/lib/features/map/map_screen.dart               — plano real CustomPainter (almacén+4 pasillos+frutas+cajas), FEFO tab, QR
 app/lib/features/scan/scan_screen.dart             — barcode + foto IA (Vision agent)
 app/lib/features/agents/agents_screen.dart         — 4 tabs: agentes, conversaciones, runs Kuine, decisiones
-app/lib/core/api_service.dart                      — todos los métodos HTTP incluyendo export/import CSV
+app/lib/features/suppliers/suppliers_screen.dart   — proveedores con merma histórica, pedido semanal IA
+app/lib/features/warehouse/warehouse_screen.dart   — almacén: stock, alertas caducidad, FEFO, movimientos
+app/lib/features/reports/reports_screen.dart       — 11 tabs: PDF, ESG, predicciones, benchmark, Insights IA ✨
+app/lib/core/api_service.dart                      — todos los métodos HTTP incluyendo weather, insights, store profile
 app/lib/core/user_role_provider.dart               — UserRole enum: staff/manager/admin
 app/lib/features/actions/actions_provider.dart     — pendingActionsStreamProvider (asyncMap Realtime)
 ```
@@ -93,13 +97,13 @@ app/lib/features/actions/actions_provider.dart     — pendingActionsStreamProvi
 
 **Comandos públicos (sin login):** `/start`, `/yo`, `/menu`, `/estado`, `/ayuda`, `/agentes`, `/kuine`
 
-**Comandos operativos:** `/acciones`, `/criticos`, `/ruta`, `/brief`, `/hoy`, `/scan`, `/merma`, `/donaciones`, `/prediccion`, `/stats`, `/mapa`, `/historial`, `/merma7`
+**Comandos operativos:** `/acciones`, `/criticos`, `/ruta`, `/brief`, `/hoy`, `/scan`, `/merma`, `/donaciones`, `/prediccion`, `/stats`, `/mapa`, `/historial`, `/merma7`, `/tiempo`
 
 **Comandos de simulación/demo:** `/simular` (panel con 5 botones: 07:30, 12:00, 20:00, alerta proactiva, escalación)
 
-**Comandos manager:** `/proveedores`, `/pedido`, `/esg`, `/citar`, `/costes`, `/reflexiones`, `/informe`, `/semana`, `/demo`
+**Comandos manager:** `/proveedores`, `/pedido`, `/esg`, `/citar`, `/costes`, `/reflexiones`, `/informe`, `/semana`, `/demo`, `/insights`
 
-**Callbacks clave en `_ACTION_MAP`:** `brief`, `stats`, `acciones`, `ruta`, `merma`, `donaciones`, `proveedores`, `pedido`, `runbrief`, `sistema`, `simular`, `scan_help`, `ayuda`, `tour`, `mapa`, `historial`, `merma7`, `donar_flow`, `esg`, `prediccion`, `citar`
+**Callbacks clave en `_ACTION_MAP`:** `brief`, `stats`, `acciones`, `ruta`, `merma`, `donaciones`, `proveedores`, `pedido`, `runbrief`, `sistema`, `simular`, `scan_help`, `ayuda`, `tour`, `mapa`, `historial`, `merma7`, `donar_flow`, `esg`, `prediccion`, `citar`, `tiempo`, `insights`
 
 ### Formato visual Telegram
 - `_format_brief_html(text)` en chuwi.py — convierte salida LLM a HTML visual con cabecera fija + secciones
@@ -149,18 +153,26 @@ GET  /api/v1/agent/decisions        — decisiones Kuine
 GET  /api/v1/reports/brief/pdf      — PDF brief diario
 GET  /api/v1/reports/weekly/pdf     — PDF informe semanal
 GET  /api/v1/telegram/status        — estado bot Telegram
+GET  /api/v1/store/profile          — perfil tienda (ciudad, lat/lon, tamaño, zona)
+PUT  /api/v1/store/profile          — actualizar perfil tienda (encargado)
+GET  /api/v1/weather/current        — tiempo real por lat/lon de la tienda (Open-Meteo)
+POST /api/v1/reports/insights       — insights IA estratégicos (Sonnet 4.6)
 ```
 
 ---
 
 ## Flutter — features implementadas
 
-- **Dashboard:** KPIs streaming realtime, shimmer loading, donut urgencia, área chart merma 7d, impact card donaciones
+- **Dashboard:** KPIs streaming realtime, shimmer loading, donut urgencia, área chart merma 7d, donaciones, **tarjeta tiempo** Open-Meteo (temp + WMO icon + forecast 5 días), auto-refresh (5min dashboard, 30min weather)
 - **Acciones:** swipe to complete (manager) / bloqueado (staff), donación con deducción fiscal 35%, import CSV TPV, **export CSV** (share_plus), rol-based con `userRoleProvider`
-- **Mapa:** plano interactivo por pasillos, tab FEFO ordenado, tab Pasillos grid, QR por pasillo deeplink, "Sin ubicación" cuando pasillo es null
+- **Mapa:** **plano real CustomPainter** (almacén superior con hatching, 4 pasillos verticales con estanterías, pasillo ancho Frutas&Verduras, cajas de cobro, entrada/salida), hit-testing via `_floorPlanRects`, tap almacén navega a warehouse
 - **Scan:** barcode + foto, Vision agent (Haiku), carga visual con CircularProgress
 - **Agentes:** 4 tabs (estado 12 agentes, conversaciones, runs Kuine, decisiones)
+- **Proveedores:** ficha completa con merma histórica por proveedor, pedido semanal IA
+- **Almacén (warehouse):** stock en almacén, alertas caducidad próxima, FEFO, movimientos a tienda
+- **Informes (11 tabs):** PDF brief, PDF semanal, ESG, predicciones, benchmark, **Insights IA** (Haiku, botón "Generar")
 - **Caché de productos:** `_allProductsCacheProvider` (map) + `_actionProductsCacheProvider` (actions) — fallback cuando join Supabase falla por RLS
+- **Store profile:** `GET/PUT /store/profile` — ciudad, lat/lon, tamaño, zona — para weather real
 
 ---
 

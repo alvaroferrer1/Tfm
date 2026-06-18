@@ -429,6 +429,7 @@ def _main_menu_keyboard(is_manager: bool) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton("📊 Proyección 7 días", callback_data="cmd:merma7"),
+            InlineKeyboardButton("🌤 Tiempo tienda", callback_data="cmd:tiempo"),
         ],
     ]
     if is_manager:
@@ -439,6 +440,10 @@ def _main_menu_keyboard(is_manager: bool) -> InlineKeyboardMarkup:
         rows.append([
             InlineKeyboardButton("🌱 ESG / Impacto", callback_data="cmd:esg"),
             InlineKeyboardButton("🔮 Predicciones", callback_data="cmd:prediccion"),
+        ])
+        rows.append([
+            InlineKeyboardButton("✨ Insights IA", callback_data="cmd:insights"),
+            InlineKeyboardButton("🌤 Tiempo tienda", callback_data="cmd:tiempo"),
         ])
         rows.append([
             InlineKeyboardButton("⚙️ Generar brief ahora", callback_data="cmd:runbrief"),
@@ -2055,6 +2060,210 @@ async def _action_prediccion(update_or_query, context, user: Optional[dict], is_
         await _send(update_or_query, text, reply_markup=keyboard)
 
 
+# ── WMO code → (emoji, label) ─────────────────────────────────────────────────
+_WMO: dict[int, tuple[str, str]] = {
+    0: ("☀️", "Despejado"), 1: ("🌤", "Poco nuboso"), 2: ("⛅", "Parcialmente nublado"),
+    3: ("☁️", "Nublado"), 45: ("🌫", "Niebla"), 48: ("🌫", "Niebla helada"),
+    51: ("🌦", "Llovizna"), 53: ("🌦", "Llovizna"), 55: ("🌧", "Llovizna intensa"),
+    61: ("🌧", "Lluvia ligera"), 63: ("🌧", "Lluvia"), 65: ("🌧", "Lluvia intensa"),
+    71: ("❄️", "Nieve ligera"), 73: ("❄️", "Nieve"), 75: ("❄️", "Nieve intensa"),
+    80: ("🌦", "Chubascos"), 81: ("🌦", "Chubascos"), 82: ("⛈", "Chubascos fuertes"),
+    95: ("⛈", "Tormenta"), 96: ("⛈", "Tormenta con granizo"), 99: ("⛈", "Tormenta intensa"),
+}
+_DIAS_TG = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
+
+
+def _wmo_info(code: int) -> tuple[str, str]:
+    for c in [code, (code // 10) * 10, 0]:
+        if c in _WMO:
+            return _WMO[c]
+    return ("🌡", "Variable")
+
+
+def _tg_day(d: str) -> str:
+    try:
+        from datetime import datetime as _dt2
+        return _DIAS_TG[_dt2.fromisoformat(d).weekday()]
+    except Exception:
+        return d[-5:]
+
+
+async def _action_tiempo(update_or_query, context, user: Optional[dict], is_callback=False):
+    """Tiempo del día según la ubicación real de la tienda — Open-Meteo."""
+    keyboard = _back_keyboard()
+    try:
+        loop = asyncio.get_running_loop()
+
+        # Obtener lat/lon de la tienda desde config
+        def _get_store_loc():
+            try:
+                store = database.get_db().table("stores").select("config, name").eq("id", STORE_ID).single().execute()
+                cfg = store.data.get("config") or {}
+                return (
+                    float(cfg.get("lat", 40.4168)),
+                    float(cfg.get("lon", -3.7038)),
+                    cfg.get("city") or store.data.get("name") or "Madrid",
+                )
+            except Exception:
+                return 40.4168, -3.7038, "Madrid"
+
+        lat, lon, city = await loop.run_in_executor(None, _get_store_loc)
+
+        from backend.agents.predictor import get_weather_forecast
+        forecast = await loop.run_in_executor(None, get_weather_forecast, lat, lon, 6)
+
+        if not forecast:
+            text = "❌ No se pudo obtener el tiempo. Inténtalo en unos minutos."
+        else:
+            hoy = forecast[0]
+            temp = hoy.get("temp_max") or 0
+            code = int(hoy.get("weather_code") or 0)
+            precip = hoy.get("precipitation_mm") or 0
+            hum = hoy.get("relative_humidity_2m_max") or 0
+            uv = hoy.get("uv_index_max") or 0
+            wind = hoy.get("windspeed_10m_max") or 0
+            icon, label = _wmo_info(code)
+
+            hot_days = sum(1 for f in forecast if f.get("is_hot"))
+            rain_days = sum(1 for f in forecast if f.get("is_rainy"))
+            storm_days = sum(1 for f in forecast if f.get("is_storm"))
+
+            alert = ""
+            if storm_days >= 1:
+                alert = f"\n\n⛈ <b>ALERTA TORMENTA</b> — {storm_days} día(s) con tormenta prevista.\nRevisa los frescos y asegura el acceso al almacén."
+            elif hot_days >= 2:
+                alert = f"\n\n🌡 <b>ATENCION:</b> {hot_days} días con >30°C previstos.\nRiesgo elevado en cárnicos, lácteos y panadería."
+            elif rain_days >= 3:
+                alert = f"\n\n🌧 <b>Lluvia {rain_days} días</b> — esperar menos clientes de lo habitual.\nRevisa el plan de pedidos de frescos."
+
+            # Línea de forecast 5 días
+            forecast_line = "  ".join(
+                f"{_tg_day(f['date'])} {_wmo_info(int(f.get('weather_code') or 0))[0]} {round(f.get('temp_max') or 0)}°"
+                for f in forecast[1:6]
+            )
+
+            lines = [
+                f"┌{'━' * 34}┐",
+                f"│  🌤  <b>TIEMPO — {html.escape(city)}</b>",
+                f"│  📅  Hoy {html.escape(hoy.get('date', ''))[:10]}",
+                f"└{'━' * 34}┘",
+                "",
+                f"{icon}  <b>{html.escape(label)}</b>  ·  <b>{round(temp)}°C máx</b>",
+                f"💧 Humedad: {round(hum)}%  ·  🌧 Lluvia: {precip:.1f}mm  ·  💨 Viento: {round(wind)} km/h",
+                f"☀️ UV: {round(uv)}/11",
+                "",
+                "━" * 36,
+                f"📅 <b>Próximos 5 días</b>",
+                f"<code>{forecast_line}</code>",
+                alert,
+                "",
+                "<i>Datos Open-Meteo · actualizado cada hora</i>",
+            ]
+            text = "\n".join(l for l in lines if l is not None)
+
+    except Exception as e:
+        logger.error(f"[tiempo] {e}", exc_info=True)
+        text = "❌ Error obteniendo el tiempo. Inténtalo de nuevo."
+
+    if is_callback:
+        await update_or_query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+    else:
+        await _send(update_or_query, text, reply_markup=keyboard)
+
+
+async def _action_insights(update_or_query, context, user: Optional[dict], is_callback=False):
+    """Insights IA estratégicos — solo encargado, generados con Haiku en <10s."""
+    keyboard = _back_keyboard()
+
+    if not _is_manager(user):
+        text = "🔒 Los insights estratégicos son solo para encargados."
+        if is_callback:
+            await update_or_query.edit_message_text(text, reply_markup=keyboard)
+        else:
+            await _send(update_or_query, text, reply_markup=keyboard)
+        return
+
+    # Mostrar placeholder
+    wait_text = "✨ <b>Generando insights IA...</b>\n\n<i>Haiku analiza merma, tiempo y acciones (~10s)</i>"
+    if is_callback:
+        await update_or_query.edit_message_text(wait_text, parse_mode=ParseMode.HTML)
+    else:
+        await _send(update_or_query, wait_text)
+
+    try:
+        loop = asyncio.get_running_loop()
+
+        # Recoger datos en paralelo
+        pending, merma_7d, donations, forecast_data = await asyncio.gather(
+            loop.run_in_executor(None, database.get_pending_actions, STORE_ID),
+            loop.run_in_executor(None, database.get_merma_history, STORE_ID, 7),
+            loop.run_in_executor(None, database.get_donation_stats, STORE_ID, 30),
+            loop.run_in_executor(None, lambda: __import__(
+                'backend.agents.predictor', fromlist=['get_weather_forecast']
+            ).get_weather_forecast()),
+        )
+
+        critical = sum(1 for a in pending if (a.get("priority_score") or 0) >= 85)
+        high = sum(1 for a in pending if 65 <= (a.get("priority_score") or 0) < 85)
+        merma_val = sum(float(l.get("value_lost", 0)) for l in merma_7d)
+        donated_val = float(donations.get("total_value_donated") or 0)
+        hot_days = sum(1 for f in forecast_data if f.get("is_hot"))
+        today_temp = round(forecast_data[0].get("temp_max") or 0) if forecast_data else "?"
+        today_label = _wmo_info(int((forecast_data[0].get("weather_code") or 0)))[1] if forecast_data else "Variable"
+
+        prompt = f"""Eres el asesor estratégico del Super Martínez. Genera un insight ejecutivo de 5 puntos concretos.
+
+DATOS HOY:
+- Acciones pendientes: {len(pending)} ({critical} críticas, {high} altas)
+- Merma 7 días: {merma_val:.2f} €
+- Donaciones 30 días: {donated_val:.2f} €
+- Tiempo hoy: {today_temp}°C, {today_label}
+- Días calurosos semana: {hot_days}
+
+Genera EXACTAMENTE 5 insights accionables con este formato:
+💡 [INSIGHT CORTO EN NEGRITA]
+   [1-2 frases de contexto y acción concreta]
+
+Máximo 400 palabras. Céntrate en reducción de costes, merma y oportunidades comerciales.
+No uses markdown, solo texto plano y los emojis que indico."""
+
+        import anthropic as _ant
+        ant_client = _ant.Anthropic()
+        resp = await loop.run_in_executor(
+            None,
+            lambda: ant_client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=600,
+                messages=[{"role": "user", "content": prompt}],
+            )
+        )
+        insights_text = resp.content[0].text if resp.content else "Sin insights disponibles."
+
+        header = (
+            f"┌{'━' * 34}┐\n"
+            f"│  ✨  <b>INSIGHTS IA — Hoy</b>\n"
+            f"│  📅  {date.today().isoformat()}\n"
+            f"└{'━' * 34}┘\n\n"
+        )
+        text = header + html.escape(insights_text) + (
+            f"\n\n<i>🌡 {today_temp}°C · {today_label} · {len(pending)} acciones · merma {merma_val:.0f}€/sem</i>"
+        )
+
+    except Exception as e:
+        logger.error(f"[insights] {e}", exc_info=True)
+        text = "❌ Error generando insights. Inténtalo de nuevo."
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔮 Predicciones", callback_data="cmd:prediccion"),
+         InlineKeyboardButton("📊 Dashboard", callback_data="cmd:stats")],
+        [InlineKeyboardButton("↩ Menú", callback_data="cmd:menu")],
+    ])
+    if is_callback:
+        await update_or_query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+    else:
+        await _send(update_or_query, text, reply_markup=kb)
+
+
 _PASILLO_NAMES = {
     "1": "🍞 Panadería", "2": "🥛 Lácteos", "3": "🥩 Carnicería",
     "4": "🐟 Pescadería", "5": "🥦 Frutas y Verduras",
@@ -2524,6 +2733,8 @@ _ACTION_MAP = {
     "mapa": _action_mapa,
     "historial": _action_historial,
     "merma7": _action_merma7,
+    "tiempo": _action_tiempo,
+    "insights": _action_insights,
 }
 
 
@@ -4563,6 +4774,8 @@ async def _post_init(application) -> None:
         BotCommand("stats", "Estadísticas de uso de IA: tokens, coste, modelos"),
         BotCommand("reflexiones", "Lecciones aprendidas por Chuwi (Reflexion Loop)"),
         BotCommand("hoy", "Resumen express del día en segundos"),
+        BotCommand("tiempo", "Tiempo de la tienda hoy y 5 días 🌤"),
+        BotCommand("insights", "Insights IA estratégicos del día ✨ (encargado)"),
     ])
 
 
@@ -4747,9 +4960,19 @@ def run() -> None:
         user = await asyncio.get_running_loop().run_in_executor(None, _get_user, update.effective_user.id)
         await _action_prediccion(update, ctx, user, is_callback=False)
 
+    async def handle_tiempo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        user = await asyncio.get_running_loop().run_in_executor(None, _get_user, update.effective_user.id)
+        await _action_tiempo(update, ctx, user, is_callback=False)
+
+    async def handle_insights(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        user = await asyncio.get_running_loop().run_in_executor(None, _get_user, update.effective_user.id)
+        await _action_insights(update, ctx, user, is_callback=False)
+
     app.add_handler(CommandHandler("donar", handle_donar))
     app.add_handler(CommandHandler("esg", handle_esg))
     app.add_handler(CommandHandler("prediccion", handle_prediccion))
+    app.add_handler(CommandHandler("tiempo", handle_tiempo))
+    app.add_handler(CommandHandler("insights", handle_insights))
 
     async def handle_merma(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         user = await asyncio.get_running_loop().run_in_executor(None, _get_user, update.effective_user.id)

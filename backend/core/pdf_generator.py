@@ -935,10 +935,11 @@ def generate_tfm_defense_pdf(
         ("Backend", "FastAPI + Python 3.14, puerto 8001, APScheduler para jobs autonomos"),
         ("IA / LLM", "Claude API (Anthropic): Opus 4.8, Sonnet 4.6, Haiku 4.5"),
         ("Base de datos", "Supabase (PostgreSQL + Auth + Realtime + Vector embeddings RAG)"),
-        ("App movil", "Flutter (Android/iOS/Windows) - Material 3, GoRouter, JWT auth"),
-        ("Telegram", "python-telegram-bot 21 - streaming, botones inline, fotos/voz"),
+        ("App movil", "Flutter (Android/iOS/Web) - 9 pantallas, Material 3, GoRouter, Realtime, plano CustomPainter"),
+        ("Telegram", "python-telegram-bot 21 - 30+ comandos, streaming, botones inline, fotos/voz, /tiempo, /insights"),
+        ("Meteorologia", "Open-Meteo API - tiempo por coordenadas reales de la tienda, 7 dias"),
         ("Seguridad", "JWT Supabase, rate limiting, validacion barcode, CORS configurable"),
-        ("Tests", "pytest, 811 tests, 0 fallos, < 3s, sin conexion real a Supabase"),
+        ("Tests", "pytest, 774 tests, 0 fallos, < 3s, sin conexion real a Supabase"),
     ]:
         pdf.set_font("Helvetica", "B", 10)
         pdf.set_text_color(*_BLUE)
@@ -1059,9 +1060,10 @@ def generate_tfm_defense_pdf(
         ("Predictor", "Open-Meteo real. Lenguaje practico: 'Vienen dias de calor...' Streaming activo."),
         ("Vision", "Detecta desperfectos fisicos (abollado, humedo, golpes). Lenguaje de pasillo."),
         ("Reportero", "Brief en 30 segundos. Jerga espanola. Normativa citada. Tendencia automatica."),
-        ("Flutter app", "0 errores dart analyze. Shimmer loading. Slider precio con feedback margen."),
+        ("Flutter app", "9 pantallas. Plano real CustomPainter. Tarjeta tiempo Open-Meteo. Insights IA. Export CSV."),
+        ("Telegram", "30+ comandos. /tiempo Open-Meteo. /insights Haiku. PDF descargable. Fotos+voz."),
         ("Seguridad", "Barcode SQL injection bloqueado. CORS seguro en prod. Auth en todos endpoints."),
-        ("Tests", "732 tests reales. 0 fallos. Flujos scan->Kuine, FEFO, simulacion supervisor/empleado."),
+        ("Tests", "774 tests reales. 0 fallos. Flujos scan->Kuine, FEFO, simulacion supervisor/empleado."),
         ("PDF defensa", "6 paginas + esta. Preguntas del tribunal. Metricas reales. Descargable via API."),
     ]
 
@@ -1259,6 +1261,8 @@ def generate_pitch_deck_pdf(store_name: str = "", kpis: dict | None = None) -> b
         "12 specialized agents coordinate: evaluation, pricing, stock, routes, ESG...",
         "Automated: markdown price > donate to food bank > remove from shelf.",
         "Legal compliance built-in: CE 178/2002 + Ley 49/2002 (tax deductions).",
+        "Real-time weather (Open-Meteo) per store location to predict demand shifts.",
+        "Interactive floor plan (CustomPainter) shows urgency per aisle, live on mobile.",
         "Episodic memory: learns from every decision, improves thresholds monthly.",
     ]:
         bullet(line, accent=True)
@@ -1315,7 +1319,7 @@ def generate_pitch_deck_pdf(store_name: str = "", kpis: dict | None = None) -> b
     kpi_box("Actions managed", str(accio), 158, y0, 38, 30, (217, 119, 6), (255, 255, 255))
     pdf.set_xy(14, y0 + 34)
     for label, value in [
-        ("Tests passing", f"{accio} / {accio}  -  0 failures  -  < 3 seconds"),
+        ("Tests passing", "774 / 774  -  0 failures  -  < 3 seconds"),
         ("ROI first year", f"{round((merma * 12 + deduc * 12 - 1800) / 1800, 1)}x  -  payback < 3 months"),
         ("Token efficiency", "0-token intent classification + circuit breaker + prompt caching"),
         ("Security", "23 adversarial attacks blocked  -  JWT auth  -  barcode SQL injection prevented"),

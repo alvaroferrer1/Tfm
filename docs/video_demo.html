@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>MermaOps — Demo Real</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a1218;font-family:'SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;overflow:hidden;width:100vw;height:100vh}
+#stage{width:100%;height:100%;position:relative}
+.scene{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity .6s}
+.scene.active{opacity:1;pointer-events:all}
+
+/* progress */
+#bar{position:fixed;top:0;left:0;height:3px;background:#059669;width:0;z-index:100;transition:width .3s linear}
+#timer{position:fixed;top:10px;right:16px;color:#2d6a4f;font-size:11px;letter-spacing:1px}
+#skip{position:fixed;bottom:18px;right:18px;color:#2d6a4f;font-size:11px;cursor:pointer;opacity:.6;letter-spacing:1px}
+#skip:hover{opacity:1}
+
+/* scene base */
+.scene-content{display:flex;flex-direction:column;align-items:center;width:100%;max-width:1100px;padding:0 40px}
+
+/* labels */
+.scene-label{font-size:11px;letter-spacing:3px;color:#059669;text-transform:uppercase;margin-bottom:18px;opacity:.8}
+.scene-title{font-size:48px;font-weight:800;color:#fff;text-align:center;line-height:1.15;margin-bottom:12px}
+.scene-title span{color:#059669}
+.scene-sub{font-size:16px;color:#6b9e85;text-align:center;max-width:560px;line-height:1.6}
+
+/* phone mockup */
+.phone{width:220px;height:420px;background:#111827;border-radius:32px;border:2px solid #1f3d2a;position:relative;overflow:hidden;box-shadow:0 40px 80px rgba(0,0,0,.6)}
+.phone-header{background:#059669;height:44px;display:flex;align-items:center;padding:0 14px;gap:8px}
+.phone-header span{color:#fff;font-size:12px;font-weight:700}
+.phone-status{font-size:9px;color:rgba(255,255,255,.6)}
+.phone-body{padding:10px;flex:1;overflow:hidden}
+.bubble{border-radius:14px;padding:9px 12px;margin:6px 0;max-width:80%;font-size:11.5px;line-height:1.5;animation:bubbleIn .4s ease}
+.bubble.bot{background:#1a3a28;color:#c8e6c9;align-self:flex-start}
+.bubble.user{background:#059669;color:#fff;align-self:flex-end;margin-left:auto}
+.chat{display:flex;flex-direction:column;height:340px;overflow:hidden}
+@keyframes bubbleIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.typing{display:flex;gap:4px;padding:8px 12px;background:#1a3a28;border-radius:14px;width:52px;margin:4px 0}
+.dot{width:5px;height:5px;background:#6b9e85;border-radius:50%;animation:bounce 1.2s infinite}
+.dot:nth-child(2){animation-delay:.2s}
+.dot:nth-child(3){animation-delay:.4s}
+@keyframes bounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-5px)}}
+
+/* app mockup */
+.app{width:320px;height:560px;background:#0f1f17;border-radius:20px;overflow:hidden;box-shadow:0 40px 80px rgba(0,0,0,.6);border:1px solid #1f3d2a}
+.app-header{background:#059669;padding:16px 18px;display:flex;align-items:center;gap:10px}
+.app-header-title{color:#fff;font-size:15px;font-weight:700}
+.app-nav{display:flex;background:#0a1a12;border-bottom:1px solid #1a3a28}
+.nav-item{flex:1;text-align:center;padding:8px 0;font-size:9px;color:#4a7a5a;cursor:pointer}
+.nav-item.active{color:#059669;border-bottom:2px solid #059669}
+.app-body{padding:12px;display:flex;flex-direction:column;gap:8px;height:calc(100% - 88px);overflow:hidden}
+.card{background:#1a3a28;border-radius:12px;padding:12px;border-left:3px solid #059669}
+.card-title{font-size:11px;font-weight:700;color:#fff;margin-bottom:4px}
+.card-sub{font-size:9px;color:#6b9e85}
+.card-badge{background:#059669;color:#fff;font-size:8px;font-weight:700;padding:2px 7px;border-radius:20px;display:inline-block}
+.card-badge.red{background:#dc2626}
+.card-badge.yellow{background:#d97706}
+.kpi-row{display:flex;gap:6px}
+.kpi-box{flex:1;background:#0f2a1a;border-radius:8px;padding:8px;text-align:center}
+.kpi-val{font-size:18px;font-weight:800;color:#059669}
+.kpi-lbl{font-size:7px;color:#6b9e85;margin-top:2px}
+.action-row{display:flex;align-items:center;gap:8px;background:#0f2a1a;border-radius:8px;padding:8px 10px;cursor:pointer}
+.action-icon{width:24px;height:24px;background:#059669;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0}
+.action-text{flex:1}
+.action-title{font-size:10px;font-weight:700;color:#fff}
+.action-desc{font-size:8px;color:#6b9e85}
+.btn-green{background:#059669;color:#fff;border:none;border-radius:8px;padding:6px 14px;font-size:9px;font-weight:700;cursor:pointer;width:100%}
+
+/* two-up layout */
+.two-up{display:flex;gap:48px;align-items:flex-start}
+.panel{display:flex;flex-direction:column;align-items:center;gap:12px}
+.panel-label{font-size:10px;letter-spacing:2px;color:#2d6a4f;text-transform:uppercase}
+
+/* stat cards */
+.stat-row{display:flex;gap:16px;margin-top:24px}
+.stat-card{background:#111;border:1px solid #1f3d2a;border-radius:16px;padding:20px 28px;text-align:center}
+.stat-n{font-size:36px;font-weight:800;color:#059669}
+.stat-l{font-size:11px;color:#6b9e85;margin-top:4px}
+
+/* agents grid */
+.agents-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;width:100%;max-width:780px}
+.agent-card{background:#111827;border:1px solid #1f3d2a;border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:4px}
+.agent-name{font-size:12px;font-weight:700;color:#fff}
+.agent-role{font-size:9px;color:#059669}
+.agent-model{font-size:8px;color:#4a6a5a;font-style:italic}
+.agent-dot{width:6px;height:6px;border-radius:50%;background:#059669;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+/* brief */
+.brief-box{background:#0f1f17;border:1px solid #1f3d2a;border-radius:16px;padding:24px;max-width:560px;width:100%}
+.brief-title{font-size:14px;font-weight:700;color:#059669;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.brief-line{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #1a3a28;font-size:11px}
+.brief-key{color:#9ca3af}
+.brief-val{color:#fff;font-weight:600}
+
+/* animate in */
+.fade-up{opacity:0;transform:translateY(20px);transition:opacity .6s ease,transform .6s ease}
+.fade-up.in{opacity:1;transform:translateY(0)}
+.delay-1{transition-delay:.15s}
+.delay-2{transition-delay:.3s}
+.delay-3{transition-delay:.45s}
+.delay-4{transition-delay:.6s}
+
+/* fullscreen bg scenes */
+.sc1-bg,.sc7-bg{background:radial-gradient(ellipse at 40% 50%,#052e16 0%,#0a1218 60%)}
+.sc4-bg{background:radial-gradient(ellipse at 60% 50%,#1e3a5f 0%,#0a1218 60%)}
+
+canvas{position:fixed;top:0;left:0;pointer-events:none;opacity:.12}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="bar"></div>
+<div id="timer">00:00</div>
+<div id="skip" onclick="next()">siguiente →</div>
+<div id="stage">
+
+<!-- ESCENA 1: Intro -->
+<div class="scene sc1-bg active" id="s0">
+  <div class="scene-content" style="text-align:center">
+    <div class="scene-label fade-up" style="font-size:13px;letter-spacing:4px">DEMO EN VIVO</div>
+    <div class="scene-title fade-up delay-1" style="font-size:64px">Merma<span>Ops</span></div>
+    <div class="scene-sub fade-up delay-2" style="font-size:18px">El sistema de IA que elimina la merma<br>en supermercados españoles</div>
+    <div class="stat-row fade-up delay-3" style="margin-top:40px">
+      <div class="stat-card"><div class="stat-n">34%</div><div class="stat-l">reducción merma</div></div>
+      <div class="stat-card"><div class="stat-n">8x</div><div class="stat-l">ROI en 6 meses</div></div>
+      <div class="stat-card"><div class="stat-n">12</div><div class="stat-l">agentes IA activos</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ESCENA 2: El problema -->
+<div class="scene" id="s1">
+  <div class="scene-content">
+    <div class="scene-label fade-up">El Problema</div>
+    <div class="scene-title fade-up delay-1">Son las 7:45. El encargado llega.<br><span>¿Qué está a punto de caducar?</span></div>
+    <div class="scene-sub fade-up delay-2" style="margin-top:16px">Sin MermaOps: revisa etiquetas manualmente,<br>decide sin datos, llega tarde. La merma ya pasó.</div>
+    <div class="stat-row fade-up delay-3">
+      <div class="stat-card"><div class="stat-n" style="color:#dc2626">47%</div><div class="stat-l">decisiones sin datos</div></div>
+      <div class="stat-card"><div class="stat-n" style="color:#d97706">23 min</div><div class="stat-l">por producto / manual</div></div>
+      <div class="stat-card"><div class="stat-n" style="color:#dc2626">1.6%</div><div class="stat-l">ventas perdidas por merma</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ESCENA 3: Telegram - Chuwi responde -->
+<div class="scene" id="s2">
+  <div class="scene-content">
+    <div class="scene-label fade-up">Telegram — @ChuwiMermaOpsBot</div>
+    <div class="scene-title fade-up delay-1" style="font-size:36px">Con MermaOps: el encargado<br>pregunta en <span>Telegram</span></div>
+    <div class="two-up fade-up delay-2" style="margin-top:24px">
+      <div class="panel">
+        <div class="panel-label">Carlos (encargado)</div>
+        <div class="phone">
+          <div class="phone-header">
+            <div style="width:28px;height:28px;background:#059669;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:#fff">C</div>
+            <div>
+              <div style="color:#fff;font-size:11px;font-weight:700">Chuwi MermaOps</div>
+              <div class="phone-status">● en línea</div>
+            </div>
+          </div>
+          <div class="phone-body">
+            <div class="chat" id="chat1"></div>
+          </div>
+        </div>
+      </div>
+      <div class="panel" style="max-width:320px">
+        <div class="panel-label">Lo que Chuwi hace por dentro</div>
+        <div style="display:flex;flex-direction:column;gap:10px;width:280px">
+          <div class="card" id="step1" style="opacity:.3"><div class="card-title">① Clasifica intención</div><div class="card-sub">sin tokens — 0ms</div></div>
+          <div class="card" id="step2" style="opacity:.3"><div class="card-title">② Delega a Kuine</div><div class="card-sub">analiza 14 productos</div></div>
+          <div class="card" id="step3" style="opacity:.3"><div class="card-title">③ Evaluador + ForkMerge</div><div class="card-sub">3 agentes votan acción óptima</div></div>
+          <div class="card" id="step4" style="opacity:.3"><div class="card-title">④ Respuesta en streaming</div><div class="card-sub">token a token, < 2 segundos</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ESCENA 4: App - Dashboard -->
+<div class="scene sc4-bg" id="s3">
+  <div class="scene-content">
+    <div class="scene-label fade-up">App Flutter — Dashboard</div>
+    <div class="scene-title fade-up delay-1" style="font-size:36px">El director abre la app.<br><span>Todo el día en 5 segundos.</span></div>
+    <div class="two-up fade-up delay-2" style="margin-top:24px;align-items:center">
+      <div class="app">
+        <div class="app-header">
+          <div style="width:32px;height:32px;background:rgba(255,255,255,.2);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px">🌱</div>
+          <div class="app-header-title">MermaOps — Super Martínez</div>
+        </div>
+        <div class="app-nav">
+          <div class="nav-item active">Dashboard</div>
+          <div class="nav-item">Acciones</div>
+          <div class="nav-item">Informes</div>
+          <div class="nav-item">Agentes</div>
+        </div>
+        <div class="app-body">
+          <div class="kpi-row">
+            <div class="kpi-box"><div class="kpi-val">7</div><div class="kpi-lbl">acciones hoy</div></div>
+            <div class="kpi-box"><div class="kpi-val" style="color:#dc2626">4</div><div class="kpi-lbl">críticas</div></div>
+            <div class="kpi-box"><div class="kpi-val">52€</div><div class="kpi-lbl">en riesgo</div></div>
+          </div>
+          <div class="card">
+            <div class="card-title">Brief IA — hoy 09:02</div>
+            <div class="card-sub">Kuine analizó 14 productos · 3 urgentes</div>
+          </div>
+          <div class="action-row" id="action1">
+            <div class="action-icon">🥛</div>
+            <div class="action-text">
+              <div class="action-title">Yogur Danone x4 — REBAJAR -19%</div>
+              <div class="action-desc">Pasillo 2-E3-N1 · caduca mañana · 12 uds</div>
+            </div>
+            <span class="card-badge red">CRÍTICO</span>
+          </div>
+          <div class="action-row">
+            <div class="action-icon">🍓</div>
+            <div class="action-text">
+              <div class="action-title">Fresas bandeja — REBAJAR -20%</div>
+              <div class="action-desc">Pasillo 5-E1-N1 · 4 días · 20 uds</div>
+            </div>
+            <span class="card-badge yellow">ALTO</span>
+          </div>
+          <div class="action-row">
+            <div class="action-icon">🐟</div>
+            <div class="action-text">
+              <div class="action-title">Merluza rodajas — REBAJAR -30%</div>
+              <div class="action-desc">Pasillo 4-E1-N1 · 2 días · 4 uds</div>
+            </div>
+            <span class="card-badge red">CRÍTICO</span>
+          </div>
+        </div>
+      </div>
+      <div style="max-width:300px;display:flex;flex-direction:column;gap:16px">
+        <div class="brief-box">
+          <div class="brief-title">📄 Brief diario IA</div>
+          <div class="brief-line"><span class="brief-key">Merma evitada</span><span class="brief-val">402 EUR/mes</span></div>
+          <div class="brief-line"><span class="brief-key">Donaciones</span><span class="brief-val">26 ud · 69€</span></div>
+          <div class="brief-line"><span class="brief-key">Deducción fiscal</span><span class="brief-val">24€ · 35%</span></div>
+          <div class="brief-line"><span class="brief-key">Agentes activos</span><span class="brief-val">12 / 12</span></div>
+          <div class="brief-line"><span class="brief-key">🌤 Tiempo hoy</span><span class="brief-val">34°C · Caluroso</span></div>
+          <div class="brief-line" style="border:none"><span class="brief-key">Tests</span><span class="brief-val" style="color:#059669">774 / 774 ✓</span></div>
+        </div>
+        <div class="brief-box" style="margin-top:8px">
+          <div class="brief-title">🗺 Plano real del super</div>
+          <div style="font-size:9px;color:#6b9e85;line-height:1.6">CustomPainter · almacén · 4 pasillos · frutas · cajas · urgencia live por sección</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ESCENA 5: Completar acción -->
+<div class="scene" id="s4">
+  <div class="scene-content">
+    <div class="scene-label fade-up">App — Completar Acción</div>
+    <div class="scene-title fade-up delay-1" style="font-size:36px">Carlos va al pasillo.<br><span>1 toque. Acción completada.</span></div>
+    <div class="fade-up delay-2" style="margin-top:24px">
+      <div class="app" style="height:480px">
+        <div class="app-header">
+          <div class="app-header-title">← Acción: Yogur Danone</div>
+        </div>
+        <div class="app-body" style="padding:16px;gap:12px">
+          <div style="background:#1a3a28;border-radius:12px;padding:16px">
+            <div style="font-size:13px;font-weight:700;color:#fff;margin-bottom:8px">🥛 Yogur natural Danone x4</div>
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <div class="brief-line"><span class="brief-key">Acción</span><span class="card-badge red">REBAJAR -19%</span></div>
+              <div class="brief-line"><span class="brief-key">Precio actual</span><span class="brief-val">1.60 €</span></div>
+              <div class="brief-line"><span class="brief-key">Nuevo precio</span><span class="brief-val" style="color:#059669;font-size:20px">1.30 €</span></div>
+              <div class="brief-line"><span class="brief-key">Pasillo</span><span class="brief-val">2 · E3 · N1</span></div>
+              <div class="brief-line" style="border:none"><span class="brief-key">Caduca</span><span class="brief-val" style="color:#dc2626">mañana</span></div>
+            </div>
+          </div>
+          <div style="background:#0f2a1a;border-radius:10px;padding:12px;font-size:10px;color:#6b9e85;line-height:1.7">
+            FEFO: vender este lote antes que el del 10/06. Colocar en zona de ofertas visible. Verificar cadena de frío máx 4°C.
+          </div>
+          <button class="btn-green" id="complete-btn" style="padding:14px;font-size:13px" onclick="completeAction()">
+            ✓ Marcar como completada
+          </button>
+          <div id="complete-msg" style="display:none;text-align:center;padding:12px;background:#052e16;border-radius:10px;color:#4ade80;font-weight:700">
+            ✓ Acción completada · Merma_log actualizado · +19€ ahorrados
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ESCENA 6: Los 12 agentes -->
+<div class="scene" id="s5">
+  <div class="scene-content" style="align-items:center">
+    <div class="scene-label fade-up">Sistema Multi-Agente</div>
+    <div class="scene-title fade-up delay-1" style="font-size:36px">12 agentes trabajando<br><span>24/7 por ti</span></div>
+    <div class="agents-grid fade-up delay-2" style="margin-top:24px">
+      <div class="agent-card"><div style="display:flex;gap:6px;align-items:center"><div class="agent-dot"></div><div class="agent-name">Kuine</div></div><div class="agent-role">Orquestador</div><div class="agent-model">claude-opus-4-8</div></div>
+      <div class="agent-card"><div style="display:flex;gap:6px;align-items:center"><div class="agent-dot"></div><div class="agent-name">Chuwi</div></div><div class="agent-role">Telegram AI</div><div class="agent-model">claude-sonnet-4-6</div></div>
+      <div class="agent-card"><div style="display:flex;gap:6px;align-items:center"><div class="agent-dot"></div><div class="agent-name">Evaluador</div></div><div class="agent-role">Riesgo</div><div class="agent-model">claude-sonnet-4-6</div></div>
+      <div class="agent-card"><div style="display:flex;gap:6px;align-items:center"><div class="agent-dot"></div><div class="agent-name">ForkMerge</div></div><div class="agent-role">Consenso paralelo</div><div class="agent-model">3x sonnet + opus</div></div>
+      <div class="agent-card"><div style="display:flex;gap:6px;align-items:center"><div class="agent-dot"></div><div class="agent-name">Validador</div></div><div class="agent-role">Seguridad</div><div class="agent-model">23 ataques → 100%</div></div>
+      <div class="agent-card"><div style="display:flex;gap:6px;align-items:center"><div class="agent-dot"></div><div class="agent-name">Consenso</div></div><div class="agent-role">Unanimidad</div><div class="agent-model">score ≥ 90</div></div>
+      <div class="agent-card"><div style="display:flex;gap:6px;align-items:center"><div class="agent-dot"></div><div class="agent-name">Predictor</div></div><div class="agent-role">Meteorología</div><div class="agent-model">claude-haiku-4-5</div></div>
+      <div class="agent-card"><div style="display:flex;gap:6px;align-items:center"><div class="agent-dot"></div><div class="agent-name">Visión</div></div><div class="agent-role">Fotos</div><div class="agent-model">haiku + cache 30min</div></div>
+      <div class="agent-card"><div style="display:flex;gap:6px;align-items:center"><div class="agent-dot"></div><div class="agent-name">Precio</div></div><div class="agent-role">Descuentos</div><div class="agent-model">intraday + FEFO</div></div>
+      <div class="agent-card"><div style="display:flex;gap:6px;align-items:center"><div class="agent-dot"></div><div class="agent-name">Stock</div></div><div class="agent-role">Reposición</div><div class="agent-model">preventivo 3d</div></div>
+      <div class="agent-card"><div style="display:flex;gap:6px;align-items:center"><div class="agent-dot"></div><div class="agent-name">Notificador</div></div><div class="agent-role">Alertas</div><div class="agent-model">Telegram botones</div></div>
+      <div class="agent-card"><div style="display:flex;gap:6px;align-items:center"><div class="agent-dot"></div><div class="agent-name">Reportero</div></div><div class="agent-role">Briefs PDF</div><div class="agent-model">claude-sonnet-4-6</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ESCENA 7: Cierre -->
+<div class="scene sc1-bg" id="s6">
+  <div class="scene-content" style="text-align:center">
+    <div class="scene-label fade-up" style="font-size:13px;letter-spacing:4px">SISTEMA EN PRODUCCIÓN</div>
+    <div class="scene-title fade-up delay-1" style="font-size:56px">Merma<span>Ops</span></div>
+    <div class="scene-sub fade-up delay-2" style="font-size:18px;margin-top:8px">34% menos merma · 8x ROI · 9 pantallas · 30+ comandos Telegram</div>
+    <div class="stat-row fade-up delay-3" style="margin-top:32px">
+      <div class="stat-card"><div class="stat-n">774</div><div class="stat-l">tests · 0 fallos</div></div>
+      <div class="stat-card"><div class="stat-n">50+</div><div class="stat-l">endpoints API</div></div>
+      <div class="stat-card"><div class="stat-n">< 2s</div><div class="stat-l">latencia decisión</div></div>
+    </div>
+    <div class="stat-row fade-up delay-3" style="margin-top:16px">
+      <div class="stat-card"><div class="stat-n" style="font-size:18px">🌤</div><div class="stat-l">tiempo real Open-Meteo</div></div>
+      <div class="stat-card"><div class="stat-n" style="font-size:18px">🗺</div><div class="stat-l">plano real CustomPainter</div></div>
+      <div class="stat-card"><div class="stat-n" style="font-size:18px">✨</div><div class="stat-l">insights IA (Haiku)</div></div>
+    </div>
+    <div class="fade-up delay-4" style="margin-top:40px;font-size:16px;color:#2d6a4f;letter-spacing:2px">@ChuwiMermaOpsBot &nbsp;·&nbsp; localhost:8001/docs</div>
+  </div>
+</div>
+
+</div>
+<script>
+// particles
+const canvas=document.getElementById('c');
+const ctx=canvas.getContext('2d');
+canvas.width=window.innerWidth;canvas.height=window.innerHeight;
+const pts=Array.from({length:60},()=>({x:Math.random()*canvas.width,y:Math.random()*canvas.height,r:Math.random()*1.5+.5,vx:(Math.random()-.5)*.3,vy:(Math.random()-.5)*.3}));
+function draw(){ctx.clearRect(0,0,canvas.width,canvas.height);pts.forEach(p=>{p.x+=p.vx;p.y+=p.vy;if(p.x<0||p.x>canvas.width)p.vx*=-1;if(p.y<0||p.y>canvas.height)p.vy*=-1;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fillStyle='#059669';ctx.fill()});requestAnimationFrame(draw)}
+draw();
+
+// scenes
+const SCENES = [
+  {dur:6000},  // intro
+  {dur:7000},  // problema
+  {dur:11000}, // telegram
+  {dur:9000},  // dashboard
+  {dur:8000},  // accion
+  {dur:8000},  // agentes
+  {dur:7000},  // cierre
+];
+let cur=0, elapsed=0, total=SCENES.reduce((a,b)=>a+b.dur,0);
+let running=true, t0=Date.now();
+let barTimer=null;
+
+function showScene(i){
+  document.querySelectorAll('.scene').forEach((s,j)=>{
+    s.classList.toggle('active',j===i);
+    if(j===i){
+      s.querySelectorAll('.fade-up').forEach(el=>{
+        el.classList.remove('in');
+        setTimeout(()=>el.classList.add('in'),50);
+      });
+    }
+  });
+  if(i===2) startChat();
+  if(i===4) setTimeout(()=>{document.getElementById('complete-btn').style.animation='none'},3000);
+}
+
+function next(){
+  cur=(cur+1)%SCENES.length;
+  showScene(cur);
+  elapsed=SCENES.slice(0,cur).reduce((a,b)=>a+b.dur,0);
+  t0=Date.now();
+}
+
+// progress bar
+function updateBar(){
+  if(!running)return;
+  const now=Date.now();
+  const sceneElapsed=now-t0;
+  const totalElapsed=elapsed+sceneElapsed;
+  const pct=Math.min(totalElapsed/total*100,100);
+  document.getElementById('bar').style.width=pct+'%';
+  const sec=Math.floor(totalElapsed/1000);
+  document.getElementById('timer').textContent=`${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`;
+  if(sceneElapsed>=SCENES[cur].dur){
+    elapsed+=SCENES[cur].dur;
+    cur=(cur+1)%SCENES.length;
+    showScene(cur);
+    t0=Date.now();
+    if(cur===0)elapsed=0;
+  }
+  requestAnimationFrame(updateBar);
+}
+updateBar();
+
+// chat animation
+const chatMsgs=[
+  {type:'user',txt:'Hola Chuwi! ¿Qué hay urgente hoy?'},
+  {type:'typing'},
+  {type:'bot', txt:'Buenos días Carlos! 🌱 Hay 3 lotes urgentes:'},
+  {type:'bot', txt:'🥛 Yogur Danone x4 — 12 uds caducan MAÑANA. Recomiendo rebajar a 1.30€ (-19%).'},
+  {type:'bot', txt:'🐟 Merluza rodajas — 4 uds, 2 días. CRÍTICO — rebajar a 5.55€ (-30%).'},
+  {type:'bot', txt:'¿Creo las acciones ahora?'},
+  {type:'user',txt:'Sí, créalas todas'},
+  {type:'typing'},
+  {type:'bot', txt:'✅ 3 acciones creadas. Ahorro estimado: 47€. Pasillo 2-E3-N1 primero.'},
+];
+function startChat(){
+  const cont=document.getElementById('chat1');
+  if(!cont)return;
+  cont.innerHTML='';
+  const steps=[1,2,3,4];
+  let i=0;
+  function addMsg(){
+    if(i>=chatMsgs.length)return;
+    const m=chatMsgs[i++];
+    if(m.type==='typing'){
+      const t=document.createElement('div');
+      t.className='typing';
+      t.innerHTML='<div class="dot"></div><div class="dot"></div><div class="dot"></div>';
+      cont.appendChild(t);
+      cont.scrollTop=cont.scrollHeight;
+      setTimeout(()=>{cont.removeChild(t);
+        // activate step
+        const s=document.getElementById('step'+(Math.min(steps.shift()||0)));
+        if(s)s.style.opacity='1';
+        addMsg();},1800);
+    } else {
+      const b=document.createElement('div');
+      b.className='bubble '+(m.type==='user'?'user':'bot');
+      b.textContent=m.txt;
+      cont.appendChild(b);
+      cont.scrollTop=cont.scrollHeight;
+      setTimeout(addMsg,m.type==='user'?800:600);
+    }
+  }
+  setTimeout(addMsg,500);
+}
+
+function completeAction(){
+  document.getElementById('complete-btn').style.display='none';
+  document.getElementById('complete-msg').style.display='block';
+}
+
+showScene(0);
+</script>
+</body>
+</html>

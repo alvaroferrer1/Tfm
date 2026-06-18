@@ -2092,7 +2092,7 @@ def get_store_profile(_auth: dict = Depends(verify_token)):
         raise
     except Exception as e:
         logger.error(f"get_store_profile error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Error interno del servidor. Inténtalo de nuevo.")
 
 
 @router.put("/store/profile")
@@ -2107,7 +2107,7 @@ def update_store_profile(body: dict, _auth: dict = Depends(verify_token)):
         return {"ok": True}
     except Exception as e:
         logger.error(f"update_store_profile error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Error interno del servidor. Inténtalo de nuevo.")
 
 
 # ── Weather (tiempo real por ubicación de la tienda) ───────────────────────────
@@ -2127,7 +2127,7 @@ def get_store_weather(_auth: dict = Depends(verify_token)):
         return {"city": city, "lat": lat, "lon": lon, "current": forecast[0], "forecast": forecast}
     except Exception as e:
         logger.error(f"get_store_weather error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Error interno del servidor. Inténtalo de nuevo.")
 
 
 # ── Insights IA (recomendaciones para el supervisor) ───────────────────────────
@@ -2244,4 +2244,4 @@ Sé muy específico con datos reales. Usa el tiempo, la zona y el tamaño del su
         }
     except Exception as e:
         logger.error(f"generate_insights error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Error interno del servidor. Inténtalo de nuevo.")
