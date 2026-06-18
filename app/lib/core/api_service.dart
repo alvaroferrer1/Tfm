@@ -139,6 +139,15 @@ class ApiService {
     return List<Map<String, dynamic>>.from(data['briefs'] ?? []);
   }
 
+  Future<List<Map<String, dynamic>>> getProducts() async {
+    final resp = await http.get(
+      Uri.parse('$_baseUrl/products'),
+      headers: _headers,
+    ).timeout(const Duration(seconds: 15));
+    if (resp.statusCode != 200) throw Exception('HTTP ${resp.statusCode}');
+    return List<Map<String, dynamic>>.from(jsonDecode(resp.body) as List);
+  }
+
   Future<List<Map<String, dynamic>>> getSupplierStats() async {
     final resp = await http.get(
       Uri.parse('$_baseUrl/stats/suppliers'),
@@ -165,6 +174,42 @@ class ApiService {
     return List<Map<String, dynamic>>.from(data['stores'] ?? []);
   }
 
+  Future<void> proposeAction(String actionId, String actionType, String reason) async {
+    final resp = await http.post(
+      Uri.parse('$_baseUrl/actions/$actionId/propose'),
+      headers: _headers,
+      body: jsonEncode({'action_type': actionType, 'reason': reason}),
+    ).timeout(const Duration(seconds: 10));
+    _parse(resp);
+  }
+
+  Future<void> approveAction(String actionId, {String? actionType, String notes = ''}) async {
+    final resp = await http.post(
+      Uri.parse('$_baseUrl/actions/$actionId/approve'),
+      headers: _headers,
+      body: jsonEncode({'action_type': actionType, 'notes': notes}),
+    ).timeout(const Duration(seconds: 10));
+    _parse(resp);
+  }
+
+  Future<void> rejectAction(String actionId, String reason) async {
+    final resp = await http.post(
+      Uri.parse('$_baseUrl/actions/$actionId/reject'),
+      headers: _headers,
+      body: jsonEncode({'reason': reason}),
+    ).timeout(const Duration(seconds: 10));
+    _parse(resp);
+  }
+
+  Future<List<Map<String, dynamic>>> getProposals() async {
+    final resp = await http.get(
+      Uri.parse('$_baseUrl/actions/proposals'),
+      headers: _headers,
+    ).timeout(const Duration(seconds: 10));
+    final data = _parse(resp);
+    return List<Map<String, dynamic>>.from(data['proposals'] ?? []);
+  }
+
   Future<Map<String, dynamic>> importBatches(String csvData) async {
     final resp = await http.post(
       Uri.parse('$_baseUrl/import/batches'),
@@ -172,6 +217,24 @@ class ApiService {
       body: jsonEncode({'csv_data': csvData}),
     ).timeout(const Duration(seconds: 30));
     return _parse(resp);
+  }
+
+  Future<String> exportActionsCsv() async {
+    final resp = await http.get(
+      Uri.parse('$_baseUrl/export/actions'),
+      headers: _headers,
+    ).timeout(const Duration(seconds: 30));
+    if (resp.statusCode >= 400) throw Exception('Export error ${resp.statusCode}');
+    return resp.body;
+  }
+
+  Future<String> exportBatchesCsv() async {
+    final resp = await http.get(
+      Uri.parse('$_baseUrl/export/batches'),
+      headers: _headers,
+    ).timeout(const Duration(seconds: 30));
+    if (resp.statusCode >= 400) throw Exception('Export error ${resp.statusCode}');
+    return resp.body;
   }
 
   Future<Map<String, dynamic>> getCurrentUser() async {
@@ -293,6 +356,21 @@ class ApiService {
         'category': category,
       }),
     ).timeout(const Duration(seconds: 45));
+    return _parse(resp);
+  }
+
+  Future<Map<String, dynamic>> analyzeShelf({
+    required String imageBase64,
+    String pasillo = '',
+  }) async {
+    final resp = await http.post(
+      Uri.parse('$_baseUrl/scan/shelf'),
+      headers: _headers,
+      body: jsonEncode({
+        'image_base64': imageBase64,
+        'pasillo': pasillo,
+      }),
+    ).timeout(const Duration(seconds: 60));
     return _parse(resp);
   }
 

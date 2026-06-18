@@ -121,7 +121,7 @@ _raw_origins = os.getenv("CORS_ORIGINS", "")
 _app_env = os.getenv("APP_ENV", "dev")
 if _raw_origins:
     _allowed_origins: list[str] = [o.strip() for o in _raw_origins.split(",") if o.strip()]
-elif _app_env == "dev":
+elif _app_env.startswith("dev"):
     _allowed_origins = ["*"]  # solo en dev local
 else:
     # En producción sin CORS_ORIGINS configurado: bloquear todo origen externo

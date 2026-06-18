@@ -596,7 +596,7 @@ def _execute_tool_sync(tool_name: str, tool_input: dict, user: Optional[dict]) -
 
         elif tool_name == "get_agent_status_brief":
             _catalog = [
-                ("Kuine", "orchestrator", "claude-opus-4-7"),
+                ("Kuine", "orchestrator", "claude-opus-4-8"),
                 ("Chuwi", "conversational", "claude-sonnet-4-6"),
                 ("Evaluador", "evaluator", "claude-sonnet-4-6"),
                 ("ForkMerge", "fork_merge", "claude-sonnet-4-6 × 3 + opus-4-8"),

@@ -1,14 +1,32 @@
+import 'dart:convert';
 import 'dart:math' show pi;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/api_service.dart';
 import '../../core/error_widget.dart';
 import '../../core/l10n.dart';
 import '../../core/supabase_client.dart';
 import '../../core/theme.dart' show UrgencyColors, ShimmerKpiGrid;
+
+// Guards LinearGradient.createShader() against zero-area rects (CanvasKit crash on Flutter web)
+class _SafeGradient extends LinearGradient {
+  const _SafeGradient({
+    required super.colors,
+    super.begin = Alignment.centerLeft,
+    super.end = Alignment.centerRight,
+    super.stops,
+  });
+
+  @override
+  Shader createShader(Rect rect, {TextDirection? textDirection}) {
+    final safe = rect.isEmpty ? Rect.fromLTWH(0, 0, 1, 1) : rect;
+    return super.createShader(safe, textDirection: textDirection);
+  }
+}
 
 // ── Providers ─────────────────────────────────────────────────────────────────
 
@@ -24,22 +42,54 @@ final _actionsRealtimeProvider = StreamProvider<List<Map<String, dynamic>>>((ref
       .eq('store_id', storeId);
 });
 
+const _dashCacheKey = 'dashboard_cache';
+const _dashCacheTimeKey = 'dashboard_cache_time';
+
+Future<void> _saveDashCache(Map<String, dynamic> data) async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString(_dashCacheKey, jsonEncode(data));
+  await prefs.setInt(_dashCacheTimeKey, DateTime.now().millisecondsSinceEpoch);
+}
+
+Future<Map<String, dynamic>?> _loadDashCache() async {
+  final prefs = await SharedPreferences.getInstance();
+  final raw = prefs.getString(_dashCacheKey);
+  if (raw == null) return null;
+  try {
+    final data = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+    final ts = prefs.getInt(_dashCacheTimeKey) ?? 0;
+    data['_cached_at'] = ts;
+    return data;
+  } catch (_) {
+    return null;
+  }
+}
+
 final dashboardProvider = FutureProvider<Map<String, dynamic>>((ref) async {
   final pending = await supabase
       .from('actions')
-      .select('priority_score, action_type, urgency_level, batch_id')
+      .select('priority_score, action_type, batch_id')
       .eq('store_id', storeId)
       .eq('status', 'pending')
       .order('priority_score', ascending: false);
 
   final batches = await supabase
       .from('batches')
-      .select('quantity, expiry_date, products(name, price)')
+      .select('id, product_id, quantity, expiry_date')
       .eq('store_id', storeId)
       .eq('status', 'active')
       .lte('expiry_date',
           DateTime.now().add(const Duration(days: 7)).toIso8601String().substring(0, 10))
       .order('expiry_date', ascending: true);
+
+  // Fetch products via backend (bypasses Supabase RLS on products table)
+  Map<String, Map<String, dynamic>> productsMap = {};
+  try {
+    final prods = await api.getProducts();
+    for (final p in prods) {
+      productsMap[p['id'] as String] = Map<String, dynamic>.from(p);
+    }
+  } catch (_) {}
 
   final brief = await supabase
       .from('daily_briefs')
@@ -52,10 +102,12 @@ final dashboardProvider = FutureProvider<Map<String, dynamic>>((ref) async {
   double valueAtRisk = 0;
   Map<String, dynamic>? mostCritical;
   for (final b in batches) {
+    final pid = b['product_id'] as String? ?? '';
+    final product = productsMap[pid];
     final qty = (b['quantity'] as num?)?.toDouble() ?? 0;
-    final price = ((b['products'] as Map?)?['price'] as num?)?.toDouble() ?? 0;
+    final price = (product?['price'] as num?)?.toDouble() ?? 0;
     valueAtRisk += qty * price;
-    mostCritical ??= b; // first is soonest to expire
+    if (mostCritical == null) mostCritical = {...b, 'products': product};
   }
 
   final pendingList = List<Map<String, dynamic>>.from(pending);
@@ -90,13 +142,17 @@ final dashboardProvider = FutureProvider<Map<String, dynamic>>((ref) async {
       .substring(0, 10);
   final expiringTodayRaw = await supabase
       .from('batches')
-      .select('quantity, expiry_date, products(name, category, pasillo)')
+      .select('id, product_id, quantity, expiry_date')
       .eq('store_id', storeId)
       .eq('status', 'active')
       .gte('expiry_date', todayStr)
       .lte('expiry_date', tomorrowStr)
       .order('expiry_date', ascending: true)
       .limit(6);
+  final expiringToday = (expiringTodayRaw as List).map((b) {
+    final pid = b['product_id'] as String? ?? '';
+    return {...Map<String, dynamic>.from(b), 'products': productsMap[pid]};
+  }).toList();
 
   final completedTodayRaw = await supabase
       .from('actions')
@@ -121,7 +177,7 @@ final dashboardProvider = FutureProvider<Map<String, dynamic>>((ref) async {
     final hoursLeft = expiry.difference(now).inHours;
     if (hoursLeft < 0 || hoursLeft > 48) continue; // solo próximas 48h sin acción
 
-    final product = (b['products'] as Map?)?.cast<String, dynamic>() ?? {};
+    final product = productsMap[b['product_id'] as String? ?? ''] ?? {};
     final qty = (b['quantity'] as num?)?.toInt() ?? 0;
     final price = (product['price'] as num?)?.toDouble() ?? 0;
     final value = qty * price;
@@ -138,10 +194,9 @@ final dashboardProvider = FutureProvider<Map<String, dynamic>>((ref) async {
       'expiry': expiryStr,
     });
   }
-  // Ordenar por más urgente primero
   predictiveAlerts.sort((a, b) => (a['hours_left'] as int).compareTo(b['hours_left'] as int));
 
-  return {
+  final result = {
     'pending_count': pendingList.length,
     'critical_count': criticalCount,
     'high_count': highCount,
@@ -152,10 +207,13 @@ final dashboardProvider = FutureProvider<Map<String, dynamic>>((ref) async {
     'merma_7d': List<Map<String, dynamic>>.from(merma7),
     'donation_qty': donationQty,
     'donation_value': donationValue,
-    'expiring_today': List<Map<String, dynamic>>.from(expiringTodayRaw),
+    'expiring_today': List<Map<String, dynamic>>.from(expiringToday),
     'completed_today': (completedTodayRaw as List).length,
     'predictive_alerts': predictiveAlerts.take(4).toList(),
   };
+  // Guardar en caché para modo offline
+  await _saveDashCache(result);
+  return result;
 });
 
 // ── Screen ────────────────────────────────────────────────────────────────────
@@ -200,56 +258,146 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
 
     final dashAsync = ref.watch(dashboardProvider);
     final user = supabase.auth.currentUser;
+    final lang = ref.watch(languageProvider);
 
     return Scaffold(
       backgroundColor: const Color(0xFFF0FDF4),
-      body: dashAsync.when(
-        loading: () => const SafeArea(child: ShimmerKpiGrid()),
-        error: (e, _) => SafeArea(
-          child: Center(
-            child: Padding(
-              padding: const EdgeInsets.all(32),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 80,
-                    height: 80,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFEF2F2),
-                      borderRadius: BorderRadius.circular(24),
-                    ),
-                    child: const Icon(Icons.wifi_off_rounded,
-                        size: 40, color: Color(0xFFEF4444)),
-                  ),
-                  const SizedBox(height: 20),
-                  const Text('Sin conexión',
-                      style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w800,
-                          color: Color(0xFF111827))),
-                  const SizedBox(height: 8),
-                  Text(friendlyError(e),
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                          fontSize: 13, color: Color(0xFF6B7280))),
-                  const SizedBox(height: 24),
-                  ElevatedButton.icon(
-                    onPressed: () => ref.invalidate(dashboardProvider),
-                    icon: const Icon(Icons.refresh_rounded),
-                    label: const Text('Reintentar'),
-                  ),
-                ],
-              ),
-            ),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF065F46),
+        foregroundColor: Colors.white,
+        elevation: 0,
+        titleSpacing: 16,
+        title: const Text('MermaOps',
+            style: TextStyle(fontWeight: FontWeight.w800, letterSpacing: -0.4, fontSize: 18)),
+        actions: [
+          TextButton(
+            onPressed: () => ref.read(languageProvider.notifier).toggle(),
+            child: Text(lang == 'es' ? 'EN' : 'ES',
+                style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w700, fontSize: 13)),
           ),
-        ),
+          IconButton(
+            icon: const Icon(Icons.refresh_outlined, color: Colors.white),
+            tooltip: 'Actualizar',
+            onPressed: () => ref.invalidate(dashboardProvider),
+          ),
+          IconButton(
+            icon: const Icon(Icons.person_outline, color: Colors.white),
+            onPressed: () => context.go('/profile'),
+          ),
+        ],
+      ),
+      body: dashAsync.when(
+        loading: () => const ShimmerKpiGrid(),
+        error: (e, _) => _OfflineDashboard(error: e, ref: ref, userEmail: user?.email),
         data: (data) => RefreshIndicator(
-          onRefresh: () async => ref.invalidate(dashboardProvider),
+          onRefresh: () async {
+            ref.invalidate(dashboardProvider);
+            await Future.delayed(const Duration(milliseconds: 800));
+          },
           child: _DashboardBody(data: data, userEmail: user?.email, ref: ref),
         ),
       ),
     );
+  }
+}
+
+// ── Offline dashboard — muestra caché con banner cuando no hay internet ────────
+
+class _OfflineDashboard extends StatefulWidget {
+  final Object error;
+  final WidgetRef ref;
+  final String? userEmail;
+  const _OfflineDashboard({required this.error, required this.ref, this.userEmail});
+
+  @override
+  State<_OfflineDashboard> createState() => _OfflineDashboardState();
+}
+
+class _OfflineDashboardState extends State<_OfflineDashboard> {
+  Map<String, dynamic>? _cached;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCache();
+  }
+
+  Future<void> _loadCache() async {
+    final data = await _loadDashCache();
+    if (mounted) setState(() { _cached = data; _loading = false; });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) return const SafeArea(child: ShimmerKpiGrid());
+
+    final cached = _cached;
+    if (cached == null) {
+      // Sin caché: pantalla de error clásica
+      return SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Container(
+                width: 80, height: 80,
+                decoration: BoxDecoration(color: const Color(0xFFFEF2F2), borderRadius: BorderRadius.circular(24)),
+                child: const Icon(Icons.wifi_off_rounded, size: 40, color: Color(0xFFEF4444)),
+              ),
+              const SizedBox(height: 20),
+              const Text('Sin conexión', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 8),
+              Text(friendlyError(widget.error), textAlign: TextAlign.center, style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+              const SizedBox(height: 24),
+              ElevatedButton.icon(
+                onPressed: () => widget.ref.invalidate(dashboardProvider),
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text('Reintentar'),
+              ),
+            ]),
+          ),
+        ),
+      );
+    }
+
+    // Con caché: mostrar datos antiguos + banner de aviso
+    final cachedAt = cached['_cached_at'] as int? ?? 0;
+    final age = DateTime.now().difference(DateTime.fromMillisecondsSinceEpoch(cachedAt));
+    final ageLabel = age.inMinutes < 60
+        ? 'hace ${age.inMinutes} min'
+        : age.inHours < 24
+            ? 'hace ${age.inHours}h'
+            : 'hace ${age.inDays}d';
+
+    return Column(children: [
+      // Banner offline
+      Material(
+        color: const Color(0xFFFEF3C7),
+        child: SafeArea(
+          bottom: false,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Row(children: [
+              const Icon(Icons.wifi_off, size: 16, color: Color(0xFF92400E)),
+              const SizedBox(width: 8),
+              Expanded(child: Text('Sin conexión · datos $ageLabel', style: const TextStyle(fontSize: 12, color: Color(0xFF92400E), fontWeight: FontWeight.w600))),
+              TextButton(
+                onPressed: () => widget.ref.invalidate(dashboardProvider),
+                style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8), minimumSize: Size.zero, tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                child: const Text('Reintentar', style: TextStyle(fontSize: 12, color: Color(0xFF92400E))),
+              ),
+            ]),
+          ),
+        ),
+      ),
+      Expanded(
+        child: RefreshIndicator(
+          onRefresh: () async => widget.ref.invalidate(dashboardProvider),
+          child: _DashboardBody(data: cached, userEmail: widget.userEmail, ref: widget.ref),
+        ),
+      ),
+    ]);
   }
 }
 
@@ -270,10 +418,7 @@ class _DashboardBody extends StatefulWidget {
 class _DashboardBodyState extends State<_DashboardBody>
     with TickerProviderStateMixin {
   late AnimationController _pulseCtrl;
-  late AnimationController _slideCtrl;
   late Animation<double> _pulseAnim;
-  late Animation<Offset> _slideAnim;
-  late Animation<double> _fadeAnim;
 
   @override
   void initState() {
@@ -285,20 +430,11 @@ class _DashboardBodyState extends State<_DashboardBody>
     _pulseAnim = Tween<double>(begin: 0.5, end: 1.0).animate(
       CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut),
     );
-
-    _slideCtrl = AnimationController(
-      duration: const Duration(milliseconds: 700),
-      vsync: this,
-    )..forward();
-    _slideAnim = Tween<Offset>(begin: const Offset(0, 0.06), end: Offset.zero)
-        .animate(CurvedAnimation(parent: _slideCtrl, curve: Curves.easeOut));
-    _fadeAnim = CurvedAnimation(parent: _slideCtrl, curve: Curves.easeOut);
   }
 
   @override
   void dispose() {
     _pulseCtrl.dispose();
-    _slideCtrl.dispose();
     super.dispose();
   }
 
@@ -331,72 +467,19 @@ class _DashboardBodyState extends State<_DashboardBody>
     final headerBg = _headerColor(critical);
     final ref = widget.ref;
 
-    return FadeTransition(
-      opacity: _fadeAnim,
-      child: SlideTransition(
-        position: _slideAnim,
-        child: CustomScrollView(
+    return ListView(
           physics: const AlwaysScrollableScrollPhysics(),
-          slivers: [
-            // ── Sliver Hero Header ──────────────────────────────────────────
-            SliverAppBar(
-              expandedHeight: 220,
-              pinned: true,
-              stretch: true,
-              backgroundColor: headerBg,
-              foregroundColor: Colors.white,
-              elevation: 0,
-              flexibleSpace: FlexibleSpaceBar(
-                titlePadding:
-                    const EdgeInsets.only(left: 16, bottom: 12, right: 120),
-                title: Text(
-                  'MermaOps',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 17,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -0.4,
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 40),
+          children: [
+                  // ── Status hero card ──────────────────────────────────────
+                  _HeroBackground(
+                    name: name,
+                    critical: critical,
+                    pending: pending,
+                    pulseAnim: _pulseAnim,
+                    headerBg: headerBg,
                   ),
-                ),
-                stretchModes: const [StretchMode.zoomBackground],
-                background: _HeroBackground(
-                  name: name,
-                  critical: critical,
-                  pending: pending,
-                  pulseAnim: _pulseAnim,
-                  headerBg: headerBg,
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () =>
-                      ref.read(languageProvider.notifier).toggle(),
-                  child: Text(
-                    ref.watch(languageProvider) == 'es' ? 'EN' : 'ES',
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13),
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.refresh_outlined),
-                  color: Colors.white,
-                  onPressed: () => ref.invalidate(dashboardProvider),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.person_outline),
-                  color: Colors.white,
-                  onPressed: () => context.go('/profile'),
-                ),
-              ],
-            ),
-
-            // ── Content ─────────────────────────────────────────────────────
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(16, 20, 16, 40),
-              sliver: SliverList(
-                delegate: SliverChildListDelegate([
+                  const SizedBox(height: 16),
                   // KPI grid
                   Row(
                     children: [
@@ -560,13 +643,8 @@ class _DashboardBodyState extends State<_DashboardBody>
                     _BriefCard(brief: brief, context: context)
                   else
                     _NoBriefCard(),
-                ]),
-              ),
-            ),
           ],
-        ),
-      ),
-    );
+        );
   }
 
   void _runBrief(BuildContext context, WidgetRef ref) async {
@@ -653,21 +731,29 @@ class _HeroBackground extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDanger = critical >= 3;
     final isWarn = critical >= 1;
+    final badgeColor = isDanger
+        ? const Color(0xFFDC2626)
+        : isWarn
+            ? const Color(0xFFD97706)
+            : Colors.white.withValues(alpha: 0.2);
 
     return Container(
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: isDanger
-              ? [const Color(0xFFB91C1C), const Color(0xFFDC2626)]
-              : isWarn
-                  ? [const Color(0xFFB45309), const Color(0xFFD97706)]
-                  : [const Color(0xFF047857), const Color(0xFF059669)],
+        gradient: const _SafeGradient(
+          colors: [Color(0xFF065F46), Color(0xFF047857)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF065F46).withValues(alpha: 0.4),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
       ),
-      padding: EdgeInsets.fromLTRB(
-          20, MediaQuery.of(context).padding.top + kToolbarHeight + 8, 20, 20),
+      padding: const EdgeInsets.all(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.end,
@@ -724,7 +810,7 @@ class _HeroBackground extends StatelessWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.2),
+              color: badgeColor,
               borderRadius: BorderRadius.circular(8),
             ),
             child: Text(
@@ -780,7 +866,8 @@ class _KpiCard extends StatelessWidget {
             ),
           ],
         ),
-        child: Row(
+        child: IntrinsicHeight(
+          child: Row(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Container(
@@ -811,7 +898,7 @@ class _KpiCard extends StatelessWidget {
                     const SizedBox(height: 8),
                     if (value != null)
                       TweenAnimationBuilder<double>(
-                        tween: Tween(begin: 0, end: value!.toDouble()),
+                        tween: Tween<double>(begin: 0.0, end: (value ?? 0).toDouble()),
                         duration: const Duration(milliseconds: 900),
                         curve: Curves.easeOut,
                         builder: (_, v, __) => Text(
@@ -853,6 +940,7 @@ class _KpiCard extends StatelessWidget {
               ),
             ),
           ],
+        ),
         ),
       ),
     );
@@ -898,7 +986,7 @@ class _UrgencySection extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     TweenAnimationBuilder<double>(
-                      tween: Tween(begin: 0, end: total.toDouble()),
+                      tween: Tween<double>(begin: 0.0, end: total.toDouble()),
                       duration: const Duration(milliseconds: 900),
                       curve: Curves.easeOut,
                       builder: (_, v, __) => Text(
@@ -990,7 +1078,7 @@ class _LegendRow extends StatelessWidget {
           child: ClipRRect(
             borderRadius: BorderRadius.circular(3),
             child: TweenAnimationBuilder<double>(
-              tween: Tween(begin: 0, end: pct),
+              tween: Tween<double>(begin: 0.0, end: pct),
               duration: const Duration(milliseconds: 900),
               curve: Curves.easeOut,
               builder: (_, v, __) => LinearProgressIndicator(
@@ -1020,6 +1108,7 @@ class _DonutPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    if (size.isEmpty || size.width < 16) return;
     final center = Offset(size.width / 2, size.height / 2);
     final radius = size.width / 2 - 8;
     const sw = 13.0;
@@ -1094,7 +1183,7 @@ class _CriticalSpotlight extends StatelessWidget {
       child: Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
+        gradient: const _SafeGradient(
           colors: [Color(0xFFDC2626), Color(0xFFEF4444)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
@@ -1305,6 +1394,7 @@ class _AreaChartPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     if (values.length < 2) return;
+    if (size.isEmpty || size.width <= 0 || size.height <= 18) return;
     final maxV = values.reduce((a, b) => a > b ? a : b);
     if (maxV == 0) return;
 
@@ -1436,7 +1526,7 @@ class _DonationImpactCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
+        gradient: const _SafeGradient(
           colors: [Color(0xFF065F46), Color(0xFF059669)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
@@ -1628,7 +1718,7 @@ class _StoresComparisonCard extends ConsumerWidget {
                     Expanded(
                         flex: 4,
                         child: TweenAnimationBuilder<double>(
-                          tween: Tween(begin: 0, end: ratio),
+                          tween: Tween<double>(begin: 0.0, end: ratio),
                           duration: const Duration(milliseconds: 900),
                           curve: Curves.easeOut,
                           builder: (_, v, __) => ClipRRect(
@@ -1760,7 +1850,7 @@ class _TodayProgressCard extends StatelessWidget {
           ]),
           const SizedBox(height: 12),
           TweenAnimationBuilder<double>(
-            tween: Tween(begin: 0, end: pct),
+            tween: Tween<double>(begin: 0.0, end: pct),
             duration: const Duration(milliseconds: 900),
             curve: Curves.easeOut,
             builder: (_, v, __) => ClipRRect(
@@ -2020,7 +2110,7 @@ class _BriefCard extends StatelessWidget {
               width: 32,
               height: 32,
               decoration: BoxDecoration(
-                gradient: const LinearGradient(
+                gradient: const _SafeGradient(
                     colors: [Color(0xFF7C3AED), Color(0xFFA855F7)],
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight),

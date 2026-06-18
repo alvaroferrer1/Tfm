@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'api_service.dart';
+import 'supabase_client.dart';
 import 'theme.dart' show ShimmerList;
 
 enum UserRole { staff, manager, admin }
@@ -43,12 +45,34 @@ UserRole _parseRole(String? raw) => switch (raw) {
     };
 
 final userRoleProvider = FutureProvider<UserRole>((ref) async {
+  // 1. Intentar leer rol desde el backend (requiere que esté corriendo en 8001)
   try {
     final profile = await api.getCurrentUser();
-    return _parseRole(profile['role'] as String?);
-  } catch (_) {
-    return UserRole.staff;
-  }
+    final role = _parseRole(profile['role'] as String?);
+    if (role != UserRole.staff) return role;
+  } catch (_) {}
+
+  // 2. Fallback: leer desde tabla users en Supabase directamente
+  try {
+    final uid = Supabase.instance.client.auth.currentUser?.id;
+    if (uid != null) {
+      final rows = await supabase
+          .from('users')
+          .select('role')
+          .eq('id', uid)
+          .limit(1);
+      if (rows.isNotEmpty) {
+        return _parseRole(rows.first['role'] as String?);
+      }
+    }
+  } catch (_) {}
+
+  // 3. Fallback: user_metadata del token JWT
+  final meta = Supabase.instance.client.auth.currentUser?.userMetadata;
+  final roleFromMeta = meta?['role'] as String?;
+  if (roleFromMeta != null) return _parseRole(roleFromMeta);
+
+  return UserRole.staff;
 });
 
 /// Wrapper que muestra el child si el usuario tiene el rol requerido,

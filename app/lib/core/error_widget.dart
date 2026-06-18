@@ -73,8 +73,10 @@ String friendlyError(Object? e) {
   if (msg.contains('timeout') || msg.contains('timeoutexception')) {
     return 'La operación tardó demasiado. Inténtalo de nuevo.';
   }
-  if (msg.contains('connection') || msg.contains('socket') || msg.contains('refused') || msg.contains('network')) {
-    return 'Sin conexión con el servidor. Comprueba la conexión e inténtalo de nuevo.';
+  if (msg.contains('clientexception') || msg.contains('failed host') ||
+      msg.contains('effectiveuri') || msg.contains('connection') ||
+      msg.contains('socket') || msg.contains('refused') || msg.contains('network')) {
+    return 'Sin conexión con el servidor. Comprueba que el backend está corriendo.';
   }
   if (msg.contains('401') || msg.contains('403') || msg.contains('unauthorized')) {
     return 'Sesión caducada. Vuelve a iniciar sesión.';
@@ -85,7 +87,7 @@ String friendlyError(Object? e) {
   if (msg.contains('500') || msg.contains('server error')) {
     return 'Error del servidor. Inténtalo de nuevo en unos segundos.';
   }
-  return 'Ha ocurrido un error. Inténtalo de nuevo.';
+  return 'No se pudo completar la operación. Inténtalo de nuevo.';
 }
 
 /// Widget de error estándar para estados de error en pantallas.
@@ -98,30 +100,28 @@ class AppErrorWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final msg = customMessage ?? friendlyError(error);
+    final isNetwork = () {
+      final s = error?.toString().toLowerCase() ?? '';
+      return s.contains('connection') || s.contains('socket') ||
+          s.contains('refused') || s.contains('timeout');
+    }();
+    final msg = customMessage ?? (isNetwork
+        ? 'Sin conexión con el servidor. Comprueba que el backend está activo.'
+        : friendlyError(error));
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(32),
+        padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              width: 64,
-              height: 64,
-              decoration: BoxDecoration(
-                color: const Color(0xFFFEF2F2),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: const Icon(Icons.wifi_off_rounded, size: 32, color: Color(0xFFEF4444)),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              msg,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 14, color: Color(0xFF6B7280), height: 1.5),
-            ),
+            Icon(isNetwork ? Icons.cloud_off_rounded : Icons.warning_amber_rounded,
+                size: 40, color: isNetwork ? Colors.grey : const Color(0xFFEF4444)),
+            const SizedBox(height: 12),
+            Text(msg,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 14, color: Color(0xFF374151), height: 1.5)),
             if (onRetry != null) ...[
-              const SizedBox(height: 20),
+              const SizedBox(height: 16),
               OutlinedButton.icon(
                 onPressed: onRetry,
                 icon: const Icon(Icons.refresh_rounded, size: 16),

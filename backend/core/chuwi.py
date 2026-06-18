@@ -201,6 +201,124 @@ def _md_to_html(text: str) -> str:
     return text
 
 
+def _format_brief_html(text: str) -> str:
+    """Convierte el brief de texto plano de Kuine a HTML visual para Telegram.
+
+    Estructura de salida:
+      ┌─ CABECERA FIJA (fecha + semáforo) ──┐
+      │  siempre presente, independiente del LLM
+      └──────────────────────────────────────┘
+      📊 ANÁLISIS (texto del LLM procesado)
+      ⚡ ACCIONES (líneas numeradas con iconos de urgencia)
+      🗺 RUTA (si la hay)
+    """
+    import re as _re
+    import html as _html
+    from datetime import date as _d
+
+    _t = _d.today()
+    today = f"{_t.day} de {_t.strftime('%B')} de {_t.year}"
+    # Cabecera fija — siempre va arriba, independiente del contenido del LLM
+    header = (
+        f"┌{'━' * 36}┐\n"
+        f"│  📋  <b>BRIEF DE APERTURA — MermaOps</b>\n"
+        f"│  📅  <i>{today}</i>\n"
+        f"│  🏪  <i>Super Martínez</i>\n"
+        f"└{'━' * 36}┘"
+    )
+
+    section_icons = {
+        "SITUACIÓN": "📊", "SITUACION": "📊",
+        "ACCIONES": "⚡", "ACCION": "⚡",
+        "RUTA": "🗺",
+        "COMPARATIVA": "📈", "BENCHMARK": "📈",
+        "VALOR": "💶",
+        "SEGUIMIENTO": "📋",
+        "PATRÓN": "🧠", "PATRON": "🧠",
+        "PREDICCIÓN": "🔮", "PREDICCION": "🔮",
+        "RESUMEN": "📌",
+        "CIERRE": "🌆",
+    }
+
+    lines = text.split("\n")
+    out = []
+    in_actions = False
+    skip_header = True  # salta el encabezado que genera el LLM (lo reemplazamos con el nuestro)
+
+    for line in lines:
+        stripped = line.strip()
+
+        # Omitir separadores y el encabezado que genera el LLM
+        if stripped.startswith("═") or stripped.startswith("─") or stripped.startswith("━"):
+            continue
+        if skip_header and ("BRIEF DE APERTURA" in stripped or "BRIEFING" in stripped
+                            or "Super Martínez" in stripped or "MermaOps" in stripped
+                            or "MERMAOPS" in stripped):
+            continue  # el LLM ya generó su cabecera, la ignoramos
+
+        # A partir de la primera sección real, dejamos de saltar
+        if skip_header and stripped and stripped == stripped.upper() and len(stripped.split()) >= 2:
+            skip_header = False
+
+        # Headers de sección ALL CAPS
+        words = stripped.split()
+        is_section = (
+            stripped and stripped == stripped.upper()
+            and 2 <= len(words) <= 8
+            and not stripped[0:1].isdigit()
+            and not stripped.startswith("•")
+        )
+        if is_section:
+            icon = next((v for k, v in section_icons.items() if k in stripped), "▸")
+            in_actions = "ACCION" in stripped or "ACCIÓN" in stripped.upper()
+            out.append(f"\n{icon} <b>{_html.escape(stripped)}</b>\n{'─' * 28}")
+            continue
+
+        # Líneas de acción numerada: "1. PRODUCTO — CRÍTICO (score) ..."
+        action_match = _re.match(r'^(\d+)[.)]\s+(.+?)(?:\s+[—\-–]\s+)(.+)$', stripped)
+        if action_match:
+            pname = action_match.group(2).strip()
+            rest = action_match.group(3).strip()
+            urgency = "🔴" if any(w in rest.upper() for w in ("CRÍTICO", "CRITICO")) else \
+                      "🟡" if any(w in rest.upper() for w in ("ALTO", "HIGH")) else "🟢"
+            out.append(f"\n{urgency} <b>{_html.escape(pname)}</b>")
+            out.append(f"   <i>{_html.escape(rest)}</i>")
+            in_actions = True
+            continue
+
+        # Líneas con bullet •
+        if stripped.startswith("•") or stripped.startswith("-"):
+            content = stripped.lstrip("•- ").strip()
+            urgency = "🔴" if "CRÍTICO" in content.upper() or "CRITICO" in content.upper() else \
+                      "🟡" if "ALTO" in content.upper() else ""
+            prefix = f"{urgency} " if urgency else "  • "
+            out.append(f"{prefix}<b>{_html.escape(content[:50])}</b>" if urgency
+                       else f"  • {_html.escape(content)}")
+            continue
+
+        # Sub-líneas con sangría
+        if line.startswith("   ") and stripped:
+            out.append(f"   {_html.escape(stripped)}")
+            continue
+
+        # Ruta con →
+        if "→" in stripped:
+            out.append(f"   🗺 {_html.escape(stripped)}")
+            continue
+
+        # Línea vacía
+        if not stripped:
+            if out and out[-1] != "":
+                out.append("")
+            continue
+
+        # Texto normal
+        out.append(_html.escape(stripped))
+
+    body = "\n".join(out).strip()
+    return f"{header}\n\n{body}" if body else header
+
+
 # ── Typing loop (patrón Jeffrey) ──────────────────────────────────────────────
 
 async def _typing_loop(bot, chat_id: int, done: asyncio.Event) -> None:
@@ -278,6 +396,13 @@ def _main_menu_keyboard(is_manager: bool) -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton("🔍 Escanear", callback_data="cmd:scan_help"),
             InlineKeyboardButton("📈 Dashboard", callback_data="cmd:stats"),
+        ],
+        [
+            InlineKeyboardButton("🗺 Mapa supermercado", callback_data="cmd:mapa"),
+            InlineKeyboardButton("📋 Historial", callback_data="cmd:historial"),
+        ],
+        [
+            InlineKeyboardButton("📊 Proyección 7 días", callback_data="cmd:merma7"),
         ],
     ]
     if is_manager:
@@ -419,14 +544,35 @@ def _route_action_keyboard(action_id: str, remaining: int) -> InlineKeyboardMark
     return InlineKeyboardMarkup(rows)
 
 
+def _extract_product_info(product: dict, notes: str) -> tuple[str, str, str, str]:
+    """(name, pasillo, estanteria, nivel) desde product dict o fallback a notas."""
+    name = (product.get("name") or "").strip()
+    pasillo = str(product.get("pasillo") or "")
+    estanteria = str(product.get("estanteria") or "")
+    nivel = str(product.get("nivel") or "")
+
+    if not name and notes:
+        stripped = re.sub(r'^(CR[IÍ]TICO|URGENTE|ALTO|MEDIO|BAJO)\.\s*', '', notes, flags=re.IGNORECASE)
+        m = re.match(r'^(.+?)\s*\(', stripped)
+        if m:
+            name = m.group(1).strip()
+
+    if not pasillo and notes:
+        m1 = re.search(r'[Pp]asillo\s+(\w+)-E(\w+)-N(\w+)', notes)
+        m2 = re.search(r'\(\s*pasillo\s+(\w+),\s*est\.?\s*(\w+),\s*nivel\s*(\w+)', notes, re.IGNORECASE)
+        loc = m1 or m2
+        if loc:
+            pasillo, estanteria, nivel = loc.group(1), loc.group(2), loc.group(3)
+
+    return name or "Producto", pasillo or "?", estanteria or "?", nivel or "?"
+
+
 def _format_action_card(action: dict, index: int = 0, total: int = 0) -> str:
     """Tarjeta rica por producto: ubicación, urgencia, precio, razonamiento, qué hacer."""
     batch = action.get("batches") or {}
     product = (batch.get("products") or {}) if batch else {}
-    name = product.get("name", "Producto")
-    pasillo = product.get("pasillo", "?")
-    estanteria = product.get("estanteria", "?")
-    nivel = product.get("nivel", "?")
+    notes = action.get("notes", "")
+    name, pasillo, estanteria, nivel = _extract_product_info(product, notes)
     atype = action.get("action_type", "revisar")
     score = action.get("priority_score", 0)
     notes = action.get("notes", "")
@@ -1050,7 +1196,8 @@ async def _action_acciones(update_or_query, context, user: Optional[dict], is_ca
         for a in pending[:5]:
             batch = a.get("batches") or {}
             product = (batch.get("products") or {}) if batch else {}
-            name = product.get("name", "Producto")[:22]
+            name, *_ = _extract_product_info(product, a.get("notes", ""))
+            name = name[:22]
             icon = _ICON.get(a.get("action_type", ""), "⚡")
             score = a.get("priority_score", 0)
             urgency = "🔴" if score >= 85 else "🟡" if score >= 65 else "🟢"
@@ -1099,12 +1246,14 @@ async def _action_ruta(update_or_query, context, user: Optional[dict], is_callba
             }
             risk_reports.append((batch, risk))
         daily_route = rt.generate(STORE_ID, risk_reports)
-        return rt.format_route_message(daily_route)
+        return rt.format_route_html(daily_route)
 
     try:
         response = await loop.run_in_executor(None, _sync)
-    except Exception:
-        response = "Error generando la ruta. Inténtalo de nuevo."
+    except Exception as _re:
+        import logging as _rl
+        _rl.getLogger("mermaops.chuwi").warning(f"[ruta] error: {_re}", exc_info=True)
+        response = f"❌ Error generando la ruta: {str(_re)[:120]}\n\nInténtalo de nuevo."
 
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("▶️ Iniciar modo ruta guiada", callback_data="cmd:iniciar_ruta")],
@@ -1113,10 +1262,12 @@ async def _action_ruta(update_or_query, context, user: Optional[dict], is_callba
 
     if is_callback:
         await update_or_query.edit_message_text(
-            _md_to_html(response), parse_mode=ParseMode.HTML, reply_markup=keyboard
+            response, parse_mode=ParseMode.HTML, reply_markup=keyboard
         )
     else:
-        await _send(update_or_query, response, reply_markup=keyboard)
+        await update_or_query.message.reply_text(
+            response, parse_mode=ParseMode.HTML, reply_markup=keyboard
+        )
 
 
 async def _action_stats(update_or_query, context, user: Optional[dict], is_callback=False):
@@ -1470,7 +1621,8 @@ async def _action_marcar_hecha(update_or_query, context, user: Optional[dict], i
         for action in show:
             batch = action.get("batches") or {}
             product = (batch.get("products") or {}) if batch else {}
-            name = (product.get("name") or "Producto")[:22]
+            name, *_ = _extract_product_info(product, action.get("notes", ""))
+            name = name[:22]
             action_type = (action.get("action_type") or "").upper()
             score = action.get("priority_score", 0)
             icon = "🔴" if score >= 85 else "🟡" if score >= 65 else "🟢"
@@ -1602,7 +1754,7 @@ async def _action_donar_flow(update_or_query, context, user: Optional[dict], is_
     try:
         loop = asyncio.get_running_loop()
         actions = await loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
-        donar_actions = [a for a in actions if a.get("action_type") == "donar"]
+        donar_actions = [a for a in actions if a.get("action_type") in ("donar", "rebajar", "retirar")]
     except Exception as e:
         text = "Error obteniendo acciones. Inténtalo de nuevo."
         kb = _back_keyboard()
@@ -1762,6 +1914,11 @@ async def _action_prediccion(update_or_query, context, user: Optional[dict], is_
         await _send(update_or_query, text, reply_markup=keyboard)
 
 
+_PASILLO_NAMES = {
+    "1": "🍞 Panadería", "2": "🥛 Lácteos", "3": "🥩 Carnicería",
+    "4": "🐟 Pescadería", "5": "🥦 Frutas y Verduras",
+}
+
 _CAT_MAP = {
     "carne": "carne", "pollo": "carne", "ternera": "carne", "cerdo": "carne", "picada": "carne",
     "pescado": "pescado", "merluza": "pescado", "salmon": "pescado", "atun": "pescado", "bacalao": "pescado",
@@ -1826,19 +1983,26 @@ async def _action_citar(update_or_query, context, user: Optional[dict], is_callb
 
 
 async def _action_simular(update_or_query, context, user: Optional[dict], is_callback=False) -> None:
-    """Simula lo que ocurre a las 07:30 — prueba real del scheduler."""
+    """Panel de simulación para demo — dispara cada evento del scheduler manualmente."""
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("▶️ Ejecutar todo (brief + predicción)", callback_data="confirm:simular")],
-        [InlineKeyboardButton("🔔 Probar alerta ahora", callback_data="confirm:test_alerta")],
+        [InlineKeyboardButton("🌅 07:30 — Brief + predicción", callback_data="confirm:simular")],
+        [InlineKeyboardButton("☀️ 12:00 — Check de mediodía", callback_data="confirm:sim_mediodia")],
+        [InlineKeyboardButton("🌆 20:00 — Cierre del día", callback_data="confirm:sim_cierre")],
+        [InlineKeyboardButton("🔔 Alerta proactiva (monitor 30 min)", callback_data="confirm:sim_proactiva")],
+        [InlineKeyboardButton("🚨 Escalación críticos (2h sin resolver)", callback_data="confirm:sim_escalacion")],
         [InlineKeyboardButton("↩ Menú", callback_data="cmd:menu")],
     ])
     text = (
-        "🧪 <b>Simulación del scheduler</b>\n\n"
-        "Esto ejecuta exactamente lo que ocurre a las 07:30 de forma automática:\n\n"
-        "• <b>Brief diario</b> — Kuine analiza todos los productos\n"
-        "• <b>Predicción</b> — riesgo de merma con datos climáticos\n\n"
-        "Todo va en background. Te mando los resultados aquí cuando terminen.\n\n"
-        "También puedes probar que las alertas llegan a tu Telegram."
+        "🧪 <b>PANEL DE SIMULACIÓN — MermaOps</b>\n\n"
+        "Dispara cualquier evento del scheduler ahora mismo, sin esperar al horario real.\n"
+        "Útil para demo y presentación.\n\n"
+        "📅 <b>Eventos programados:</b>\n"
+        "• 07:30 — Brief diario de Kuine (IA)\n"
+        "• 12:00 — Check de mediodía + alertas\n"
+        "• 20:00 — Cierre del día + resumen\n"
+        "• Cada 30 min — Monitor proactivo de donaciones\n"
+        "• Cada 2h — Escalación de críticos sin resolver\n\n"
+        "👇 Selecciona qué quieres simular ahora:"
     )
     if is_callback:
         await update_or_query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
@@ -1868,42 +2032,220 @@ async def _simulate_730_background(bot, chat_id: int, user: Optional[dict]) -> N
 
     await bot.send_message(chat_id=chat_id, text="📋 Paso 2/2: Generando brief con Kuine (IA)... ~60s")
     try:
-        result = await loop.run_in_executor(None, supervisor.run_daily_brief, STORE_ID)
-        keyboard = _smart_keyboard(result, _is_manager(user))
-        chunks = [result[i:i+4000] for i in range(0, max(len(result), 1), 4000)]
-        for i, chunk in enumerate(chunks):
-            await bot.send_message(
-                chat_id=chat_id,
-                text=_md_to_html(chunk),
-                parse_mode=ParseMode.HTML,
-                reply_markup=keyboard if i == len(chunks) - 1 else None,
-            )
+        # send_telegram=False: Kuine no manda por notifier, lo enviamos aquí con formato
+        result = await loop.run_in_executor(
+            None, lambda: supervisor.run_daily_brief(STORE_ID, send_telegram=False)
+        )
+        formatted = _format_brief_html(result)
+        chunks = [formatted[i:i+4000] for i in range(0, max(len(formatted), 1), 4000)]
+        for chunk in chunks:
+            await bot.send_message(chat_id=chat_id, text=chunk, parse_mode=ParseMode.HTML)
+        await bot.send_message(
+            chat_id=chat_id,
+            text="✅ <b>Simulación 07:30 completada.</b>\nEsto es exactamente lo que ocurre cada mañana de forma automática.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📄 Descargar brief en PDF", callback_data="cmd:brief_pdf")],
+                [InlineKeyboardButton("⚡ Ver acciones generadas", callback_data="cmd:acciones"),
+                 InlineKeyboardButton("🗺 Ruta del día", callback_data="cmd:ruta")],
+                [InlineKeyboardButton("↩ Menú", callback_data="cmd:menu")],
+            ]),
+        )
     except Exception as e:
         await bot.send_message(chat_id=chat_id, text=f"📋 Brief: error — {str(e)[:80]}")
+        await bot.send_message(
+            chat_id=chat_id,
+            text="↩ Volver al menú",
+            reply_markup=_back_keyboard(),
+        )
 
-    await bot.send_message(
-        chat_id=chat_id,
-        text="✅ <b>Simulación 07:30 completada.</b>\nEsto es exactamente lo que ocurre cada mañana de forma automática.",
-        parse_mode=ParseMode.HTML,
-        reply_markup=_back_keyboard(),
-    )
+
+async def _sim_mediodia_background(bot, chat_id: int) -> None:
+    """Simula el check de mediodía de Kuine (12:00) — para demo en presentación."""
+    loop = asyncio.get_running_loop()
+    await bot.send_message(chat_id=chat_id, text="☀️ <b>CHECK MEDIODÍA — Kuine analizando...</b>", parse_mode=ParseMode.HTML)
+    try:
+        result = await loop.run_in_executor(None, lambda: supervisor.run_intraday_check(STORE_ID))
+        formatted = _format_brief_html(result) if result else "Sin novedades en el check de mediodía."
+        chunks = [formatted[i:i+4000] for i in range(0, max(len(formatted), 1), 4000)]
+        for chunk in chunks:
+            await bot.send_message(chat_id=chat_id, text=chunk, parse_mode=ParseMode.HTML)
+        await bot.send_message(
+            chat_id=chat_id,
+            text="☀️ <b>Check de mediodía completado.</b>\nEsto ocurre automáticamente a las 12:00 cada día.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⚡ Ver acciones pendientes", callback_data="cmd:acciones")],
+                [InlineKeyboardButton("🧪 Más simulaciones", callback_data="cmd:simular")],
+                [InlineKeyboardButton("↩ Menú", callback_data="cmd:menu")],
+            ]),
+        )
+    except Exception as e:
+        await bot.send_message(chat_id=chat_id, text=f"Error en check mediodía: {str(e)[:100]}", reply_markup=_back_keyboard())
+
+
+async def _sim_cierre_background(bot, chat_id: int) -> None:
+    """Simula el cierre del día de Kuine (20:00) — para demo en presentación."""
+    loop = asyncio.get_running_loop()
+    await bot.send_message(chat_id=chat_id, text="🌆 <b>CIERRE DEL DÍA — Kuine generando resumen...</b>", parse_mode=ParseMode.HTML)
+    try:
+        result = await loop.run_in_executor(None, lambda: supervisor.run_closing(STORE_ID))
+        formatted = _format_brief_html(result) if result else "Cierre del día sin incidencias."
+        chunks = [formatted[i:i+4000] for i in range(0, max(len(formatted), 1), 4000)]
+        for chunk in chunks:
+            await bot.send_message(chat_id=chat_id, text=chunk, parse_mode=ParseMode.HTML)
+        await bot.send_message(
+            chat_id=chat_id,
+            text="🌆 <b>Cierre completado.</b>\nEsto ocurre automáticamente a las 20:00 cada día.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🧪 Más simulaciones", callback_data="cmd:simular")],
+                [InlineKeyboardButton("↩ Menú", callback_data="cmd:menu")],
+            ]),
+        )
+    except Exception as e:
+        await bot.send_message(chat_id=chat_id, text=f"Error en cierre: {str(e)[:100]}", reply_markup=_back_keyboard())
+
+
+async def _sim_proactiva_background(bot, chat_id: int) -> None:
+    """Simula el monitor proactivo de donaciones (cada 30 min) — para demo."""
+    loop = asyncio.get_running_loop()
+    try:
+        batches = await loop.run_in_executor(None, database.get_batches_expiring_soon, STORE_ID, 2)
+        pending_ids = {a.get("batch_id") for a in await loop.run_in_executor(None, database.get_pending_actions, STORE_ID)}
+        candidatos = [b for b in batches if b.get("id") not in pending_ids]
+
+        if not candidatos:
+            # Sin candidatos reales — usar todos los que caducan pronto para demo
+            candidatos = batches[:3]
+
+        if not candidatos:
+            await bot.send_message(
+                chat_id=chat_id,
+                text="🔔 <b>Monitor proactivo</b>\n\nNo hay productos en riesgo inminente ahora mismo. Cuando los haya, Kuine manda botones de acción directa como este:",
+                parse_mode=ParseMode.HTML,
+            )
+            # Mandar un ejemplo ficticio de cómo se vería
+            await bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    "🔴 <b>KUINE — Donación sugerida</b>\n\n"
+                    "<b>Yogur Natural Danone</b> | 🥛 Lácteos\n"
+                    "23 unidades | Caduca HOY\n\n"
+                    "Stock elevado + caducidad hoy. ¿Lo donamos?\n\n"
+                    "<i>(Ejemplo — en producción los datos serían reales)</i>"
+                ),
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("❤️ Banco de Alimentos", callback_data="demo:banco"),
+                     InlineKeyboardButton("🤝 Cáritas", callback_data="demo:caritas")],
+                    [InlineKeyboardButton("🏥 Cruz Roja", callback_data="demo:cruzroja"),
+                     InlineKeyboardButton("💰 Mejor rebajar", callback_data="demo:rebajar")],
+                    [InlineKeyboardButton("❌ Ya gestionado", callback_data="demo:skip")],
+                ]),
+            )
+        else:
+            for batch in candidatos[:2]:
+                p = batch.get("products") or {}
+                name = p.get("name") or "Producto"
+                pasillo = str(p.get("pasillo") or "?")
+                pasillo_label = _PASILLO_NAMES.get(pasillo, f"Pasillo {pasillo}")
+                qty = batch.get("quantity") or 0
+                exp = batch.get("expiry_date") or "?"
+                batch_id = batch.get("id") or ""
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=(
+                        f"🔴 <b>KUINE — Donación sugerida</b>\n\n"
+                        f"<b>{html.escape(name)}</b> | {pasillo_label}\n"
+                        f"{qty} unidades | Caduca {exp}\n\n"
+                        f"Stock elevado + caducidad próxima. ¿Lo donamos?"
+                    ),
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("❤️ Banco de Alimentos", callback_data=f"donate_now:banco_alimentos:{batch_id}"),
+                         InlineKeyboardButton("🤝 Cáritas", callback_data=f"donate_now:caritas:{batch_id}")],
+                        [InlineKeyboardButton("🏥 Cruz Roja", callback_data=f"donate_now:cruz_roja:{batch_id}"),
+                         InlineKeyboardButton("💰 Mejor rebajar", callback_data=f"donate_now:rebajar:{batch_id}")],
+                        [InlineKeyboardButton("❌ Ya gestionado", callback_data=f"donate_now:skip:{batch_id}")],
+                    ]),
+                )
+        await bot.send_message(
+            chat_id=chat_id,
+            text="🔔 <b>Esto llega automáticamente cada 30 minutos en horario comercial.</b>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🧪 Más simulaciones", callback_data="cmd:simular")]]),
+        )
+    except Exception as e:
+        await bot.send_message(chat_id=chat_id, text=f"Error en monitor proactivo: {str(e)[:100]}", reply_markup=_back_keyboard())
+
+
+async def _sim_escalacion_background(bot, chat_id: int) -> None:
+    """Simula la escalación automática de críticos sin resolver — para demo."""
+    loop = asyncio.get_running_loop()
+    try:
+        pending = await loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
+        critical = [a for a in pending if (a.get("priority_score") or 0) >= 85]
+
+        if not critical:
+            # No hay críticos reales — demo con los de mayor prioridad
+            critical = sorted(pending, key=lambda a: a.get("priority_score") or 0, reverse=True)[:3]
+
+        if not critical:
+            await bot.send_message(
+                chat_id=chat_id,
+                text="🚨 <b>Escalación automática</b>\n\nNo hay acciones críticas pendientes. Cuando las haya y lleven más de 2h sin resolver, Kuine manda esta alerta automáticamente.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🧪 Más simulaciones", callback_data="cmd:simular")]]),
+            )
+            return
+
+        lines = [f"🚨 <b>KUINE — Escalación automática</b>\n\n{len(critical)} acción(es) llevan tiempo sin resolver:\n"]
+        for a in critical[:5]:
+            batch = a.get("batches") or {}
+            product = (batch.get("products") or {}) if batch else {}
+            name = product.get("name") or "Producto"
+            pasillo = str(product.get("pasillo") or "?")
+            pasillo_label = _PASILLO_NAMES.get(pasillo, f"Pasillo {pasillo}")
+            score = a.get("priority_score") or 0
+            atype = (a.get("action_type") or "revisar").upper()
+            icon = "🔴" if score >= 85 else "🟡"
+            lines.append(f"{icon} <b>{html.escape(name)}</b> | {pasillo_label} | {atype} | {score}/100")
+
+        lines.append("\n<b>Asignad a alguien o escalad al turno siguiente.</b>")
+        await bot.send_message(
+            chat_id=chat_id,
+            text="\n".join(lines),
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⚡ Ver y resolver acciones", callback_data="cmd:acciones")],
+                [InlineKeyboardButton("🧪 Más simulaciones", callback_data="cmd:simular")],
+                [InlineKeyboardButton("↩ Menú", callback_data="cmd:menu")],
+            ]),
+        )
+    except Exception as e:
+        await bot.send_message(chat_id=chat_id, text=f"Error en escalación: {str(e)[:100]}", reply_markup=_back_keyboard())
 
 
 async def _generate_brief_background(bot, chat_id: int, user: Optional[dict]) -> None:
     """Genera el brief en background y manda el resultado cuando termina."""
     loop = asyncio.get_running_loop()
     try:
-        result = await loop.run_in_executor(None, supervisor.run_daily_brief, STORE_ID)
+        # send_telegram=False: evitar que el notifier mande una copia adicional
+        result = await loop.run_in_executor(
+            None, lambda: supervisor.run_daily_brief(STORE_ID, send_telegram=False)
+        )
     except Exception as e:
         result = f"❌ Error generando el brief: {str(e)[:100]}"
 
     keyboard = _smart_keyboard(result, _is_manager(user))
     try:
-        chunks = [result[i:i+4000] for i in range(0, max(len(result), 1), 4000)]
+        formatted = _format_brief_html(result)
+        chunks = [formatted[i:i+4000] for i in range(0, max(len(formatted), 1), 4000)]
         for i, chunk in enumerate(chunks):
             await bot.send_message(
                 chat_id=chat_id,
-                text=_md_to_html(chunk),
+                text=chunk,
                 parse_mode=ParseMode.HTML,
                 reply_markup=keyboard if i == len(chunks) - 1 else None,
             )
@@ -1996,6 +2338,26 @@ async def _action_sistema(update_or_query, context, user: Optional[dict], is_cal
         await _send(update_or_query, text, reply_markup=kb)
 
 
+async def _action_mapa(update_or_query, context, user: Optional[dict], is_callback=False):
+    """Mapa visual del supermercado por pasillo."""
+    await _cmds._run_cmd_from_action(_cmds._cmd_mapa, update_or_query, context, is_callback)
+
+
+async def _action_historial(update_or_query, context, user: Optional[dict], is_callback=False):
+    """Historial de acciones completadas."""
+    await _cmds._run_cmd_from_action(_cmds._cmd_historial, update_or_query, context, is_callback)
+
+
+async def _action_merma7(update_or_query, context, user: Optional[dict], is_callback=False):
+    """Proyección de merma a 7 días."""
+    await _cmds._run_cmd_from_action(_cmds._cmd_merma7, update_or_query, context, is_callback)
+
+
+async def _cmd_simular(update, context):
+    user = await _get_or_create_user(update)
+    await _action_simular(update, context, user, is_callback=False)
+
+
 _ACTION_MAP = {
     "brief": _action_brief,
     "stats": _action_stats,
@@ -2018,6 +2380,9 @@ _ACTION_MAP = {
     "prediccion": _action_prediccion,
     "donar_flow": _action_donar_flow,
     "citar": _action_citar,
+    "mapa": _action_mapa,
+    "historial": _action_historial,
+    "merma7": _action_merma7,
 }
 
 
@@ -2152,11 +2517,50 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         asyncio.create_task(_simulate_730_background(context.bot, chat_id, user))
         return
 
+    # ── Simulación mediodía ──
+    if data == "confirm:sim_mediodia":
+        chat_id = query.message.chat_id
+        await query.edit_message_text(
+            "☀️ <b>Simulando check de mediodía (12:00)...</b>\n\nKuine revisa el estado de las acciones y escala si hay críticos sin resolver. ⏳",
+            parse_mode=ParseMode.HTML, reply_markup=_back_keyboard(),
+        )
+        asyncio.create_task(_sim_mediodia_background(context.bot, chat_id))
+        return
+
+    # ── Simulación cierre ──
+    if data == "confirm:sim_cierre":
+        chat_id = query.message.chat_id
+        await query.edit_message_text(
+            "🌆 <b>Simulando cierre del día (20:00)...</b>\n\nKuine genera el resumen del día y las recomendaciones para mañana. ⏳",
+            parse_mode=ParseMode.HTML, reply_markup=_back_keyboard(),
+        )
+        asyncio.create_task(_sim_cierre_background(context.bot, chat_id))
+        return
+
+    # ── Simulación alerta proactiva (monitor 30 min) ──
+    if data == "confirm:sim_proactiva":
+        chat_id = query.message.chat_id
+        await query.edit_message_text(
+            "🔔 <b>Simulando monitor proactivo...</b>\n\nKuine busca productos en riesgo inminente y manda botones de acción directa.",
+            parse_mode=ParseMode.HTML, reply_markup=_back_keyboard(),
+        )
+        asyncio.create_task(_sim_proactiva_background(context.bot, chat_id))
+        return
+
+    # ── Simulación escalación críticos ──
+    if data == "confirm:sim_escalacion":
+        chat_id = query.message.chat_id
+        await query.edit_message_text(
+            "🚨 <b>Simulando escalación automática...</b>\n\nKuine comprueba acciones críticas sin resolver y alerta al equipo.",
+            parse_mode=ParseMode.HTML, reply_markup=_back_keyboard(),
+        )
+        asyncio.create_task(_sim_escalacion_background(context.bot, chat_id))
+        return
+
     # ── Test de alerta — comprueba que las alertas llegan a tu Telegram ──
     if data == "confirm:test_alerta":
         chat_id = query.message.chat_id
         try:
-            from backend.agents import notifier as _notifier
             pending = await _loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
             critical = [a for a in pending if (a.get("priority_score") or 0) >= 85]
             if critical:
@@ -2559,6 +2963,17 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     await query.edit_message_text("Ruta terminada.", reply_markup=_main_menu_keyboard(_is_manager(user)))
         return
 
+    # ── Botones de demo (ejemplo ficticio en simulación proactiva) ──
+    if data.startswith("demo:"):
+        _demo_map = {"banco": "Banco de Alimentos", "caritas": "Cáritas", "cruzroja": "Cruz Roja", "rebajar": "rebaja de precio", "skip": "marcado como gestionado"}
+        _demo_what = _demo_map.get(data[5:], data[5:])
+        await query.edit_message_text(
+            f"✅ <b>Demo — acción registrada</b>\n\nEn un caso real, el producto quedaría asignado a <b>{_demo_what}</b>.\nEsto es exactamente lo que haría un empleado con un solo toque.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🧪 Más simulaciones", callback_data="cmd:simular")]]),
+        )
+        return
+
     # ── Donación proactiva sugerida por Kuine ── empleado elige entidad con un toque ──
     if data.startswith("donate_now:"):
         # formato: donate_now:{entity}:{batch_id}
@@ -2752,12 +3167,37 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             _set_conv_state(user_id, "donation_flow", state_data)
 
             product_name = state_data.get("product_name", "Producto")
-            max_qty = state_data.get("max_quantity", "?")
+            max_qty = int(state_data.get("max_quantity") or 1)
+
+            # Botones de cantidad directa — no requiere texto
+            qty_options = sorted(set(filter(lambda x: x > 0 and x <= max_qty, [
+                max(1, max_qty // 4),
+                max(1, max_qty // 2),
+                max_qty,
+            ])))
+            state_data["quantity"] = qty_options[-1]  # pre-select full cantidad
+            _set_conv_state(user_id, "donation_flow", state_data)
+
+            rows = [
+                [InlineKeyboardButton(
+                    f"{'Todo: ' if q == max_qty else ''}{q} uds{' (completo)' if q == max_qty else ''}",
+                    callback_data=f"donation_qty:{action_id}:{q}"
+                )] for q in qty_options
+            ]
+            rows.append([InlineKeyboardButton("↩ Volver", callback_data=f"donation_step:select_entity:{action_id}")])
 
             await query.edit_message_text(
-                f"Donando a {entity_name}: {product_name}\n\n"
-                f"¿Cuántas unidades donas? (máximo {max_qty})\n\n"
-                "Escribe el número a continuación:"
+                f"Donando a <b>{entity_name}</b>: {product_name}\n\n¿Cuántas unidades donas?",
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup(rows)
+            )
+            return
+
+        if step == "cancel":
+            _clear_conv_state(user_id)
+            await query.edit_message_text(
+                "Donación cancelada.",
+                reply_markup=_main_menu_keyboard(_is_manager(user))
             )
             return
 
@@ -2784,6 +3224,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 except Exception:
                     pass
                 await _loop.run_in_executor(None, database.complete_action, action_id, user.get("id", u_name))
+                from datetime import datetime, timezone as _tz
                 donation_data_log = {
                     "store_id": STORE_ID,
                     "action_id": action_id,
@@ -2792,6 +3233,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     "product_name": product_name,
                     "donated_by": user.get("email", u_name),
                     "value_donated": round(quantity * donation_cost, 2),
+                    "donated_at": datetime.now(_tz.utc).isoformat(),
                 }
                 await _loop.run_in_executor(None, database.log_donation, donation_data_log)
                 _clear_conv_state(user_id)
@@ -2818,6 +3260,46 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 reply_markup=_main_menu_keyboard(_is_manager(user))
             )
             return
+
+    # ── Selección de cantidad de donación (botones directos) ──
+    if data.startswith("donation_qty:"):
+        parts = data.split(":", 2)
+        action_id = parts[1] if len(parts) > 1 else ""
+        qty_str = parts[2] if len(parts) > 2 else "0"
+        quantity = int(qty_str) if qty_str.isdigit() else 0
+        state = _get_conv_state(user_id)
+        state_data = state.get("data", {})
+        state_data["quantity"] = quantity
+        _set_conv_state(user_id, "donation_flow", state_data)
+        entity_key = state_data.get("entity", "")
+        entity_name = next((n for n, k in _DONATION_ENTITIES if k == entity_key), entity_key)
+        product_name = state_data.get("product_name", "Producto")
+        cost_per_unit = 0.0
+        try:
+            actions = await _loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
+            matched = next((a for a in actions if a.get("id") == action_id), None)
+            if matched:
+                cost_per_unit = float(((matched.get("batches") or {}).get("products") or {}).get("cost", 0) or 0)
+        except Exception:
+            pass
+        valor = round(quantity * cost_per_unit, 2)
+        deduccion = round(valor * 0.35, 2)
+        text = (
+            f"❤️ <b>Confirmar donación</b>\n\n"
+            f"Producto: <b>{product_name}</b>\n"
+            f"Entidad: {entity_name}\n"
+            f"Cantidad: <b>{quantity} uds</b>\n"
+            f"Valor coste: {valor:.2f}€\n"
+            f"Deducción fiscal estimada: <b>{deduccion:.2f}€</b>"
+        )
+        await query.edit_message_text(
+            text, parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Confirmar donación", callback_data=f"donation_step:confirm:{action_id}")],
+                [InlineKeyboardButton("❌ Cancelar", callback_data="donation_step:cancel:")],
+            ])
+        )
+        return
 
     # ── Iniciar modo ruta desde callback ──
     if data == "cmd:iniciar_ruta":
@@ -4184,6 +4666,7 @@ def run() -> None:
     app.add_handler(CommandHandler("agentes", _cmds._cmd_agentes))
     app.add_handler(CommandHandler("kuine", _cmds._cmd_kuine))
     app.add_handler(CommandHandler("demo", _cmds._cmd_demo))
+    app.add_handler(CommandHandler("simular", _cmd_simular))
     app.add_handler(CommandHandler("yo", _cmds._cmd_yo))
     app.add_handler(CommandHandler("estado", _cmds._cmd_estado))
     app.add_handler(CommandHandler("criticos", _cmds._cmd_criticos))
@@ -4193,6 +4676,9 @@ def run() -> None:
     app.add_handler(CommandHandler("semana", _cmds._cmd_semana))
     app.add_handler(CommandHandler("costes", _cmds._cmd_costes))
     app.add_handler(CommandHandler("reflexiones", _cmds._cmd_reflexiones))
+    app.add_handler(CommandHandler("mapa", _cmds._cmd_mapa))
+    app.add_handler(CommandHandler("historial", _cmds._cmd_historial))
+    app.add_handler(CommandHandler("merma7", _cmds._cmd_merma7))
 
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))

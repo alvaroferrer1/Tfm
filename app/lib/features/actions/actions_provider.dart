@@ -12,17 +12,23 @@ final pendingActionsProvider = FutureProvider<List<Map<String, dynamic>>>((ref) 
   return List<Map<String, dynamic>>.from(data);
 });
 
-// StreamProvider para actualizaciones en tiempo real
+// StreamProvider para actualizaciones en tiempo real con join completo.
+// El stream nativo no soporta joins, así que usamos asyncMap para hacer
+// la query completa cada vez que Supabase notifica un cambio.
 final pendingActionsStreamProvider = StreamProvider<List<Map<String, dynamic>>>((ref) {
   return supabase
       .from('actions')
       .stream(primaryKey: ['id'])
       .eq('store_id', storeId)
-      .order('priority_score', ascending: false)
-      .map((data) => data
-          .where((a) => a['status'] == 'pending')
-          .toList()
-          .cast<Map<String, dynamic>>());
+      .asyncMap((_) async {
+        final data = await supabase
+            .from('actions')
+            .select('*, batches(*, products(*))')
+            .eq('store_id', storeId)
+            .eq('status', 'pending')
+            .order('priority_score', ascending: false);
+        return List<Map<String, dynamic>>.from(data);
+      });
 });
 
 // Historial de acciones completadas (últimos 30 días) para trazabilidad por empleado

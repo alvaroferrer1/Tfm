@@ -1,5 +1,8 @@
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,10 +12,54 @@ import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/api_service.dart';
+import '../../core/file_download.dart';
+import '../../core/l10n.dart';
 import '../../core/error_widget.dart';
 import '../../core/supabase_client.dart';
 import '../../core/theme.dart' show UrgencyColors, ShimmerList;
+import '../../core/user_role_provider.dart';
 import 'actions_provider.dart';
+
+const _pasilloNames = {
+  '1': 'Panadería', '2': 'Lácteos', '3': 'Carnicería',
+  '4': 'Pescadería', '5': 'Frutas/Verduras',
+};
+String _pasilloLabel(String? n) {
+  if (n == null || n == '?' || n.isEmpty) return 'Sin ubicación';
+  return _pasilloNames[n] ?? 'Pasillo $n';
+}
+
+// Propuestas de staff pendientes de aprobación (status = in_progress)
+final _proposalsProvider = FutureProvider<List<Map<String, dynamic>>>((ref) async {
+  try {
+    return await ApiService().getProposals();
+  } catch (_) {
+    return [];
+  }
+});
+
+// Caché de productos vía backend (bypassa RLS de Supabase en tabla products)
+final _actionProductsCacheProvider = FutureProvider<Map<String, Map<String, dynamic>>>((ref) async {
+  try {
+    final products = await api.getProducts();
+    return {for (final p in products) p['id'] as String: p};
+  } catch (_) {
+    return {};
+  }
+});
+
+Map<String, dynamic> _enrichAction(
+    Map<String, dynamic> action, Map<String, Map<String, dynamic>> cache) {
+  final batch = action['batches'] as Map<String, dynamic>?;
+  if (batch == null) return action;
+  if (batch['products'] != null) return action;
+  final pid = batch['product_id'] as String?;
+  if (pid != null && cache.containsKey(pid)) {
+    final enrichedBatch = Map<String, dynamic>.from(batch)..['products'] = cache[pid];
+    return Map<String, dynamic>.from(action)..['batches'] = enrichedBatch;
+  }
+  return action;
+}
 
 class ActionsScreen extends ConsumerStatefulWidget {
   const ActionsScreen({super.key});
@@ -39,12 +86,23 @@ class _ActionsScreenState extends ConsumerState<ActionsScreen>
 
   @override
   Widget build(BuildContext context) {
-    final actionsAsync = ref.watch(pendingActionsProvider);
+    // StreamProvider para actualizaciones en tiempo real via Supabase Realtime
+    final actionsAsync = ref.watch(pendingActionsStreamProvider);
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Acciones'),
         actions: [
+          TextButton(
+            onPressed: () => ref.read(languageProvider.notifier).toggle(),
+            child: Text(ref.watch(languageProvider) == 'es' ? 'EN' : 'ES',
+                style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
+          ),
+          IconButton(
+            icon: const Icon(Icons.download_outlined),
+            tooltip: 'Exportar CSV',
+            onPressed: () => _exportAndShare(context),
+          ),
           IconButton(
             icon: const Icon(Icons.upload_file_outlined),
             tooltip: 'Importar CSV',
@@ -52,9 +110,17 @@ class _ActionsScreenState extends ConsumerState<ActionsScreen>
           ),
           IconButton(
             icon: const Icon(Icons.refresh),
+            tooltip: 'Actualizar',
             onPressed: () {
+              ref.invalidate(pendingActionsStreamProvider);
               ref.invalidate(pendingActionsProvider);
               ref.invalidate(completedActionsProvider);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Actualizando acciones…'),
+                  duration: Duration(seconds: 1),
+                ),
+              );
             },
           ),
         ],
@@ -88,139 +154,90 @@ class _ActionsScreenState extends ConsumerState<ActionsScreen>
     );
   }
 
-  void _showImportDialog(BuildContext context) {
-    final controller = TextEditingController(
-      text: 'barcode,quantity,expiry_date\n'
-          '8410001000001,10,2026-06-15\n'
-          '8410031001001,5,2026-06-10\n',
-    );
-    // State declared outside builder so it persists across setState calls
-    var loading = false;
-    String? result;
-    var resultIsError = false;
+  Future<void> _exportAndShare(BuildContext context) async {
+    final api = ApiService();
+    try {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Generando CSV…'), duration: Duration(seconds: 2)),
+      );
+      final csv = await api.exportActionsCsv();
+      final now = DateTime.now();
+      final name = 'mermaops_acciones_'
+          '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}.csv';
 
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setModalState) => Padding(
-          padding: EdgeInsets.fromLTRB(
-              16, 16, 16, MediaQuery.of(ctx).viewInsets.bottom + 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Row(
-                children: [
-                  Icon(Icons.upload_file, color: Color(0xFF059669)),
-                  SizedBox(width: 8),
-                  Text(
-                    'Importar CSV desde TPV',
-                    style:
-                        TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 4),
-              const Text(
-                'Columnas: barcode, quantity, expiry_date (YYYY-MM-DD)',
-                style: TextStyle(fontSize: 11, color: Colors.grey),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: controller,
-                maxLines: 6,
-                style:
-                    const TextStyle(fontSize: 12, fontFamily: 'monospace'),
-                decoration: InputDecoration(
-                  border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8)),
-                  filled: true,
-                  fillColor: const Color(0xFFF9FAFB),
-                  contentPadding: const EdgeInsets.all(10),
-                ),
-              ),
-              if (result != null) ...[
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: resultIsError
-                        ? const Color(0xFFFEE2E2)
-                        : const Color(0xFFD1FAE5),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    result!,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: resultIsError
-                          ? const Color(0xFFDC2626)
-                          : const Color(0xFF059669),
-                    ),
-                  ),
-                ),
-              ],
-              const SizedBox(height: 12),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    child: const Text('Cancelar'),
-                  ),
-                  const SizedBox(width: 8),
-                  ElevatedButton.icon(
-                    icon: loading
-                        ? const SizedBox(
-                            width: 14,
-                            height: 14,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2, color: Colors.white),
-                          )
-                        : const Icon(Icons.upload, size: 16),
-                    label: const Text('Importar'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF059669),
-                      foregroundColor: Colors.white,
-                    ),
-                    onPressed: loading
-                        ? null
-                        : () async {
-                            setModalState(() => loading = true);
-                            try {
-                              final res =
-                                  await api.importBatches(controller.text);
-                              final imp = res['imported'] as int? ?? 0;
-                              final err = res['errors'] as int? ?? 0;
-                              setModalState(() {
-                                result = 'Importados: $imp lotes'
-                                    '${err > 0 ? ' · $err errores' : ''}.';
-                                resultIsError = false;
-                                loading = false;
-                              });
-                              if (imp > 0) {
-                                ref.invalidate(pendingActionsProvider);
-                              }
-                            } catch (e) {
-                              setModalState(() {
-                                result = friendlyError(e);
-                                resultIsError = true;
-                                loading = false;
-                              });
-                            }
-                          },
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
+      if (kIsWeb) {
+        downloadCsv(name, csv);
+      } else {
+        final dir = await getTemporaryDirectory();
+        final file = File('${dir.path}/$name');
+        await file.writeAsString(csv);
+        await Share.shareXFiles([XFile(file.path)], text: 'Acciones completadas — MermaOps');
+      }
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('CSV descargado: $name'), backgroundColor: const Color(0xFF059669)),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error exportando CSV'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> _showImportDialog(BuildContext context) async {
+    // Abrir explorador de archivos — múltiples CSV permitidos
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['csv', 'txt'],
+      allowMultiple: true,
+      withData: true,
+    );
+    if (picked == null || picked.files.isEmpty) return;
+    if (!context.mounted) return;
+
+    int totalImported = 0;
+    int totalErrors = 0;
+    final fileNames = <String>[];
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Importando ${picked.files.length} archivo(s)…'),
+        duration: const Duration(seconds: 2),
       ),
     );
+
+    for (final file in picked.files) {
+      try {
+        final bytes = file.bytes;
+        if (bytes == null) continue;
+        final content = utf8.decode(bytes);
+        final res = await ApiService().importBatches(content);
+        totalImported += (res['imported'] as int? ?? 0);
+        totalErrors += (res['errors'] as int? ?? 0);
+        fileNames.add(file.name);
+      } catch (_) {
+        totalErrors++;
+      }
+    }
+
+    if (totalImported > 0) ref.invalidate(pendingActionsStreamProvider);
+
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '✓ ${fileNames.join(', ')} — $totalImported lotes importados'
+            '${totalErrors > 0 ? ' · $totalErrors errores' : ''}',
+          ),
+          backgroundColor: totalErrors > 0 ? Colors.orange : const Color(0xFF059669),
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    }
   }
 
   void _showCompleteDialog(
@@ -591,49 +608,16 @@ class _ActionsScreenState extends ConsumerState<ActionsScreen>
     required int quantity,
     String notes = '',
   }) async {
-    final userId = supabase.auth.currentUser?.id ?? 'unknown';
-    final userLabel = supabase.auth.currentUser?.email ?? userId;
+    final userLabel = supabase.auth.currentUser?.email ??
+        supabase.auth.currentUser?.id ?? 'unknown';
     final actionId = action['id'] as String;
-    final batch = action['batches'] as Map<String, dynamic>?;
-    final product = batch?['products'] as Map<String, dynamic>?;
-    final productName = product?['name'] as String? ?? '';
-    final price = (product?['price'] as num?)?.toDouble() ?? 0;
-
-    try {
-      final nowUtc = DateTime.now().toUtc().toIso8601String();
-      // Mark action completed — completed_by stores email for legible historial
-      await supabase.from('actions').update({
-        'status': 'completed',
-        'completed_by': userLabel,
-        'completed_at': nowUtc,
-        'notes': notes.isEmpty ? 'Donado a $entity — $quantity uds' : notes,
-        'donation_entity': entity,
-        'donation_quantity': quantity,
-      }).eq('id', actionId);
-
-      // Register in donations table (donated_at required for stats queries)
-      await supabase.from('donations').insert({
-        'store_id': storeId,
-        'batch_id': action['batch_id'],
-        'action_id': actionId,
-        'entity': entity,
-        'quantity': quantity,
-        'product_name': productName,
-        'value_donated': (price * quantity),
-        'donated_by': userLabel,
-        'donated_at': nowUtc,
-        'notes': notes,
-      });
-    } catch (_) {
-      // Fallback: si falla la escritura directa a Supabase, completa vía API backend
-      await api.completeAction(
-        actionId: actionId,
-        completedBy: userLabel,
-        notes: 'Donado a $entity — $quantity uds',
-      );
-      // Si este segundo intento también falla, deja que la excepción llegue al caller
-    }
-    ref.invalidate(pendingActionsProvider);
+    // Siempre va al backend — tiene clave de servicio que bypasea RLS
+    await api.completeAction(
+      actionId: actionId,
+      completedBy: userLabel,
+      notes: 'Donado a $entity — $quantity uds${notes.isNotEmpty ? ' · $notes' : ''}',
+    );
+    ref.invalidate(pendingActionsStreamProvider);
     ref.invalidate(completedActionsProvider);
   }
 
@@ -669,37 +653,27 @@ class _ActionsScreenState extends ConsumerState<ActionsScreen>
 
     bool synced = false;
     try {
-      await supabase.from('actions').update({
-        'status': 'completed',
-        'completed_by': userId,
-        'completed_at': DateTime.now().toUtc().toIso8601String(),
-        'notes': notes,
-        if (photoUrl.isNotEmpty) 'photo_url': photoUrl,
-      }).eq('id', actionId);
+      // Siempre al backend — bypasea RLS con clave de servicio
+      await api.completeAction(
+        actionId: actionId,
+        completedBy: userId,
+        notes: notes,
+        photoUrl: photoUrl,
+      );
       synced = true;
-    } catch (_) {
-      try {
-        await api.completeAction(
-          actionId: actionId,
-          completedBy: userId,
-          notes: notes,
-          photoUrl: photoUrl,
-        );
-        synced = true;
-      } catch (e2) {
-        // Red no disponible → guardar en cola offline
-        await _OfflineQueue.enqueue(actionId, userId, notes, photoUrl);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Sin conexión — acción guardada. Se sincronizará automáticamente.'),
-            backgroundColor: Color(0xFFF59E0B),
-            duration: Duration(seconds: 4),
-          ));
-        }
+    } catch (e2) {
+      // Red no disponible → guardar en cola offline
+      await _OfflineQueue.enqueue(actionId, userId, notes, photoUrl);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Sin conexión — acción guardada (${e2.toString().split(':').first})'),
+          backgroundColor: const Color(0xFFF59E0B),
+          duration: const Duration(seconds: 4),
+        ));
       }
     }
     if (synced) {
-      ref.invalidate(pendingActionsProvider);
+      ref.invalidate(pendingActionsStreamProvider);
       ref.invalidate(completedActionsProvider);
       // Intentar sincronizar pendientes anteriores también
       await _OfflineQueue.flush(ref);
@@ -760,7 +734,7 @@ class _OfflineQueue {
           'notes': notes,
           if (photoUrl.isNotEmpty) 'photo_url': photoUrl,
         }).eq('id', actionId);
-        ref.invalidate(pendingActionsProvider);
+        ref.invalidate(pendingActionsStreamProvider);
         ref.invalidate(completedActionsProvider);
       } catch (_) {
         remaining.add(item); // mantener en cola si aún falla
@@ -841,65 +815,198 @@ class _PendingTab extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final actionsAsync = ref.watch(pendingActionsProvider);
+    final actionsAsync = ref.watch(pendingActionsStreamProvider);
+    final productsCache = ref.watch(_actionProductsCacheProvider).valueOrNull ?? {};
+    final role = ref.watch(userRoleProvider).valueOrNull ?? UserRole.staff;
+    final isManager = role.index >= UserRole.manager.index;
+    final proposals = isManager ? (ref.watch(_proposalsProvider).valueOrNull ?? []) : <Map<String, dynamic>>[];
+
     return actionsAsync.when(
       loading: () => const ShimmerList(count: 4, itemHeight: 92),
-      error: (e, _) => AppErrorWidget(error: e, onRetry: () => ref.invalidate(pendingActionsProvider)),
-      data: (actions) {
-        if (actions.isEmpty) {
-          return const Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.check_circle, color: Color(0xFF059669), size: 64),
-                SizedBox(height: 16),
-                Text(
-                  'Todo en orden',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
-                ),
-                SizedBox(height: 4),
-                Text('No hay acciones pendientes ahora mismo'),
-              ],
-            ),
-          );
-        }
-
-        final critical =
-            actions.where((a) => (a['priority_score'] as int? ?? 0) >= 85).toList();
-        final others =
-            actions.where((a) => (a['priority_score'] as int? ?? 0) < 85).toList();
+      error: (e, _) => AppErrorWidget(error: e, onRetry: () => ref.invalidate(pendingActionsStreamProvider)),
+      data: (rawActions) {
+        final actions = rawActions.map((a) => _enrichAction(a, productsCache)).toList();
+        final critical = actions.where((a) => (a['priority_score'] as int? ?? 0) >= 85).toList();
+        final others = actions.where((a) => (a['priority_score'] as int? ?? 0) < 85).toList();
 
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            Text(
-              '${actions.length} acciones pendientes',
-              style: const TextStyle(fontSize: 13, color: Colors.grey),
-            ),
-            const SizedBox(height: 12),
-            if (critical.isNotEmpty) ...[
-              _SectionHeader(
-                label: 'CRÍTICAS (${critical.length})',
-                color: UrgencyColors.critical,
+            // ── Propuestas del staff — solo visibles para manager ─────────
+            if (isManager && proposals.isNotEmpty) ...[
+              Container(
+                margin: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF3E8FF),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFF7C3AED).withValues(alpha: 0.3)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(children: [
+                      const Icon(Icons.pending_actions, color: Color(0xFF7C3AED), size: 16),
+                      const SizedBox(width: 6),
+                      Text('PROPUESTAS DEL PERSONAL (${proposals.length})',
+                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Color(0xFF7C3AED))),
+                    ]),
+                    const SizedBox(height: 10),
+                    ...proposals.map((p) => _ProposalCard(
+                      proposal: p,
+                      onApprove: () async {
+                        try {
+                          await ApiService().approveAction(p['id'] as String);
+                          ref.invalidate(_proposalsProvider);
+                          ref.invalidate(pendingActionsStreamProvider);
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Propuesta aprobada'), backgroundColor: Color(0xFF059669)),
+                            );
+                          }
+                        } catch (e) {
+                          if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+                        }
+                      },
+                      onOverride: () => onComplete(context, ref, p),
+                      onReject: () async {
+                        try {
+                          await ApiService().rejectAction(p['id'] as String, 'Rechazada por el encargado');
+                          ref.invalidate(_proposalsProvider);
+                          ref.invalidate(pendingActionsStreamProvider);
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Propuesta rechazada — vuelve a pendiente')),
+                            );
+                          }
+                        } catch (e) {
+                          if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+                        }
+                      },
+                    )),
+                  ],
+                ),
               ),
-              ...critical.map((a) => _SwipeableActionCard(
-                    action: a,
-                    onComplete: () => onComplete(context, ref, a),
-                    onDonate: () => onDonate(context, ref, a),
-                  )),
-              const SizedBox(height: 16),
             ],
-            if (others.isNotEmpty) ...[
-              _SectionHeader(label: 'OTRAS (${others.length})'),
-              ...others.map((a) => _SwipeableActionCard(
-                    action: a,
-                    onComplete: () => onComplete(context, ref, a),
-                    onDonate: () => onDonate(context, ref, a),
-                  )),
+
+            if (actions.isEmpty && proposals.isEmpty)
+              const Center(
+                child: Padding(
+                  padding: EdgeInsets.only(top: 80),
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(Icons.check_circle, color: Color(0xFF059669), size: 64),
+                    SizedBox(height: 16),
+                    Text('Todo en orden', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+                    SizedBox(height: 4),
+                    Text('No hay acciones pendientes ahora mismo'),
+                  ]),
+                ),
+              )
+            else ...[
+              Text('${actions.length} acciones pendientes',
+                  style: const TextStyle(fontSize: 13, color: Colors.grey)),
+              const SizedBox(height: 12),
+              if (critical.isNotEmpty) ...[
+                _SectionHeader(label: 'CRÍTICAS (${critical.length})', color: UrgencyColors.critical),
+                ...critical.map((a) => _SwipeableActionCard(
+                      action: a,
+                      onComplete: () => onComplete(context, ref, a),
+                      onDonate: () => onDonate(context, ref, a),
+                    )),
+                const SizedBox(height: 16),
+              ],
+              if (others.isNotEmpty) ...[
+                _SectionHeader(label: 'OTRAS (${others.length})'),
+                ...others.map((a) => _SwipeableActionCard(
+                      action: a,
+                      onComplete: () => onComplete(context, ref, a),
+                      onDonate: () => onDonate(context, ref, a),
+                    )),
+              ],
             ],
           ],
         );
       },
+    );
+  }
+}
+
+// Tarjeta de propuesta — visible solo para manager
+class _ProposalCard extends StatelessWidget {
+  final Map<String, dynamic> proposal;
+  final VoidCallback onApprove;
+  final VoidCallback onOverride;
+  final VoidCallback onReject;
+  const _ProposalCard({required this.proposal, required this.onApprove, required this.onOverride, required this.onReject});
+
+  @override
+  Widget build(BuildContext context) {
+    final notes = proposal['notes'] as String? ?? '';
+    final batch = proposal['batches'] as Map<String, dynamic>?;
+    final product = batch?['products'] as Map<String, dynamic>?;
+    final productName = product?['name'] as String? ?? 'Producto';
+    final currentType = proposal['action_type'] as String? ?? '';
+
+    // Extraer tipo propuesto desde notes: "[PROPUESTA de staff: DONAR — motivo]"
+    final proposedMatch = RegExp(r'\[PROPUESTA de (.+?):\s*(\w+)', caseSensitive: false).firstMatch(notes);
+    final proposedBy = proposedMatch?.group(1) ?? (proposal['completed_by'] as String? ?? 'staff');
+    final proposedType = proposedMatch?.group(2) ?? currentType;
+    final reason = notes.replaceAll(RegExp(r'\[PROPUESTA[^\]]*\]'), '').trim();
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFF7C3AED).withValues(alpha: 0.2)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Expanded(child: Text(productName, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700))),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+            decoration: BoxDecoration(color: const Color(0xFF7C3AED), borderRadius: BorderRadius.circular(5)),
+            child: Text(proposedType.toUpperCase(), style: const TextStyle(fontSize: 10, color: Colors.white, fontWeight: FontWeight.w700)),
+          ),
+        ]),
+        const SizedBox(height: 3),
+        Text('Propuesto por: ${proposedBy.split('@').first}',
+            style: const TextStyle(fontSize: 11, color: Colors.grey)),
+        if (reason.isNotEmpty) Text(reason, style: const TextStyle(fontSize: 11, color: Color(0xFF4B5563))),
+        const SizedBox(height: 8),
+        Row(children: [
+          Expanded(child: OutlinedButton(
+            onPressed: onApprove,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: const Color(0xFF059669),
+              side: const BorderSide(color: Color(0xFF059669)),
+              padding: const EdgeInsets.symmetric(vertical: 6),
+            ),
+            child: const Text('Aprobar', style: TextStyle(fontSize: 12)),
+          )),
+          const SizedBox(width: 6),
+          Expanded(child: OutlinedButton(
+            onPressed: onOverride,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: const Color(0xFFF59E0B),
+              side: const BorderSide(color: Color(0xFFF59E0B)),
+              padding: const EdgeInsets.symmetric(vertical: 6),
+            ),
+            child: const Text('Decidir', style: TextStyle(fontSize: 12)),
+          )),
+          const SizedBox(width: 6),
+          Expanded(child: OutlinedButton(
+            onPressed: onReject,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.red,
+              side: const BorderSide(color: Colors.red),
+              padding: const EdgeInsets.symmetric(vertical: 6),
+            ),
+            child: const Text('Rechazar', style: TextStyle(fontSize: 12)),
+          )),
+        ]),
+      ]),
     );
   }
 }
@@ -918,25 +1025,30 @@ class _HistorialTab extends ConsumerWidget {
           return const Center(
             child: Padding(
               padding: EdgeInsets.all(24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.history, size: 48, color: Colors.grey),
-                  SizedBox(height: 12),
-                  Text(
-                    'Sin historial aún',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                  ),
-                  SizedBox(height: 4),
-                  Text(
-                    'Las acciones completadas aparecerán aquí',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.grey),
-                  ),
-                ],
-              ),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.history, size: 48, color: Colors.grey),
+                SizedBox(height: 12),
+                Text('Sin historial aún', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                SizedBox(height: 4),
+                Text('Las acciones completadas aparecerán aquí', textAlign: TextAlign.center, style: TextStyle(color: Colors.grey)),
+              ]),
             ),
           );
+        }
+
+        // Stats
+        final Map<String, int> byType = {};
+        double totalValue = 0;
+        int donations = 0;
+        for (final a in actions) {
+          final t = a['action_type'] as String? ?? 'revisar';
+          byType[t] = (byType[t] ?? 0) + 1;
+          if (t == 'donar') donations++;
+          final batch = a['batches'] as Map<String, dynamic>?;
+          final product = batch?['products'] as Map<String, dynamic>?;
+          final qty = (batch?['quantity'] as int?) ?? 1;
+          final price = (product?['price'] as num?)?.toDouble() ?? 0;
+          totalValue += qty * price;
         }
 
         // Group by employee
@@ -949,21 +1061,57 @@ class _HistorialTab extends ConsumerWidget {
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            Text(
-              '${actions.length} acciones completadas (últimos 30 días)',
-              style: const TextStyle(fontSize: 13, color: Colors.grey),
+            // Stats card
+            Container(
+              margin: const EdgeInsets.only(bottom: 16),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFE5E7EB)),
+              ),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Text('Resumen — últimos 30 días',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                const SizedBox(height: 12),
+                Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
+                  _StatPill(value: '${actions.length}', label: 'acciones', color: const Color(0xFF059669)),
+                  _StatPill(value: '${totalValue.toStringAsFixed(0)}€', label: 'valor recuperado', color: const Color(0xFFF59E0B)),
+                  _StatPill(value: '$donations', label: 'donaciones', color: const Color(0xFF7C3AED)),
+                ]),
+                const SizedBox(height: 12),
+                Wrap(spacing: 6, runSpacing: 6, children: byType.entries.map((e) => Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF3F4F6),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text('${e.key.toUpperCase()} · ${e.value}',
+                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF374151))),
+                )).toList()),
+              ]),
             ),
+
+            Text('${actions.length} acciones (últimos 30 días)',
+                style: const TextStyle(fontSize: 13, color: Colors.grey)),
             const SizedBox(height: 12),
-            ...byEmployee.entries.map((entry) {
-              final emp = entry.key;
-              final empActions = entry.value;
-              return _EmployeeSection(employee: emp, actions: empActions);
-            }),
+            ...byEmployee.entries.map((e) => _EmployeeSection(employee: e.key, actions: e.value)),
           ],
         );
       },
     );
   }
+}
+
+class _StatPill extends StatelessWidget {
+  final String value, label;
+  final Color color;
+  const _StatPill({required this.value, required this.label, required this.color});
+  @override
+  Widget build(BuildContext context) => Column(children: [
+    Text(value, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: color)),
+    Text(label, style: const TextStyle(fontSize: 10, color: Colors.grey)),
+  ]);
 }
 
 class _EmployeeSection extends StatelessWidget {
@@ -1178,7 +1326,7 @@ class _SectionHeader extends StatelessWidget {
 // Deslizar izquierda → donar (❤️ morado)
 // Con haptic feedback en cada dirección.
 
-class _SwipeableActionCard extends StatelessWidget {
+class _SwipeableActionCard extends ConsumerWidget {
   final Map<String, dynamic> action;
   final VoidCallback onComplete;
   final VoidCallback onDonate;
@@ -1190,16 +1338,18 @@ class _SwipeableActionCard extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final role = ref.watch(userRoleProvider).valueOrNull ?? UserRole.staff;
     final actionId = action['id']?.toString() ?? UniqueKey().toString();
     return Dismissible(
       key: ValueKey(actionId),
-      // Deslizar derecha → completar
       background: Container(
         margin: const EdgeInsets.only(bottom: 12),
         padding: const EdgeInsets.symmetric(horizontal: 20),
         decoration: BoxDecoration(
-          color: const Color(0xFF059669),
+          color: role.index >= UserRole.manager.index
+              ? const Color(0xFF059669)
+              : Colors.grey[400]!,
           borderRadius: BorderRadius.circular(14),
         ),
         alignment: Alignment.centerLeft,
@@ -1209,7 +1359,6 @@ class _SwipeableActionCard extends StatelessWidget {
           Text('Completar', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15)),
         ]),
       ),
-      // Deslizar izquierda → donar
       secondaryBackground: Container(
         margin: const EdgeInsets.only(bottom: 12),
         padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -1226,11 +1375,28 @@ class _SwipeableActionCard extends StatelessWidget {
       ),
       confirmDismiss: (direction) async {
         if (direction == DismissDirection.startToEnd) {
+          if (role.index < UserRole.manager.index) {
+            HapticFeedback.vibrate();
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text('Solo los encargados pueden confirmar acciones. Avisa a tu responsable.'),
+              backgroundColor: Color(0xFFF59E0B),
+              duration: Duration(seconds: 3),
+            ));
+            return false;
+          }
           HapticFeedback.mediumImpact();
           onComplete();
-          return false; // el dialog maneja la lógica real
+          return false;
         } else {
           HapticFeedback.selectionClick();
+          if (role.index < UserRole.manager.index) {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text('Usa el botón "Proponer donación" para enviarla al encargado.'),
+              backgroundColor: Color(0xFF7C3AED),
+              duration: Duration(seconds: 3),
+            ));
+            return false;
+          }
           onDonate();
           return false;
         }
@@ -1240,7 +1406,15 @@ class _SwipeableActionCard extends StatelessWidget {
   }
 }
 
-class _ActionCard extends StatelessWidget {
+class _NotesParsed {
+  final String? name;
+  final String? pasillo;
+  final String? estanteria;
+  final String? nivel;
+  const _NotesParsed({this.name, this.pasillo, this.estanteria, this.nivel});
+}
+
+class _ActionCard extends ConsumerWidget {
   final Map<String, dynamic> action;
   final VoidCallback onComplete;
   final VoidCallback onDonate;
@@ -1251,18 +1425,45 @@ class _ActionCard extends StatelessWidget {
     required this.onDonate,
   });
 
+  // Parse product name and location from notes when product join is null.
+  // Handles two formats:
+  //   "Yogur Danone x4 (Pasillo 2-E3-N1)."
+  //   "CRÍTICO. Salmón ahumado 100g (pasillo 4, est. 2, nivel 1). ..."
+  static _NotesParsed _parseNotes(String notes) {
+    // Format 1: "Pasillo X-EY-NZ"
+    final loc1 = RegExp(r'[Pp]asillo\s+(\w+)-E(\w+)-N(\w+)').firstMatch(notes);
+    // Format 2: "(pasillo X, est. Y, nivel Z)"
+    final loc2 = RegExp(r'\(\s*pasillo\s+(\w+),\s*est\.?\s*(\w+),\s*nivel\s*(\w+)', caseSensitive: false).firstMatch(notes);
+    final locMatch = loc1 ?? loc2;
+
+    // Strip leading "CRÍTICO." / "URGENTE." prefix before extracting name
+    final stripped = notes.replaceFirst(RegExp(r'^(CR[IÍ]TICO|URGENTE|ALTO|MEDIO|BAJO)\.\s*', caseSensitive: false), '');
+    final nameMatch = RegExp(r'^(.+?)\s*\(').firstMatch(stripped);
+
+    return _NotesParsed(
+      name: nameMatch?.group(1)?.trim(),
+      pasillo: locMatch?.group(1),
+      estanteria: locMatch?.group(2),
+      nivel: locMatch?.group(3),
+    );
+  }
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final role = ref.watch(userRoleProvider).valueOrNull ?? UserRole.staff;
+    final canConfirm = role.index >= UserRole.manager.index;
+
     final score = action['priority_score'] as int? ?? 0;
     final actionType = action['action_type'] as String? ?? '';
     final notes = action['notes'] as String? ?? '';
     final batch = action['batches'] as Map<String, dynamic>?;
     final product = batch?['products'] as Map<String, dynamic>?;
 
-    final productName = product?['name'] as String? ?? 'Producto';
-    final pasillo = product?['pasillo'] as String? ?? '?';
-    final estanteria = product?['estanteria'] as String? ?? '?';
-    final nivel = product?['nivel'] as String? ?? '?';
+    final parsed = _parseNotes(notes);
+    final productName = product?['name'] as String? ?? parsed.name ?? 'Producto';
+    final pasillo = product?['pasillo'] as String? ?? parsed.pasillo;
+    final estanteria = product?['estanteria'] as String? ?? parsed.estanteria;
+    final nivel = product?['nivel'] as String? ?? parsed.nivel;
     final expiryDate = batch?['expiry_date'] as String?;
     final quantity = batch?['quantity'] as int? ?? 0;
 
@@ -1341,7 +1542,11 @@ class _ActionCard extends StatelessWidget {
                 Icon(Icons.location_on_outlined, size: 13, color: Colors.grey[500]),
                 const SizedBox(width: 3),
                 Text(
-                  'Pasillo $pasillo — E$estanteria N$nivel',
+                  [
+                    _pasilloLabel(pasillo),
+                    if (estanteria != null) 'E$estanteria',
+                    if (nivel != null) 'N$nivel',
+                  ].join(' · '),
                   style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                 ),
                 const Spacer(),
@@ -1396,8 +1601,13 @@ class _ActionCard extends StatelessWidget {
                 width: double.infinity,
                 child: OutlinedButton.icon(
                   icon: const Icon(Icons.volunteer_activism, size: 16),
-                  label: const Text('Donar en su lugar'),
-                  onPressed: onDonate,
+                  label: Text(canConfirm ? 'Donar en su lugar' : 'Proponer donación'),
+                  onPressed: canConfirm
+                      ? onDonate
+                      : () => _showProposeSheet(
+                            context,
+                            Map<String, dynamic>.from(action)..['action_type'] = 'donar',
+                          ),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: const Color(0xFF059669),
                     side: const BorderSide(
@@ -1409,23 +1619,40 @@ class _ActionCard extends StatelessWidget {
               ),
               const SizedBox(height: 8),
             ],
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                icon: const Icon(Icons.check, size: 16),
-                label: Text(actionType == 'rebajar'
-                    ? 'Confirmar rebaja'
-                    : actionType == 'retirar'
-                        ? 'Confirmar retirada'
-                        : 'Marcar completada'),
-                onPressed: onComplete,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.grey[700],
-                  side: BorderSide(color: Colors.grey[400]!),
-                  padding: const EdgeInsets.symmetric(vertical: 10),
+            if (canConfirm) ...[
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.check, size: 16),
+                  label: Text(actionType == 'rebajar'
+                      ? 'Confirmar rebaja'
+                      : actionType == 'retirar'
+                          ? 'Confirmar retirada'
+                          : 'Marcar completada'),
+                  onPressed: onComplete,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.grey[700],
+                    side: BorderSide(color: Colors.grey[400]!),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                  ),
                 ),
               ),
-            ),
+            ] else ...[
+              // Staff: proponer una acción al encargado
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  icon: const Icon(Icons.send_outlined, size: 16),
+                  label: const Text('Proponer al encargado'),
+                  onPressed: () => _showProposeSheet(context, action),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF7C3AED),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -1479,6 +1706,114 @@ class _ActionCard extends StatelessWidget {
         discountPct: discountPct,
         expiryDate: expiryDate,
         actionId: actionId,
+      ),
+    );
+  }
+
+  void _showProposeSheet(BuildContext context, Map<String, dynamic> action) {
+    final actionId = action['id'] as String? ?? '';
+    final batch = action['batches'] as Map<String, dynamic>?;
+    final product = batch?['products'] as Map<String, dynamic>?;
+    final productName = product?['name'] as String? ?? 'Producto';
+    final currentType = action['action_type'] as String? ?? 'revisar';
+
+    String selectedType = currentType;
+    final reasonCtrl = TextEditingController();
+    bool sending = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) => Padding(
+          padding: EdgeInsets.fromLTRB(20, 20, 20, MediaQuery.of(ctx).viewInsets.bottom + 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                const Icon(Icons.send_outlined, color: Color(0xFF7C3AED)),
+                const SizedBox(width: 8),
+                Expanded(child: Text('Proponer acción — $productName',
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700))),
+              ]),
+              const SizedBox(height: 4),
+              const Text('El encargado recibirá tu propuesta y decidirá.',
+                  style: TextStyle(fontSize: 12, color: Colors.grey)),
+              const SizedBox(height: 16),
+              const Text('¿Qué propones hacer?',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 8),
+              Wrap(spacing: 8, runSpacing: 8, children: [
+                for (final t in ['rebajar', 'donar', 'retirar', 'mover', 'revisar'])
+                  ChoiceChip(
+                    label: Text(t.toUpperCase()),
+                    selected: selectedType == t,
+                    onSelected: (_) => setState(() => selectedType = t),
+                    selectedColor: const Color(0xFF7C3AED).withValues(alpha: 0.2),
+                    labelStyle: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: selectedType == t ? const Color(0xFF7C3AED) : Colors.grey[600],
+                    ),
+                  ),
+              ]),
+              const SizedBox(height: 14),
+              TextField(
+                controller: reasonCtrl,
+                maxLines: 2,
+                decoration: InputDecoration(
+                  hintText: 'Motivo o nota para el encargado (opcional)',
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                  contentPadding: const EdgeInsets.all(12),
+                  filled: true,
+                  fillColor: const Color(0xFFF9FAFB),
+                ),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  icon: sending
+                      ? const SizedBox(width: 16, height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : const Icon(Icons.send, size: 16),
+                  label: const Text('Enviar propuesta'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF7C3AED),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                  ),
+                  onPressed: sending ? null : () async {
+                    setState(() => sending = true);
+                    try {
+                      await ApiService().proposeAction(actionId, selectedType, reasonCtrl.text.trim());
+                      if (ctx.mounted) {
+                        Navigator.pop(ctx);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Propuesta enviada: $selectedType para $productName'),
+                            backgroundColor: const Color(0xFF7C3AED),
+                          ),
+                        );
+                      }
+                    } catch (e) {
+                      setState(() => sending = false);
+                      if (ctx.mounted) {
+                        ScaffoldMessenger.of(ctx).showSnackBar(
+                          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+                        );
+                      }
+                    }
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

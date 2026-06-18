@@ -11,7 +11,7 @@ import '../features/actions/actions_screen.dart';
 import '../features/map/map_screen.dart';
 import '../features/reports/reports_screen.dart';
 import '../features/profile/profile_screen.dart';
-import '../features/agents/agents_screen.dart';
+import '../features/suppliers/suppliers_screen.dart';
 import '../features/chat/chat_screen.dart';
 import '../features/onboarding/onboarding_screen.dart';
 import '../features/demo/demo_control_screen.dart';
@@ -115,10 +115,14 @@ final routerProvider = Provider<GoRouter>((ref) {
             ),
           ),
           GoRoute(
-            path: '/agents',
+            path: '/suppliers',
             pageBuilder: (context, state) => _sharedAxisPage(
-              state, const AgentsScreen(),
+              state, const SuppliersScreen(),
             ),
+          ),
+          GoRoute(
+            path: '/agents',
+            redirect: (_, __) => '/',
           ),
           GoRoute(
             path: '/demo',

@@ -909,9 +909,10 @@ VALIDACION: {validation['status']}
 
 # ── Brief diario — flujo 07:30 ───────────────────────────────────────────────
 
-def run_daily_brief(store_id: str) -> str:
+def run_daily_brief(store_id: str, *, send_telegram: bool = True) -> str:
     """
     Brief de apertura de tienda. Kuine usa el loop agéntico completo:
+    send_telegram=False cuando el llamador ya gestiona el envío (p.ej. Chuwi simulate_730).
     investiga activamente, evalúa cada producto, crea acciones en BD y genera el brief.
     """
     import time as _time
@@ -1087,20 +1088,38 @@ Al finalizar, genera el brief completo para el encargado."""
     # Wrapper del executor que manda live updates al Telegram
     _base_executor = _make_executor(store_id)
     def _live_executor(tool_name: str, tool_input: dict):
-        _LIVE_LABELS = {
-            "evaluate_all_products_parallel": "📊 Evaluando todos los productos en paralelo...",
-            "create_action": f"✅ Creando acción: {tool_input.get('action_type','').upper()} para {tool_input.get('product_name','?')}",
-            "get_merma_history": "📉 Consultando merma histórica...",
-            "recall_memory": "🧠 Consultando memoria episódica...",
-            "store_memory": "💾 Guardando patrón aprendido...",
-            "get_warehouse_stock": f"📦 Verificando almacén: {tool_input.get('product_id','')[:8]}",
-            "calculate_discount": f"💰 Calculando descuento: {tool_input.get('product_name','?')}",
-            "get_supplier_stats": "🏭 Analizando proveedores...",
-            "get_store_comparison": "📈 Consultando benchmark de la red...",
-            "get_order_suggestions": "🛒 Calculando pedido semanal...",
-        }
         result = _base_executor(tool_name, tool_input)
         if _live_chat_id:
+            # Resolver nombre de producto desde BD si Kuine no lo incluyó
+            def _resolve_pname(fallback: str = "?") -> str:
+                pname = tool_input.get("product_name", "")
+                if pname:
+                    return pname
+                bid = tool_input.get("batch_id", "")
+                pid = tool_input.get("product_id", "")
+                try:
+                    if bid:
+                        batch = database.get_batch_by_id(bid)
+                        pname = ((batch or {}).get("products") or {}).get("name", "")
+                    if not pname and pid:
+                        row = database.get_db().table("products").select("name").eq("id", pid).maybe_single().execute()
+                        pname = (row.data or {}).get("name", "")
+                except Exception:
+                    pass
+                return pname or fallback
+
+            _LIVE_LABELS = {
+                "evaluate_all_products_parallel": "📊 Evaluando todos los productos en paralelo...",
+                "create_action": f"✅ Creando acción: {tool_input.get('action_type','').upper()} para {_resolve_pname()}",
+                "get_merma_history": "📉 Consultando merma histórica...",
+                "recall_memory": "🧠 Consultando memoria episódica...",
+                "store_memory": "💾 Guardando patrón aprendido...",
+                "get_warehouse_stock": f"📦 Verificando almacén: {tool_input.get('product_id','')[:8]}",
+                "calculate_discount": f"💰 Calculando descuento: {_resolve_pname()}",
+                "get_supplier_stats": "🏭 Analizando proveedores...",
+                "get_store_comparison": "📈 Consultando benchmark de la red...",
+                "get_order_suggestions": "🛒 Calculando pedido semanal...",
+            }
             label = _LIVE_LABELS.get(tool_name, f"🔧 {tool_name}...")
             _live_tool_log.append(label)
             # Resumen del progreso
@@ -1174,8 +1193,8 @@ Al finalizar, genera el brief completo para el encargado."""
             )
             _da_critique = llm.call_fast(_da_prompt, max_tokens=80)
             if "AVISO" in _da_critique.upper():
-                logger.warning(f"[devil_advocate] {_da_critique}")
-                response = response + f"\n\n⚠️ Revisión interna: {_da_critique.replace('AVISO:', '').strip()}"
+                # Solo va al log interno — nunca al brief del usuario
+                logger.warning(f"[devil_advocate] AVISO (interno): {_da_critique}")
             else:
                 logger.debug(f"[devil_advocate] Batch aprobado: {len(_da_actions)} acciones")
         except Exception as _dae:
@@ -1280,7 +1299,22 @@ Al finalizar, genera el brief completo para el encargado."""
     })
     _LAST_BRIEF_RUN_ID[store_id] = _run_id or ""
 
-    notifier.send_telegram(store_id, response)
+    # Post-proceso: quitar líneas de revisión interna que el LLM a veces incluye
+    import re as _re
+    response = _re.sub(
+        r'⚠️\s*Revisión interna[:\s][^\n]*(\n[^\n]+)*',
+        '',
+        response,
+    ).strip()
+
+    # Deduplicar: si el brief aparece dos veces (síntesis extra del loop), quedarse con el último
+    _brief_marker = "═══════════════════════════════════════"
+    if response.count(_brief_marker) >= 2:
+        last_pos = response.rfind(_brief_marker)
+        response = response[last_pos:].strip()
+
+    if send_telegram:
+        notifier.send_telegram(store_id, response)
     return response
 
 

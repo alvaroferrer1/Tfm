@@ -10,11 +10,28 @@ import 'package:file_picker/file_picker.dart';
 
 import '../../core/api_service.dart';
 import '../../core/error_widget.dart';
+import '../../core/l10n.dart';
 import '../../core/supabase_client.dart';
 import '../../core/theme.dart';
 import '../../core/user_role_provider.dart';
 
 import 'dart:io' show File;
+
+// Guards LinearGradient.createShader() against zero-area rects (CanvasKit crash on Flutter web)
+class _SafeGradient extends LinearGradient {
+  const _SafeGradient({
+    required super.colors,
+    super.begin = Alignment.centerLeft,
+    super.end = Alignment.centerRight,
+    super.stops,
+  });
+
+  @override
+  Shader createShader(Rect rect, {TextDirection? textDirection}) {
+    final safe = rect.isEmpty ? Rect.fromLTWH(0, 0, 1, 1) : rect;
+    return super.createShader(safe, textDirection: textDirection);
+  }
+}
 
 final _dailyBriefsProvider = FutureProvider<List<Map<String, dynamic>>>((ref) async {
   return api.getDailyBriefsList(limit: 14);
@@ -110,6 +127,16 @@ class _ReportsScreenState extends ConsumerState<_ReportsContent>
             ],
           ]);
         }),
+        actions: [
+          Consumer(builder: (_, ref, __) {
+            final lang = ref.watch(languageProvider);
+            return TextButton(
+              onPressed: () => ref.read(languageProvider.notifier).toggle(),
+              child: Text(lang == 'es' ? 'EN' : 'ES',
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
+            );
+          }),
+        ],
         bottom: TabBar(
           controller: _tabs,
           isScrollable: true,
@@ -201,74 +228,108 @@ class _DailyBriefsTab extends ConsumerWidget {
             ),
           );
         }
-        return ListView.builder(
-          padding: const EdgeInsets.all(16),
-          itemCount: briefs.length,
-          itemBuilder: (context, i) {
-            final brief = briefs[i];
-            final date = brief['date'] as String? ?? '';
-            final summary = brief['summary'] as String? ?? '';
-            final value = (brief['value_at_risk'] as num?)?.toDouble() ?? 0;
-            final actionsCount = brief['actions_count'] as int? ?? 0;
-            final isToday = date == DateTime.now().toIso8601String().substring(0, 10);
+        final totalActions = briefs.fold<int>(0, (s, b) => s + ((b['actions_count'] as int?) ?? 0));
+        final totalRisk = briefs.fold<double>(0, (s, b) => s + ((b['value_at_risk'] as num?)?.toDouble() ?? 0));
+        return RefreshIndicator(
+          onRefresh: () async => ref.invalidate(_dailyBriefsProvider),
+          child: ListView.builder(
+            padding: const EdgeInsets.all(16),
+            itemCount: briefs.length + 1,
+            itemBuilder: (context, i) {
+              if (i == 0) {
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 16),
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEDE9FE),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: const Color(0xFFDDD6FE)),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 44, height: 44,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF7C3AED),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Icon(Icons.psychology_rounded, color: Colors.white, size: 24),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Text('${briefs.length} briefs de Kuine',
+                              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Color(0xFF4C1D95))),
+                          Text('$totalActions acciones analizadas · ${totalRisk.toStringAsFixed(0)} € gestionados',
+                              style: const TextStyle(fontSize: 12, color: Color(0xFF6D28D9))),
+                        ])),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF7C3AED),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Text('IA', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 13)),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }
+              final brief = briefs[i - 1];
+              final date = brief['date'] as String? ?? '';
+              final summary = brief['summary'] as String? ?? '';
+              final value = (brief['value_at_risk'] as num?)?.toDouble() ?? 0;
+              final actionsCount = brief['actions_count'] as int? ?? 0;
+              final isToday = date == DateTime.now().toIso8601String().substring(0, 10);
 
-            return Card(
-              margin: const EdgeInsets.only(bottom: 12),
-              child: ExpansionTile(
-                tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                title: Row(
+              return Card(
+                margin: const EdgeInsets.only(bottom: 12),
+                child: ExpansionTile(
+                  tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  leading: Container(
+                    width: 36, height: 36,
+                    decoration: BoxDecoration(
+                      color: isToday ? const Color(0xFFD1FAE5) : const Color(0xFFF3F4F6),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(Icons.article_rounded,
+                        size: 18, color: isToday ? const Color(0xFF059669) : const Color(0xFF6B7280)),
+                  ),
+                  title: Row(
+                    children: [
+                      Text(date, style: TextStyle(fontWeight: FontWeight.w700,
+                          color: isToday ? const Color(0xFF059669) : null)),
+                      if (isToday) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(color: const Color(0xFFD1FAE5), borderRadius: BorderRadius.circular(4)),
+                          child: const Text('Hoy', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF059669))),
+                        ),
+                      ],
+                    ],
+                  ),
+                  subtitle: Text('$actionsCount acciones — ${value.toStringAsFixed(0)} € en riesgo',
+                      style: const TextStyle(fontSize: 12)),
                   children: [
-                    Text(
-                      date,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w700,
-                        color: isToday ? const Color(0xFF059669) : null,
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                      child: Text(summary, style: const TextStyle(fontSize: 13, height: 1.6)),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                      child: _PdfDownloadButton(
+                        label: '📄 Descargar PDF',
+                        filename: 'brief_$date.pdf',
+                        download: () => api.downloadBriefPdf(date: date),
                       ),
                     ),
-                    if (isToday) ...[
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFD1FAE5),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: const Text(
-                          'Hoy',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: Color(0xFF059669),
-                          ),
-                        ),
-                      ),
-                    ],
                   ],
                 ),
-                subtitle: Text(
-                  '$actionsCount acciones — ${value.toStringAsFixed(0)} € en riesgo',
-                  style: const TextStyle(fontSize: 12),
-                ),
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                    child: Text(
-                      summary,
-                      style: const TextStyle(fontSize: 13, height: 1.6),
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                    child: _PdfDownloadButton(
-                      label: '📄 Descargar PDF',
-                      filename: 'brief_$date.pdf',
-                      download: () => api.downloadBriefPdf(date: date),
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
+              );
+            },
+          ),
         );
       },
     );
@@ -342,40 +403,71 @@ class _WeeklyReportsTab extends ConsumerWidget {
             ),
           );
         }
-        return ListView.builder(
-          padding: const EdgeInsets.all(16),
-          itemCount: reports.length,
-          itemBuilder: (context, i) {
-            final report = reports[i];
-            final week = report['week_start'] as String? ?? '';
-            final content = report['content'] as String? ?? '';
-            return Card(
-              margin: const EdgeInsets.only(bottom: 12),
-              child: ExpansionTile(
-                title: Text(
-                  'Semana del $week',
-                  style: const TextStyle(fontWeight: FontWeight.w700),
+        return RefreshIndicator(
+          onRefresh: () async => ref.invalidate(_weeklyReportsProvider),
+          child: ListView.builder(
+            padding: const EdgeInsets.all(16),
+            itemCount: reports.length + 1,
+            itemBuilder: (context, i) {
+              if (i == 0) {
+                final first = reports.last['week_start'] as String? ?? '';
+                final last = reports.first['week_start'] as String? ?? '';
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 16),
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF0F9FF),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: const Color(0xFFBAE6FD)),
+                    ),
+                    child: Row(children: [
+                      Container(
+                        width: 44, height: 44,
+                        decoration: BoxDecoration(color: const Color(0xFF0284C7), borderRadius: BorderRadius.circular(12)),
+                        child: const Icon(Icons.calendar_view_week_rounded, color: Colors.white, size: 22),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text('${reports.length} informes semanales',
+                            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: Color(0xFF0C4A6E))),
+                        Text('$first → $last · Generados por Kuine cada lunes',
+                            style: const TextStyle(fontSize: 11, color: Color(0xFF0369A1))),
+                      ])),
+                    ]),
+                  ),
+                );
+              }
+              final report = reports[i - 1];
+              final week = report['week_start'] as String? ?? '';
+              final content = report['content'] as String? ?? '';
+              return Card(
+                margin: const EdgeInsets.only(bottom: 12),
+                child: ExpansionTile(
+                  leading: Container(
+                    width: 36, height: 36,
+                    decoration: BoxDecoration(color: const Color(0xFFEFF6FF), borderRadius: BorderRadius.circular(8)),
+                    child: const Icon(Icons.bar_chart_rounded, size: 18, color: Color(0xFF2563EB)),
+                  ),
+                  title: Text('Semana del $week', style: const TextStyle(fontWeight: FontWeight.w700)),
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                      child: Text(content, style: const TextStyle(fontSize: 13, height: 1.6)),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                      child: _PdfDownloadButton(
+                        label: '📊 Descargar PDF semanal',
+                        filename: 'informe_semanal_$week.pdf',
+                        download: () => api.downloadWeeklyPdf(weekStart: week),
+                      ),
+                    ),
+                  ],
                 ),
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                    child: Text(
-                      content,
-                      style: const TextStyle(fontSize: 13, height: 1.6),
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                    child: _PdfDownloadButton(
-                      label: '📊 Descargar PDF semanal',
-                      filename: 'informe_semanal_$week.pdf',
-                      download: () => api.downloadWeeklyPdf(weekStart: week),
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
+              );
+            },
+          ),
         );
       },
     );
@@ -450,57 +542,73 @@ class _MonthlyReportsTab extends ConsumerWidget {
           );
         }
 
-        return ListView.builder(
-          padding: const EdgeInsets.all(16),
-          itemCount: reports.length,
-          itemBuilder: (context, i) {
-            final report = reports[i];
-            final month = report['month'] as String? ?? '';
-            final content = report['content'] as String? ?? '';
-            return Card(
-              margin: const EdgeInsets.only(bottom: 12),
-              child: ExpansionTile(
-                leading: Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF7C3AED).withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Icon(
-                    Icons.summarize,
-                    size: 18,
-                    color: Color(0xFF7C3AED),
-                  ),
-                ),
-                title: Text(
-                  'Informe mensual — $month',
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-                subtitle: const Text(
-                  'Para el dueño',
-                  style: TextStyle(fontSize: 11, color: Color(0xFF7C3AED)),
-                ),
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                    child: Text(
-                      content,
-                      style: const TextStyle(fontSize: 13, height: 1.6),
+        return RefreshIndicator(
+          onRefresh: () async => ref.invalidate(_monthlyReportsProvider),
+          child: ListView.builder(
+            padding: const EdgeInsets.all(16),
+            itemCount: reports.length + 1,
+            itemBuilder: (context, i) {
+              if (i == 0) {
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 16),
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF5F3FF),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: const Color(0xFFEDE9FE)),
                     ),
+                    child: Row(children: [
+                      Container(
+                        width: 44, height: 44,
+                        decoration: BoxDecoration(color: const Color(0xFF7C3AED), borderRadius: BorderRadius.circular(12)),
+                        child: const Icon(Icons.summarize_rounded, color: Colors.white, size: 22),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text('${reports.length} informes para el dueño',
+                            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: Color(0xFF4C1D95))),
+                        const Text('Resumen ejecutivo mensual · generado el día 1',
+                            style: TextStyle(fontSize: 11, color: Color(0xFF7C3AED))),
+                      ])),
+                    ]),
                   ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                    child: _PdfDownloadButton(
-                      label: '📈 Descargar PDF mensual',
-                      filename: 'informe_mensual_$month.pdf',
-                      download: () => api.downloadMonthlyPdf(month: month),
+                );
+              }
+              final report = reports[i - 1];
+              final month = report['month'] as String? ?? '';
+              final content = report['content'] as String? ?? '';
+              return Card(
+                margin: const EdgeInsets.only(bottom: 12),
+                child: ExpansionTile(
+                  leading: Container(
+                    width: 36, height: 36,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF7C3AED).withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
                     ),
+                    child: const Icon(Icons.summarize, size: 18, color: Color(0xFF7C3AED)),
                   ),
-                ],
-              ),
-            );
-          },
+                  title: Text('Informe mensual — $month', style: const TextStyle(fontWeight: FontWeight.w700)),
+                  subtitle: const Text('Para el dueño', style: TextStyle(fontSize: 11, color: Color(0xFF7C3AED))),
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                      child: Text(content, style: const TextStyle(fontSize: 13, height: 1.6)),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                      child: _PdfDownloadButton(
+                        label: '📈 Descargar PDF mensual',
+                        filename: 'informe_mensual_$month.pdf',
+                        download: () => api.downloadMonthlyPdf(month: month),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
         );
       },
     );
@@ -604,7 +712,7 @@ class _MermaTab extends ConsumerWidget {
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                gradient: const LinearGradient(
+                gradient: const _SafeGradient(
                   colors: [Color(0xFF059669), Color(0xFF10B981)],
                 ),
                 borderRadius: BorderRadius.circular(12),
@@ -747,22 +855,7 @@ class _SuppliersTab extends ConsumerWidget {
     final async = ref.watch(_suppliersProvider);
     return async.when(
       loading: () => const ShimmerList(count: 4, itemHeight: 80),
-      error: (e, _) => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.cloud_off, size: 48, color: Colors.grey),
-              const SizedBox(height: 12),
-              const Text('Backend no disponible', style: TextStyle(fontWeight: FontWeight.w700)),
-              const SizedBox(height: 4),
-              Text(friendlyError(e), style: const TextStyle(fontSize: 12, color: Colors.grey),
-                  textAlign: TextAlign.center),
-            ],
-          ),
-        ),
-      ),
+      error: (e, _) => AppErrorWidget(error: e, onRetry: () => ref.invalidate(_suppliersProvider)),
       data: (suppliers) {
         if (suppliers.isEmpty) {
           return const Center(
@@ -802,7 +895,7 @@ class _SuppliersTab extends ConsumerWidget {
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                gradient: const LinearGradient(
+                gradient: const _SafeGradient(
                   colors: [Color(0xFF0F172A), Color(0xFF1E3A5F)],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
@@ -1237,24 +1330,7 @@ class _OrderSuggestionsTab extends ConsumerWidget {
     final async = ref.watch(_orderSuggestionsProvider);
     return async.when(
       loading: () => const ShimmerList(count: 4, itemHeight: 80),
-      error: (e, _) => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.cloud_off, size: 48, color: Colors.grey),
-              const SizedBox(height: 12),
-              const Text('Backend no disponible',
-                  style: TextStyle(fontWeight: FontWeight.w700)),
-              const SizedBox(height: 4),
-              Text(friendlyError(e),
-                  style: const TextStyle(fontSize: 12, color: Colors.grey),
-                  textAlign: TextAlign.center),
-            ],
-          ),
-        ),
-      ),
+      error: (e, _) => AppErrorWidget(error: e, onRetry: () => ref.invalidate(_orderSuggestionsProvider)),
       data: (suggestions) {
         if (suggestions.isEmpty) {
           return const Center(
@@ -1294,7 +1370,7 @@ class _OrderSuggestionsTab extends ConsumerWidget {
             Container(
               padding: const EdgeInsets.all(18),
               decoration: BoxDecoration(
-                gradient: const LinearGradient(
+                gradient: const _SafeGradient(
                   colors: [Color(0xFF1D4ED8), Color(0xFF3B82F6)],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
@@ -1639,7 +1715,7 @@ class _EsgTabState extends State<_EsgTab> {
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                gradient: const LinearGradient(
+                gradient: const _SafeGradient(
                   colors: [Color(0xFF065F46), Color(0xFF059669)],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
@@ -2304,7 +2380,7 @@ class _PredictionsTabState extends State<_PredictionsTab> {
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                gradient: const LinearGradient(
+                gradient: const _SafeGradient(
                   colors: [Color(0xFF312E81), Color(0xFF6D28D9)],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
@@ -2667,7 +2743,7 @@ class _AnalyzePdfTabState extends State<_AnalyzePdfTab> {
         Container(
           padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
-            gradient: const LinearGradient(
+            gradient: const _SafeGradient(
               colors: [Color(0xFF1E1B4B), Color(0xFF4C1D95)],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,

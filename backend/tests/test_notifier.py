@@ -61,14 +61,13 @@ class TestQuietHours:
         with patch("backend.agents.notifier._datetime", mock_dt):
             assert notifier._is_quiet_hours() is True
 
-    def test_hour_10_is_quiet_during_caja_peak(self):
-        # Hora 10 = hora pico de caja (10:00-11:30) → silencio para alertas normales
-        # El personal no puede atender el móvil mientras atiende en caja
+    def test_hour_10_is_not_quiet_during_work_hours(self):
+        # Hora 10 = horario laboral (8-21h) → alertas SIEMPRE pasan para no dejar callado a Chuwi
         mock_dt = MagicMock()
         mock_dt.now.return_value.hour = 10
         mock_dt.now.return_value.minute = 30
         with patch("backend.agents.notifier._datetime", mock_dt):
-            assert notifier._is_quiet_hours() is True  # silencio durante pico de caja
+            assert notifier._is_quiet_hours() is False  # en horario laboral nunca silenciar
 
     def test_hour_10_urgent_still_sends(self):
         # Alertas urgentes SIEMPRE se envían, incluso en hora pico de caja

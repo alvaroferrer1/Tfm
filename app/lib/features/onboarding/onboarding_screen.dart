@@ -11,6 +11,7 @@ class OnboardingScreen extends StatefulWidget {
 
 class _OnboardingScreenState extends State<OnboardingScreen> {
   final _controller = PageController();
+  final _storeCodeCtrl = TextEditingController();
   int _page = 0;
 
   static const _pages = [_PageData(
@@ -49,23 +50,18 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   )];
 
   void _finish() {
-    debugPrint('[onboarding] _finish() called — mounted=$mounted');
-    SharedPreferences.getInstance()
-        .then((prefs) => prefs.setBool('onboarding_done', true));
-    if (mounted) {
-      debugPrint('[onboarding] calling context.go(/login)');
-      try {
-        context.go('/login');
-        debugPrint('[onboarding] context.go(/login) done');
-      } catch (e, st) {
-        debugPrint('[onboarding] ERROR: $e\n$st');
-      }
-    }
+    final code = _storeCodeCtrl.text.trim();
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.setBool('onboarding_done', true);
+      if (code.isNotEmpty) prefs.setString('user_store_id', code);
+    });
+    if (mounted) context.go('/login');
   }
 
   @override
   void dispose() {
     _controller.dispose();
+    _storeCodeCtrl.dispose();
     super.dispose();
   }
 
@@ -100,6 +96,40 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 itemBuilder: (context, i) => _OnboardingPage(data: _pages[i]),
               ),
             ),
+
+            // Campo de código de tienda — solo en la última página
+            if (_page == _pages.length - 1)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Código de tienda (opcional)',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF374151)),
+                    ),
+                    const SizedBox(height: 6),
+                    TextField(
+                      controller: _storeCodeCtrl,
+                      decoration: InputDecoration(
+                        hintText: 'Ej: mercadona-madrid-001',
+                        prefixIcon: const Icon(Icons.store_outlined, size: 18),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                        filled: true,
+                        fillColor: Colors.white,
+                      ),
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Tu responsable te facilitará este código. Si no lo tienes, puedes dejarlo vacío.',
+                      style: TextStyle(fontSize: 11, color: Colors.grey),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                ),
+              ),
 
             // Dots + button
             Padding(

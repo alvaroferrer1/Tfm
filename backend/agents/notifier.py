@@ -73,10 +73,12 @@ def _is_quiet_hours(urgent: bool = False, expiry_hours: float | None = None) -> 
     if expiry_hours is not None and expiry_hours < 2.0:
         return False  # emergencia — nunca silenciar
     hour = _datetime.now().hour
+    # En horario laboral (8-21h) NUNCA silenciar — el equipo está trabajando
+    if 8 <= hour < 21:
+        return False
     if urgent:
         return hour >= _QUIET_HOUR_START or hour < _QUIET_HOUR_END
-    # Para alertas normales: también silenciar en horas pico de caja
-    return hour >= 22 or hour < _QUIET_HOUR_END or _is_caja_peak_hours()
+    return hour >= 22 or hour < _QUIET_HOUR_END
 
 
 def _dedup_key(store_id: str, title: str, body: str) -> str:
@@ -99,6 +101,14 @@ def _get_chat_id(store_id: str) -> str:
         store = get_store(store_id)
         if store and store.get("telegram_chat_id"):
             return store["telegram_chat_id"]
+    except Exception:
+        pass
+    # Fallback: agent_memory (saved by _auto_save_chat_id in chuwi.py)
+    try:
+        from backend.core import memory as _mem
+        chat_id = _mem.recall(store_id, "telegram_admin_chat_id")
+        if chat_id:
+            return str(chat_id)
     except Exception:
         pass
     return _DEFAULT_CHAT_ID

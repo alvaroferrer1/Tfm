@@ -199,11 +199,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     } catch (e) {
       HapticFeedback.heavyImpact();
       ref.read(_chatProvider.notifier).finalizeStream([]);
-      final isTimeout = e.toString().contains('TimeoutException') || e.toString().contains('timeout');
+      final msg = e.toString().toLowerCase();
+      final isTimeout = msg.contains('timeout');
+      final isNoInternet = msg.contains('connection refused') ||
+          msg.contains('network') ||
+          msg.contains('socket') ||
+          msg.contains('errno = 111') ||
+          msg.contains('failed host lookup');
       ref.read(_chatProvider.notifier).addKuine(
         isTimeout
-            ? 'Tardé demasiado en responder. Inténtalo de nuevo con una pregunta más concreta.'
-            : 'No he podido responder ahora mismo. Comprueba la conexión e inténtalo de nuevo.',
+            ? 'Tardé demasiado en responder. Inténtalo con una pregunta más concreta.'
+            : isNoInternet
+                ? 'Necesito conexión a internet real para funcionar — no basta con Wi-Fi local sin salida a internet. Cuando tengas conexión, podré responderte con normalidad.'
+                : 'No he podido responder ahora mismo. Comprueba la conexión e inténtalo de nuevo.',
         [],
       );
     } finally {

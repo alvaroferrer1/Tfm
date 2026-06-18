@@ -1,19 +1,23 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
+import '../../core/api_service.dart';
+import '../../core/store_provider.dart';
 import '../../core/supabase_client.dart';
 import '../../core/theme.dart';
+import '../../core/l10n.dart';
+import '../../core/user_role_provider.dart';
 
 // ── Data providers ─────────────────────────────────────────────────────────
 
-// Supabase Realtime: el mapa se actualiza cuando llegan nuevas acciones críticas
-// SupabaseStreamBuilder solo soporta un .eq() — filtramos 'pending' en cliente
 final _liveActionsMapProvider = StreamProvider<List<Map<String, dynamic>>>((ref) {
+  final sid = ref.watch(resolvedStoreIdProvider);
   return supabase
       .from('actions')
       .stream(primaryKey: ['id'])
-      .eq('store_id', storeId)
+      .eq('store_id', sid)
       .map((rows) => rows
           .cast<Map<String, dynamic>>()
           .where((a) => a['status'] == 'pending')
@@ -23,10 +27,11 @@ final _liveActionsMapProvider = StreamProvider<List<Map<String, dynamic>>>((ref)
 });
 
 final _expiringBatchesProvider = FutureProvider<List<Map<String, dynamic>>>((ref) async {
+  final sid = ref.watch(resolvedStoreIdProvider);
   final data = await supabase
       .from('batches')
       .select('*, products(*)')
-      .eq('store_id', storeId)
+      .eq('store_id', sid)
       .eq('status', 'active')
       .lte(
         'expiry_date',
@@ -36,7 +41,55 @@ final _expiringBatchesProvider = FutureProvider<List<Map<String, dynamic>>>((ref
   return List<Map<String, dynamic>>.from(data);
 });
 
+final _allProductsCacheProvider = FutureProvider<Map<String, Map<String, dynamic>>>((ref) async {
+  ref.watch(resolvedStoreIdProvider); // re-run when auth/store is ready
+  try {
+    final products = await api.getProducts();
+    return {for (final p in products) p['id'] as String: p};
+  } catch (_) {
+    return {};
+  }
+});
+
+// Pasillos derivados de la caché de productos (no query directa a Supabase)
+final _storePassillosProvider = FutureProvider<List<String>>((ref) async {
+  final cache = await ref.watch(_allProductsCacheProvider.future);
+  if (cache.isEmpty) return ['1', '2', '3', '4', '5'];
+  final pasillos = cache.values
+      .map((p) => p['pasillo']?.toString() ?? '')
+      .where((p) => p.isNotEmpty)
+      .toSet()
+      .toList()
+    ..sort();
+  return pasillos.isEmpty ? ['1', '2', '3', '4', '5'] : pasillos;
+});
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
+
+// Nombres reales de los pasillos del Super Martínez
+const _pasilloNames = {
+  '1': 'Panadería',
+  '2': 'Lácteos',
+  '3': 'Carnicería',
+  '4': 'Pescadería',
+  '5': 'Frutas y Verduras',
+};
+
+String _pasilloLabel(String? pasillo) {
+  if (pasillo == null || pasillo == '?') return 'Sin ubicación';
+  return _pasilloNames[pasillo] ?? 'Pasillo $pasillo';
+}
+
+// Enriquece un lote con datos de producto desde el caché si el join falló
+Map<String, dynamic> _enrichBatch(
+    Map<String, dynamic> b, Map<String, Map<String, dynamic>> cache) {
+  if (b['products'] != null) return b;
+  final pid = b['product_id'] as String?;
+  if (pid != null && cache.containsKey(pid)) {
+    return Map<String, dynamic>.from(b)..['products'] = cache[pid];
+  }
+  return b;
+}
 
 int _daysLeft(String expiry) {
   try {
@@ -127,6 +180,8 @@ class _MapScreenState extends ConsumerState<MapScreen>
   Widget build(BuildContext context) {
     final batchesAsync = ref.watch(_expiringBatchesProvider);
     final liveActionsAsync = ref.watch(_liveActionsMapProvider);
+    // Caché de productos como respaldo cuando el join de Supabase falla por RLS
+    final productsCache = ref.watch(_allProductsCacheProvider).valueOrNull ?? {};
 
     // Badge de críticos en tiempo real en el AppBar
     final criticalCount = liveActionsAsync.when(
@@ -135,11 +190,17 @@ class _MapScreenState extends ConsumerState<MapScreen>
       error: (_, __) => 0,
     );
 
+    final role = ref.watch(userRoleProvider).valueOrNull ?? UserRole.staff;
+    final isManager = role.index >= UserRole.manager.index;
+    final mapImageUrl = ref.watch(mapImageUrlProvider).valueOrNull;
+    final storeDisplayName = ref.watch(resolvedStoreNameProvider);
+    final pasillos = ref.watch(_storePassillosProvider).valueOrNull ?? ['1','2','3','4','5'];
+
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
       appBar: AppBar(
         title: Row(mainAxisSize: MainAxisSize.min, children: [
-          const Text('Mapa de tienda'),
+          Text(storeDisplayName),
           if (criticalCount > 0) ...[
             const SizedBox(width: 8),
             Container(
@@ -154,11 +215,30 @@ class _MapScreenState extends ConsumerState<MapScreen>
           ],
         ]),
         actions: [
+          TextButton(
+            onPressed: () => ref.read(languageProvider.notifier).toggle(),
+            child: Text(ref.watch(languageProvider) == 'es' ? 'EN' : 'ES',
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
+          ),
+          if (isManager)
+            IconButton(
+              icon: const Icon(Icons.upload_file_outlined),
+              tooltip: 'Subir plano de tienda',
+              onPressed: () => _uploadFloorPlan(context, ref),
+            ),
+          if (mapImageUrl != null)
+            IconButton(
+              icon: const Icon(Icons.map_outlined),
+              tooltip: 'Ver plano subido',
+              onPressed: () => _showFloorPlanImage(context, mapImageUrl),
+            ),
           IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: 'Actualizar',
             onPressed: () {
               ref.invalidate(_expiringBatchesProvider);
+              ref.invalidate(_allProductsCacheProvider);
+              ref.invalidate(_storePassillosProvider);
               setState(() => _selectedPasillo = null);
             },
           ),
@@ -192,7 +272,12 @@ class _MapScreenState extends ConsumerState<MapScreen>
             ],
           ),
         ),
-        data: (batches) {
+        data: (rawBatches) {
+          // Enriquecer lotes con producto desde caché si el join devolvió null
+          final batches = rawBatches
+              .map((b) => _enrichBatch(b, productsCache))
+              .toList();
+
           if (_pendingPasillo != null) {
             final pasillo = _pendingPasillo!;
             _pendingPasillo = null;
@@ -211,7 +296,9 @@ class _MapScreenState extends ConsumerState<MapScreen>
                   children: [
                     _StorePlan(
                       batches: batches,
+                      pasillos: pasillos,
                       selectedPasillo: _selectedPasillo,
+                      mapImageUrl: mapImageUrl,
                       onSelectPasillo: (p) {
                         setState(() => _selectedPasillo = p);
                         final items = _batchesForPasillo(batches, p);
@@ -239,13 +326,73 @@ class _MapScreenState extends ConsumerState<MapScreen>
   void _showPasilloDetail(BuildContext context, String pasillo, List<Map<String, dynamic>> items) {
     showPasilloDetail(context, pasillo, items);
   }
+
+  Future<void> _uploadFloorPlan(BuildContext context, WidgetRef ref) async {
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      withData: true,
+    );
+    if (picked == null || picked.files.isEmpty) return;
+    final file = picked.files.first;
+    if (file.bytes == null) return;
+
+    final sid = ref.read(resolvedStoreIdProvider);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Subiendo plano…'), duration: Duration(seconds: 2)),
+    );
+    try {
+      final path = '$sid/floor-plan.${file.extension ?? 'jpg'}';
+      // Eliminar versión anterior si existe, luego subir
+      try { await supabase.storage.from('store-maps').remove([path]); } catch (_) {}
+      await supabase.storage.from('store-maps').uploadBinary(path, file.bytes!);
+      final url = supabase.storage.from('store-maps').getPublicUrl(path);
+      await saveMapImageUrl(sid, url);
+      ref.invalidate(mapImageUrlProvider);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Plano subido correctamente'), backgroundColor: Color(0xFF059669)),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error subiendo plano: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  void _showFloorPlanImage(BuildContext context, String url) {
+    showDialog(
+      context: context,
+      builder: (_) => Dialog(
+        backgroundColor: Colors.transparent,
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: Image.network(url, fit: BoxFit.contain, errorBuilder: (_, __, ___) =>
+              const Padding(padding: EdgeInsets.all(32), child: Text('No se pudo cargar la imagen', style: TextStyle(color: Colors.white)))),
+          ),
+          const SizedBox(height: 12),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cerrar', style: TextStyle(color: Colors.white)),
+          ),
+        ]),
+      ),
+    );
+  }
 }
 
 List<Map<String, dynamic>> _batchesForPasillo(
     List<Map<String, dynamic>> batches, String pasillo) {
   return batches.where((b) {
     final product = b['products'] as Map<String, dynamic>?;
-    return (product?['pasillo'] as String? ?? '?') == pasillo;
+    final p = (product?['pasillo'] as String?)?.isNotEmpty == true
+        ? product!['pasillo'] as String
+        : 'Sin ubicación';
+    return p == pasillo;
   }).toList();
 }
 
@@ -356,328 +503,322 @@ class _KpiChip extends StatelessWidget {
 }
 
 // ── Plano visual del supermercado ─────────────────────────────────────────────
+// Layout: plano real del Super Martínez. Cada sección = un pasillo con datos reales.
+//
+//  ┌──────────────────────────────────────────┐
+//  │   ALMACÉN (banda superior)               │
+//  ├──────────────┬───────────────────────────┤
+//  │ P3 Carnicería│ P4 Pescadería             │
+//  ├──────────────┼───────────────────────────┤
+//  │ P1 Panadería │ P2 Lácteos               │
+//  ├──────────────┴───────────────────────────┤
+//  │      P5 Frutas y Verduras (perimetral)   │
+//  ├──────────────────────────────────────────┤
+//  │ 🛒 Caja 1 │ 🛒 Caja 2 │ 🛒 Caja 3     │
+//  ├──────────────────────────────────────────┤
+//  │          🚪 ENTRADA / SALIDA             │
+//  └──────────────────────────────────────────┘
 
 class _StorePlan extends StatelessWidget {
   final List<Map<String, dynamic>> batches;
+  final List<String> pasillos;
   final String? selectedPasillo;
+  final String? mapImageUrl;
   final void Function(String) onSelectPasillo;
   const _StorePlan({
     required this.batches,
+    required this.pasillos,
     required this.selectedPasillo,
     required this.onSelectPasillo,
+    this.mapImageUrl,
   });
 
   Map<String, List<Map<String, dynamic>>> _groupByPasillo() {
     final map = <String, List<Map<String, dynamic>>>{};
     for (final b in batches) {
       final product = b['products'] as Map<String, dynamic>?;
-      final pasillo = product?['pasillo'] as String? ?? '?';
-      map.putIfAbsent(pasillo, () => []).add(b);
+      final p = (product?['pasillo'] as String?)?.isNotEmpty == true
+          ? product!['pasillo'] as String
+          : 'Sin ubicación';
+      map.putIfAbsent(p, () => []).add(b);
     }
-    return Map.fromEntries(
-      map.entries.toList()..sort((a, b) => a.key.compareTo(b.key)),
-    );
+    return map;
   }
 
-  Color _pasilloUrgencyColor(List<Map<String, dynamic>> items) {
-    int minDays = 999;
+  int _minDays(List<Map<String, dynamic>> items) {
+    int min = 999;
     for (final b in items) {
       final d = _daysLeft(b['expiry_date'] ?? '');
-      if (d < minDays) minDays = d;
+      if (d < min) min = d;
     }
-    return _urgencyColor(minDays);
+    return min;
   }
 
   @override
   Widget build(BuildContext context) {
     final grouped = _groupByPasillo();
-    final pasillos = grouped.keys.toList()..sort();
+
+    const tileIcons = {
+      '1': Icons.breakfast_dining,
+      '2': Icons.local_drink_outlined,
+      '3': Icons.set_meal,
+      '4': Icons.set_meal_outlined,
+      '5': Icons.eco,
+    };
+
+    // Layout fijo de supermercado: fondo → frente
+    const planRows = [
+      ['3', '4'],  // Carnicería / Pescadería — zona fría al fondo
+      ['1', '2'],  // Panadería / Lácteos — zona central
+      ['5'],       // Frutas y Verduras — perimetral, junto a entrada
+    ];
+
+    Widget sectionTile(String pasillo) {
+      final items = grouped[pasillo] ?? [];
+      final minD = _minDays(items);
+      final color = items.isEmpty ? const Color(0xFFCBD5E1) : _urgencyColor(minD);
+      final isSelected = pasillo == selectedPasillo;
+
+      return Expanded(
+        child: GestureDetector(
+          onTap: () => onSelectPasillo(pasillo),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            margin: const EdgeInsets.all(3),
+            decoration: BoxDecoration(
+              color: isSelected ? color.withValues(alpha: 0.22) : color.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: color.withValues(alpha: isSelected ? 1.0 : 0.55),
+                width: isSelected ? 2.5 : 1.5,
+              ),
+              boxShadow: isSelected ? [BoxShadow(color: color.withValues(alpha: 0.3), blurRadius: 6, offset: const Offset(0, 2))] : null,
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(tileIcons[pasillo] ?? Icons.shopping_basket, color: color, size: 22),
+                  const SizedBox(height: 6),
+                  Text(
+                    _pasilloLabel(pasillo),
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: color, height: 1.2),
+                  ),
+                  const SizedBox(height: 4),
+                  if (items.isEmpty)
+                    Text('Sin stock', style: TextStyle(fontSize: 9, color: Colors.grey[400]))
+                  else ...[
+                    Text('${items.length} prod.',
+                        style: const TextStyle(fontSize: 9, color: Colors.grey)),
+                    const SizedBox(height: 3),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(4)),
+                      child: Text(_urgencyLabel(minD),
+                          style: const TextStyle(fontSize: 9, color: Colors.white, fontWeight: FontWeight.w700)),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    // Build rows using fixed layout order, skip rows with no pasillos available
+    List<Widget> buildPlanRows() {
+      final rows = <Widget>[];
+      for (final rowKeys in planRows) {
+        final visible = rowKeys.where((p) => pasillos.contains(p)).toList();
+        if (visible.isEmpty) continue;
+        rows.add(Row(children: visible.map(sectionTile).toList()));
+      }
+      // Extra pasillos not in the fixed layout
+      final extraPasillos = pasillos.where((p) => !['1','2','3','4','5'].contains(p)).toList();
+      for (int i = 0; i < extraPasillos.length; i += 2) {
+        if (i + 1 >= extraPasillos.length) {
+          rows.add(Row(children: [sectionTile(extraPasillos[i])]));
+        } else {
+          rows.add(Row(children: [sectionTile(extraPasillos[i]), sectionTile(extraPasillos[i + 1])]));
+        }
+      }
+      return rows;
+    }
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(12),
       child: Column(
         children: [
-          // Store floor plan
           Container(
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: const Color(0xFFF8F9FA),
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: const Color(0xFFE5E7EB)),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.06),
-                  blurRadius: 12,
-                  offset: const Offset(0, 4),
-                ),
-              ],
+              border: Border.all(color: const Color(0xFFD1D5DB), width: 1.5),
+              boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.08), blurRadius: 14, offset: const Offset(0, 4))],
             ),
             child: Column(
               children: [
-                // Store header bar
+                // Header — nombre tienda
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
                   decoration: const BoxDecoration(
-                    color: Color(0xFF04503C),
-                    borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+                    color: Color(0xFF065F46),
+                    borderRadius: BorderRadius.vertical(top: Radius.circular(15)),
                   ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.store, color: Colors.white, size: 16),
-                      const SizedBox(width: 8),
-                      Text(storeName.toUpperCase(),
-                          style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w800,
-                              fontSize: 14,
-                              letterSpacing: 1.2)),
-                      const Spacer(),
-                      const Text('Plano interactivo',
-                          style: TextStyle(color: Colors.white60, fontSize: 11)),
-                    ],
-                  ),
+                  child: Row(children: [
+                    const Icon(Icons.store_rounded, color: Colors.white, size: 16),
+                    const SizedBox(width: 8),
+                    Text(storeName.toUpperCase(),
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 13, letterSpacing: 1.2)),
+                    const Spacer(),
+                    const Text('Toca un pasillo', style: TextStyle(color: Colors.white54, fontSize: 10)),
+                  ]),
                 ),
-                // Perimeter fresh sections
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-                  child: Row(
-                    children: [
-                      _PerimeterSection(label: 'Frutas y\nVerduras', icon: Icons.eco, color: const Color(0xFF22C55E)),
-                      const SizedBox(width: 8),
-                      _PerimeterSection(label: 'Panadería\nFresca', icon: Icons.breakfast_dining, color: const Color(0xFFF59E0B)),
-                      const SizedBox(width: 8),
-                      _PerimeterSection(label: 'Carnicería\nPescadería', icon: Icons.set_meal, color: const Color(0xFFEF4444)),
-                      const SizedBox(width: 8),
-                      _PerimeterSection(label: 'Lácteos\nFríos', icon: Icons.local_drink, color: const Color(0xFF3B82F6)),
-                    ],
-                  ),
-                ),
-                // Aisle divider label
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  child: Row(
-                    children: [
-                      const Expanded(child: Divider()),
-                      const SizedBox(width: 8),
-                      Text('PASILLOS INTERIORES',
-                          style: TextStyle(fontSize: 10, color: Colors.grey[500], letterSpacing: 0.8)),
-                      const SizedBox(width: 8),
-                      const Expanded(child: Divider()),
-                    ],
-                  ),
-                ),
-                // Aisles grid
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: pasillos.isEmpty
-                      ? Container(
-                          height: 120,
-                          alignment: Alignment.center,
-                          child: const Text(
-                            'Sin urgencias en los próximos 7 días',
-                            style: TextStyle(color: Colors.grey, fontSize: 13),
-                          ),
-                        )
-                      : _AisleGrid(
-                          pasillos: pasillos,
-                          grouped: grouped,
-                          selectedPasillo: selectedPasillo,
-                          pasilloColor: _pasilloUrgencyColor,
-                          onSelectPasillo: onSelectPasillo,
-                        ),
-                ),
-                // Checkout zone
-                const SizedBox(height: 8),
+                // Almacén banner
                 Container(
-                  margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                  padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 16),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF1F5F9),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                    color: const Color(0xFF374151),
+                    border: Border(bottom: BorderSide(color: Colors.black.withValues(alpha: 0.15), width: 1)),
                   ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: List.generate(4, (i) => Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 6),
-                      child: Column(
-                        children: [
-                          const Icon(Icons.shopping_cart_checkout, size: 16, color: Colors.grey),
-                          Text('Caja ${i + 1}',
-                              style: const TextStyle(fontSize: 9, color: Colors.grey)),
-                        ],
+                  child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    Icon(Icons.warehouse_outlined, color: Colors.white54, size: 13),
+                    SizedBox(width: 6),
+                    Text('ALMACÉN / RECEPCIÓN', style: TextStyle(fontSize: 10, color: Colors.white54, letterSpacing: 1.0, fontWeight: FontWeight.w600)),
+                  ]),
+                ),
+                // Plano subido por el encargado (si existe)
+                if (mapImageUrl != null)
+                  GestureDetector(
+                    onTap: () {
+                      showDialog(
+                        context: context,
+                        builder: (_) => Dialog(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              AppBar(
+                                title: const Text('Plano de la tienda'),
+                                automaticallyImplyLeading: false,
+                                actions: [IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(context))],
+                              ),
+                              Image.network(mapImageUrl!, fit: BoxFit.contain),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                    child: Container(
+                      width: double.infinity,
+                      margin: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+                      height: 100,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: const Color(0xFFD1D5DB)),
+                        image: DecorationImage(image: NetworkImage(mapImageUrl!), fit: BoxFit.cover),
                       ),
+                      child: Align(
+                        alignment: Alignment.bottomRight,
+                        child: Container(
+                          margin: const EdgeInsets.all(6),
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(6)),
+                          child: const Text('Ver plano completo', style: TextStyle(color: Colors.white, fontSize: 10)),
+                        ),
+                      ),
+                    ),
+                  ),
+                // Pasillos en layout fijo fondo→frente
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(6, 8, 6, 4),
+                  child: Column(children: buildPlanRows()),
+                ),
+                // Separador
+                Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 8),
+                  height: 1,
+                  color: const Color(0xFFE5E7EB),
+                ),
+                // Cajas
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: List.generate(4, (i) => Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(color: const Color(0xFFE2E8F0), borderRadius: BorderRadius.circular(6)),
+                          child: const Icon(Icons.shopping_cart_checkout, size: 16, color: Color(0xFF64748B)),
+                        ),
+                        const SizedBox(height: 2),
+                        Text('Caja ${i + 1}', style: const TextStyle(fontSize: 9, color: Color(0xFF94A3B8), fontWeight: FontWeight.w600)),
+                      ],
                     )),
                   ),
                 ),
-                // Entrance
+                // Entrada
                 Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  padding: const EdgeInsets.symmetric(vertical: 10),
                   decoration: const BoxDecoration(
-                    color: Color(0xFF04503C),
-                    borderRadius: BorderRadius.vertical(bottom: Radius.circular(16)),
+                    color: Color(0xFF065F46),
+                    borderRadius: BorderRadius.vertical(bottom: Radius.circular(15)),
                   ),
-                  child: const Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.sensor_door, color: Colors.white70, size: 16),
-                      SizedBox(width: 6),
-                      Text('ENTRADA / SALIDA',
-                          style: TextStyle(
-                              color: Colors.white70,
-                              fontSize: 11,
-                              letterSpacing: 1.0)),
-                    ],
-                  ),
+                  child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    Icon(Icons.sensor_door_outlined, color: Colors.white, size: 18),
+                    SizedBox(width: 8),
+                    Text('ENTRADA / SALIDA', style: TextStyle(color: Colors.white, fontSize: 12, letterSpacing: 1.2, fontWeight: FontWeight.w700)),
+                  ]),
                 ),
               ],
             ),
           ),
           const SizedBox(height: 12),
-          // Legend
           _Legend(),
           const SizedBox(height: 8),
-          // Tap hint
-          if (pasillos.isNotEmpty)
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.touch_app, size: 14, color: Colors.grey[400]),
-                const SizedBox(width: 4),
-                Text(
-                  'Toca un pasillo para ver el detalle y el QR',
-                  style: TextStyle(fontSize: 11, color: Colors.grey[400]),
-                ),
-              ],
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _PerimeterSection extends StatelessWidget {
-  final String label;
-  final IconData icon;
-  final Color color;
-  const _PerimeterSection({required this.label, required this.icon, required this.color});
-
-  @override
-  Widget build(BuildContext context) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.08),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: color.withValues(alpha: 0.2)),
-        ),
-        child: Column(
-          children: [
-            Icon(icon, color: color, size: 18),
-            const SizedBox(height: 4),
-            Text(label,
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 9, color: color, fontWeight: FontWeight.w600)),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _AisleGrid extends StatelessWidget {
-  final List<String> pasillos;
-  final Map<String, List<Map<String, dynamic>>> grouped;
-  final String? selectedPasillo;
-  final Color Function(List<Map<String, dynamic>>) pasilloColor;
-  final void Function(String) onSelectPasillo;
-  const _AisleGrid({
-    required this.pasillos,
-    required this.grouped,
-    required this.selectedPasillo,
-    required this.pasilloColor,
-    required this.onSelectPasillo,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (ctx, constraints) {
-        final cols = constraints.maxWidth >= 400 ? 3 : 2;
-        final w = (constraints.maxWidth - 8.0 * (cols - 1)) / cols;
-        return Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: pasillos.map((pasillo) {
-            final items = grouped[pasillo]!;
-            final color = pasilloColor(items);
-            final isSelected = pasillo == selectedPasillo;
-            // Worst urgency in pasillo
-            int minDays = 999;
-            for (final b in items) {
-              final d = _daysLeft(b['expiry_date'] ?? '');
-              if (d < minDays) minDays = d;
-            }
-
+          // Resumen por pasillo — dinámico según la tienda
+          ...pasillos.map((p) {
+            final items = grouped[p] ?? [];
+            if (items.isEmpty) return const SizedBox.shrink();
+            final minD = _minDays(items);
+            final color = _urgencyColor(minD);
             return GestureDetector(
-              onTap: () => onSelectPasillo(pasillo),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                width: w,
-                padding: const EdgeInsets.all(10),
+              onTap: () => onSelectPasillo(p),
+              child: Container(
+                margin: const EdgeInsets.only(bottom: 6),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 decoration: BoxDecoration(
-                  color: isSelected ? color.withValues(alpha: 0.2) : color.withValues(alpha: 0.08),
+                  color: Colors.white,
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color: color.withValues(alpha: isSelected ? 0.9 : 0.35),
-                    width: isSelected ? 2.5 : 1.5,
+                  border: Border.all(color: color.withValues(alpha: 0.3)),
+                ),
+                child: Row(children: [
+                  Container(width: 4, height: 32, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(2))),
+                  const SizedBox(width: 10),
+                  Expanded(child: Text(_pasilloLabel(p), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600))),
+                  Text('${items.length} prod.', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                    decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(6)),
+                    child: Text(_urgencyLabel(minD), style: const TextStyle(fontSize: 10, color: Colors.white, fontWeight: FontWeight.w700)),
                   ),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Container(
-                          width: 10,
-                          height: 10,
-                          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-                        ),
-                        const SizedBox(width: 5),
-                        Expanded(
-                          child: Text(
-                            'Pasillo $pasillo',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                              color: color,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${items.length} prod.',
-                      style: const TextStyle(fontSize: 10, color: Colors.grey),
-                    ),
-                    Text(
-                      _urgencyLabel(minDays),
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
-                        color: color,
-                      ),
-                    ),
-                  ],
-                ),
+                  const SizedBox(width: 6),
+                  Icon(Icons.chevron_right, size: 16, color: Colors.grey[400]),
+                ]),
               ),
             );
-          }).toList(),
-        );
-      },
+          }),
+        ],
+      ),
     );
   }
 }
@@ -716,7 +857,7 @@ class _PasilloGrid extends StatelessWidget {
     final map = <String, List<Map<String, dynamic>>>{};
     for (final b in batches) {
       final product = b['products'] as Map<String, dynamic>?;
-      final pasillo = product?['pasillo'] as String? ?? '?';
+      final pasillo = (product?['pasillo'] as String?)?.isNotEmpty == true ? product!['pasillo'] as String : 'Sin ubicación';
       map.putIfAbsent(pasillo, () => []).add(b);
     }
     return Map.fromEntries(
@@ -822,7 +963,7 @@ class _PasilloGrid extends StatelessWidget {
                               const SizedBox(width: 6),
                               Expanded(
                                 child: Text(
-                                  'Pasillo ${entry.key}',
+                                  _pasilloLabel(entry.key),
                                   style: TextStyle(
                                     fontSize: 15,
                                     fontWeight: FontWeight.w700,
@@ -875,7 +1016,7 @@ class _PasilloGrid extends StatelessWidget {
       context: context,
       builder: (_) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text('QR Pasillo $pasillo',
+        title: Text('QR — ${_pasilloLabel(pasillo)}',
             style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 18),
             textAlign: TextAlign.center),
         content: Column(
@@ -958,7 +1099,7 @@ void showPasilloDetail(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Pasillo $pasillo',
+                        _pasilloLabel(pasillo),
                         style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
                       ),
                       Text(
@@ -998,8 +1139,8 @@ void showPasilloDetail(
               final product = b['products'] as Map<String, dynamic>?;
               final name = product?['name'] as String? ?? 'Producto';
               final category = product?['category'] as String? ?? '';
-              final est = product?['estanteria'] as String? ?? '?';
-              final niv = product?['nivel'] as String? ?? '?';
+              final est = product?['estanteria'] as String?;
+              final niv = product?['nivel'] as String?;
               final expiry = b['expiry_date'] as String? ?? '';
               final qty = b['quantity'] as int? ?? 0;
               final price = (product?['price'] as num?)?.toDouble() ?? 0.0;
@@ -1043,7 +1184,7 @@ void showPasilloDetail(
                                 style: const TextStyle(
                                     fontWeight: FontWeight.w600, fontSize: 14)),
                             Text(
-                              'E$est · N$niv  ·  $qty uds  ·  ${val.toStringAsFixed(2)} €',
+                              '${est != null ? 'E$est · ' : ''}${niv != null ? 'N$niv · ' : ''}$qty uds · ${val.toStringAsFixed(2)} €',
                               style: const TextStyle(fontSize: 11, color: Colors.grey),
                             ),
                             if (category.isNotEmpty)
@@ -1113,22 +1254,59 @@ class _FefoList extends StatelessWidget {
     }
     return ListView.builder(
       padding: const EdgeInsets.all(12),
-      itemCount: batches.length + 1,
+      itemCount: batches.length + 2,
       itemBuilder: (context, index) {
         if (index == 0) {
+          return Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFEFF6FF),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFFBFDBFE)),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.info_outline, color: Color(0xFF3B82F6), size: 18),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('¿Qué es FEFO?',
+                          style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF1D4ED8))),
+                      SizedBox(height: 3),
+                      Text(
+                        'First Expired, First Out — primero en caducar, primero en salir. '
+                        'El sistema ordena los productos por fecha de caducidad para que el '
+                        'empleado sepa exactamente qué colocar al frente del lineal hoy.',
+                        style: TextStyle(fontSize: 12, color: Color(0xFF1E40AF), height: 1.4),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+        if (index == 1) {
           return Padding(
             padding: const EdgeInsets.only(bottom: 8),
             child: Text(
-              '${batches.length} productos · ordenados por caducidad (FEFO)',
+              '${batches.length} productos · ordenados por fecha de caducidad',
               style: const TextStyle(fontSize: 12, color: Colors.grey),
             ),
           );
         }
-        final b = batches[index - 1];
+        final b = batches[index - 2];
         final product = b['products'] as Map<String, dynamic>?;
         final name = product?['name'] as String? ?? 'Producto';
         final category = product?['category'] as String? ?? '';
-        final pasillo = product?['pasillo'] as String? ?? '?';
+        final pasillo = (product?['pasillo'] as String?)?.isNotEmpty == true ? product!['pasillo'] as String : 'Sin ubicación';
         final expiry = b['expiry_date'] as String? ?? '';
         final qty = b['quantity'] as int? ?? 0;
         final price = (product?['price'] as num?)?.toDouble() ?? 0.0;

@@ -14,6 +14,18 @@ def _e(text) -> str:
     return html.escape(str(text))
 
 
+_PASILLO_NAMES = {
+    "1": "🍞 Panadería", "2": "🥛 Lácteos", "3": "🥩 Carnicería",
+    "4": "🐟 Pescadería", "5": "🥦 Frutas y Verduras",
+}
+
+
+def _pasillo_label(p: str | None) -> str:
+    if not p or p == "?":
+        return "Sin ubicación"
+    return _PASILLO_NAMES.get(str(p), f"Pasillo {p}")
+
+
 def _semaforo_emoji(semaforo: str) -> str:
     s = semaforo.upper()
     if "ROJO" in s or "ALERTA" in s:
@@ -143,7 +155,7 @@ def format_actions(pending: list[dict]) -> str:
             cat_str = f"  <i>{_e(categoria)}</i>" if categoria else ""
             lines.append(
                 f"• <b>{_e(name)}</b>{cat_str}\n"
-                f"  📍 Pasillo {_e(str(pasillo))}  ·  📅 Caduca: {days_s}  ·  {qty} uds ({val:.2f} €)\n"
+                f"  📍 {_e(_pasillo_label(pasillo))}  ·  📅 Caduca: {days_s}  ·  {qty} uds ({val:.2f} €)\n"
                 f"  ➜ <b>{_e(action_type)}</b>  <code>Score: {score}/100</code>"
             )
             if notes:
@@ -166,7 +178,7 @@ def format_actions(pending: list[dict]) -> str:
             qty = b.get("quantity") or 0
             days_s = _days_str(exp)
             lines.append(
-                f"• <b>{_e(name)}</b>  ·  P.{_e(str(pasillo))}  ·  {days_s}  ·  {qty} uds\n"
+                f"• <b>{_e(name)}</b>  ·  {_e(_pasillo_label(pasillo))}  ·  {days_s}  ·  {qty} uds\n"
                 f"  ➜ {_e(action_type)}  <code>{score}/100</code>"
             )
         lines.append("")
@@ -183,7 +195,7 @@ def format_actions(pending: list[dict]) -> str:
             pasillo = p.get("pasillo", "?")
             exp = b.get("expiry_date", "")
             days_s = _days_str(exp)
-            lines.append(f"• {_e(name)}  ·  P.{_e(str(pasillo))}  ·  {days_s}")
+            lines.append(f"• {_e(name)}  ·  {_e(_pasillo_label(pasillo))}  ·  {days_s}")
         lines.append("")
 
     if len(pending) > 12:
@@ -464,7 +476,7 @@ def format_estado(
             days_s = _days_str(exp)
             qty = b.get("quantity") or 0
             lines.append(
-                f"• <b>{_e(p.get('name', 'Producto'))}</b>  P.{_e(str(p.get('pasillo', '?')))}\n"
+                f"• <b>{_e(p.get('name', 'Producto'))}</b>  {_e(_pasillo_label(p.get('pasillo')))}\n"
                 f"  📅 {days_s}  ·  {qty} uds  ·  ➜ {_e(at)}"
             )
     if alto and len(critical) == 0:
@@ -473,6 +485,6 @@ def format_estado(
             b = a.get("batches") or {}
             p = (b.get("products") or {}) if b else {}
             at = (a.get("action_type") or "").upper()
-            lines.append(f"• <b>{_e(p.get('name', 'Producto'))}</b>  P.{_e(str(p.get('pasillo', '?')))}  ➜ {_e(at)}")
+            lines.append(f"• <b>{_e(p.get('name', 'Producto'))}</b>  {_e(_pasillo_label(p.get('pasillo')))}  ➜ {_e(at)}")
     lines += ["", "<i>Actualizado ahora · Kuine analiza el inventario cada 2h</i>"]
     return "\n".join(lines)

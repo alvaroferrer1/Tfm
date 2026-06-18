@@ -1,197 +1,174 @@
 # CLAUDE.md — Memoria del proyecto MermaOps
 
-> Este archivo es la fuente de verdad para futuras sesiones de Claude Code.
-> Actualizar cuando cambie la arquitectura, el estado de los agentes o las fases.
+> Fuente de verdad para futuras sesiones. Actualizar cuando cambie la arquitectura.
+> Última actualización: junio 2026 — sistema completo, 774/774 tests, demo-ready.
 
 ---
 
-## Identidad del sistema
+## Identidad
 
 **MermaOps** — sistema multi-agente de IA para reducción de merma en supermercados españoles.
 
-- Backend: FastAPI + Python 3.14, puerto **8001** (8000 bloqueado por Manager.exe en el PC del usuario)
+- Backend: FastAPI + Python 3.14, puerto **8001** (8000 bloqueado por Manager.exe)
 - Base de datos: Supabase (PostgreSQL + Auth + Realtime)
-- Interfaz principal: Telegram AI Agent @ChuwiMermaOpsBot
-- App móvil: Flutter (Android/iOS)
-- Tests: 800/800 en < 3s (sin conexión real a Supabase)
+- Telegram: @ChuwiMermaOpsBot — agente real con 30+ comandos
+- App móvil: Flutter (Android/iOS) — 8 pantallas, Riverpod, Supabase Realtime
+- Tests: **774/774** en < 3s (sin conexión real a Supabase)
 
 ---
 
-## Agentes — estado real (no el README)
+## Reglas de trabajo — NO cambiar sin aviso
+
+1. **NO commits** hasta "sube" o "commit" explícito del usuario
+2. **NO push** hasta "sube a GitHub" explícito
+3. **NO credenciales en código** — todo por `.env`
+4. **NO desperdiciar tokens Claude API** — solo en pruebas y demo real
+5. Puerto backend: **8001** (no 8000)
+6. Tests: siempre ≥774/774 tras cualquier cambio
+7. No inventar capacidades — solo lo que está conectado y funciona
+
+---
+
+## Arranque rápido
+
+```bash
+make start          # verifica .env + Supabase + Telegram + arranca en puerto 8001
+make verify         # solo verificar sin arrancar
+make check          # diagnóstico completo (con backend corriendo)
+python -m pytest backend/tests/ -q   # 774/774 tests
+```
+
+---
+
+## Agentes — 12 activos
 
 | Agente | Archivo | Modelo | Estado |
 |--------|---------|--------|--------|
-| **Kuine** (orquestador) | `backend/agents/supervisor.py` | Opus 4.7 (brief) / Sonnet 4.6 (scans) | activo — loop real, 16 tools, hasta 20 iter |
-| **Chuwi** (Telegram) | `backend/core/chuwi.py` | Sonnet 4.6 | activo — agente real, streaming, 6 iter |
-| **Evaluador** | `backend/agents/evaluator.py` | Sonnet 4.6 | activo — score 0-100, extended thinking >=65 |
-| **ForkMerge** | `backend/agents/fork_merge.py` | Sonnet 4.6 ×3 + Opus 4.7 síntesis | activo — fork-merge para valor>50€ o caducado |
+| **Kuine** (orquestador) | `backend/agents/supervisor.py` | Opus 4.7/Sonnet 4.6 | activo — loop real, 16 tools, hasta 20 iter |
+| **Chuwi** (Telegram) | `backend/core/chuwi.py` | Sonnet 4.6 | activo — agente real, streaming |
+| **Evaluador** | `backend/agents/evaluator.py` | Sonnet 4.6 | activo — score 0-100, extended thinking ≥65 |
+| **ForkMerge** | `backend/agents/fork_merge.py` | Sonnet 4.6×3 + Opus síntesis | activo — valor>50€ o caducado |
 | **Validador** | `backend/agents/validator.py` | Sonnet 4.6 | activo — 23 ataques adversariales, 100% |
-| **Consenso** | `backend/agents/consensus.py` | Sonnet 4.6 | activo — 3 instancias paralelas score >=90 |
+| **Consenso** | `backend/agents/consensus.py` | Sonnet 4.6 | activo — 3 instancias paralelas |
 | **Predictor** | `backend/agents/predictor.py` | Haiku 4.5 | activo — Open-Meteo + historial |
-| **Visión** | `backend/agents/vision.py` | claude-haiku-4-5-20251001 | activo — análisis de fotos |
-| **Precio** | `backend/agents/price.py` | heurístico (sin LLM) | activo — cálculo descuentos |
-| **Stock** | `backend/agents/stock.py` | heurístico (sin LLM) | activo — decisiones reposición FEFO |
-| **Notificador** | `backend/agents/notifier.py` | python-telegram-bot | activo — alertas proactivas |
+| **Visión** | `backend/agents/vision.py` | Haiku 4.5 | activo — análisis de fotos |
+| **Precio** | `backend/agents/price.py` | heurístico | activo — cálculo descuentos |
+| **Stock** | `backend/agents/stock.py` | heurístico | activo — FEFO |
+| **Notificador** | `backend/agents/notifier.py` | python-telegram-bot | activo — alertas proactivas horario 8-21h |
 | **Reportero** | `backend/agents/reporter.py` | Sonnet 4.6 | activo — briefs y resúmenes |
 
 ---
 
-## Arquitectura de datos — tablas Supabase
+## Archivos clave — backend
 
-### Tablas operativas (existían antes de Fase 1)
+```
+backend/core/chuwi.py              — núcleo Telegram: handlers, callbacks, _ACTION_MAP, _format_brief_html
+backend/core/chuwi_commands.py     — comandos /mapa /historial /merma7 /estado /criticos /ayuda + _run_cmd_from_action
+backend/core/telegram_formatter.py — plantillas HTML visuales para todos los mensajes de Chuwi
+backend/core/chuwi_persistence.py  — estado, historial, caché usuario, Supabase
+backend/core/chuwi_intent.py       — clasificador 0-token, 10 intents
+backend/core/scheduler.py          — 15 trabajos cron: brief 7:30, check 12:00, cierre 20:00, monitor 30min
+backend/core/pdf_generator.py      — 6 tipos de PDF con fpdf2 (brief, semanal, mensual, TFM, pitch, promo)
+backend/agents/supervisor.py       — Kuine: run_daily_brief, run_intraday_check, run_closing
+backend/agents/notifier.py         — alertas Telegram: en horario 8-21h nunca silencia
+backend/api/routes.py              — todos los endpoints REST
+```
 
-- `stores`, `users`, `products`, `batches`, `warehouse_stock`
-- `actions` — acciones pendientes/completadas
-- `merma_log` — se escribe al llamar `complete_action()` (fix Fase 1)
-- `daily_briefs`, `weekly_reports`, `monthly_reports`
-- `agent_runs`, `agent_memory` (key-value episódica)
-- `knowledge_base` (RAG, VECTOR 1536)
-- `suppliers`, `supplier_merma`, `donations`, `store_comparison`
+## Archivos clave — Flutter
 
-### Tablas nuevas (Fase 1 — APLICADAS en Supabase via CLI)
-
-- `agent_conversations` — sesiones de chat Chuwi-usuario
-- `agent_messages` — cada mensaje con `tools_used` (JSONB), `intent_tag`, `agent_source`
-- `agent_sessions` — tracking de sesiones con contadores de tools y llamadas a Kuine
-- `telegram_users` — registro de TODOS los usuarios (vinculados y no vinculados)
-
-Migración: `supabase/migrations/20260519000001_agent_foundations.sql`
-
----
-
-## Flujo de persistencia de conversaciones (Fase 1+2)
-
-```text
-Usuario → Telegram → handle_message()
-    ↓
-_upsert_telegram_user()              ← registra en telegram_users (vinculado o no)
-    ↓
-if not user → bloqueo + mensaje      ← NO ejecuta Chuwi si no está vinculado
-    ↓
-_classify_intent(text)               ← Fase 2: 0 tokens, 10 intents, keyword-based
-_build_intent_context(intent)        ← contexto pre-cargado según intención
-    ↓
-_get_chat_history(chat_key)          ← Supabase agent_memory (fallback JSON)
-    ↓
-_run_agent_loop() → (response, tools_used)   ← devuelve tupla
-    ↓
-_persist_chat_history()              ← sigue en agent_memory (historial compacto)
-    ↓
-_persist_conversation_message()      ← agent_conversations + agent_messages
-    ├─ crea/recupera conversation_id (cache en _conv_id_cache)
-    ├─ log mensaje usuario (role=user, intent_tag)
-    ├─ log respuesta Chuwi (role=assistant, tools_used, intent_tag)
-    ├─ si "analyze_product" en tools: log Kuine (role=system)
-    └─ fallback silencioso si Supabase no disponible
+```
+app/lib/features/dashboard/dashboard_screen.dart  — KPIs streaming, shimmer, donut chart, área chart
+app/lib/features/actions/actions_screen.dart       — FEFO, rol-based (staff/manager), swipe, export/import CSV
+app/lib/features/map/map_screen.dart               — mapa interactivo pasillos, FEFO tab, QR por pasillo
+app/lib/features/scan/scan_screen.dart             — barcode + foto IA (Vision agent)
+app/lib/features/agents/agents_screen.dart         — 4 tabs: agentes, conversaciones, runs Kuine, decisiones
+app/lib/core/api_service.dart                      — todos los métodos HTTP incluyendo export/import CSV
+app/lib/core/user_role_provider.dart               — UserRole enum: staff/manager/admin
+app/lib/features/actions/actions_provider.dart     — pendingActionsStreamProvider (asyncMap Realtime)
 ```
 
 ---
 
-## Reglas de trabajo (NO cambiar sin aviso)
+## Chuwi — comandos registrados
 
-1. **NO commits** hasta que el usuario diga explícitamente "sube" o "commit"
-2. **NO push a GitHub** hasta "sube a GitHub" explícito
-3. Cuando se autorice commit: `mejora: convertir Telegram y agentes en sistema operativo real`
-4. **NO credenciales en código** — todo por `.env` con `os.getenv()`
-5. **NO desperdiciar tokens Claude API** — solo en pruebas y demo real
-6. Puerto backend: **8001** (no 8000)
-7. Tests: deben seguir >=800/800 después de cada cambio
-8. No inventar capacidades — solo implementar lo que está conectado
+**Comandos públicos (sin login):** `/start`, `/yo`, `/menu`, `/estado`, `/ayuda`, `/agentes`, `/kuine`
 
----
+**Comandos operativos:** `/acciones`, `/criticos`, `/ruta`, `/brief`, `/hoy`, `/scan`, `/merma`, `/donaciones`, `/prediccion`, `/stats`, `/mapa`, `/historial`, `/merma7`
 
-## Fases de implementación
+**Comandos de simulación/demo:** `/simular` (panel con 5 botones: 07:30, 12:00, 20:00, alerta proactiva, escalación)
 
-### Fase 1 — COMPLETADA + APLICADA EN SUPABASE
+**Comandos manager:** `/proveedores`, `/pedido`, `/esg`, `/citar`, `/costes`, `/reflexiones`, `/informe`, `/semana`, `/demo`
 
-- Tablas `agent_conversations`, `agent_messages`, `agent_sessions`, `telegram_users` en Supabase
-- Migración aplicada vía Supabase CLI
-- `complete_action()` escribe en `merma_log` automáticamente
-- `_run_agent_loop()` devuelve tupla `(str, list[str])`
-- `_persist_conversation_message()` persiste en Supabase con fallback
-- Log Chuwi-Kuine en `agent_messages` con `agent_source="kuine"`
-- `_upsert_telegram_user()` registra todos los usuarios
-- `scripts/check_all.py` + `make check` para diagnóstico
-- `docs/runbook.md` con guía completa de arranque
-- 800/800 tests
+**Callbacks clave en `_ACTION_MAP`:** `brief`, `stats`, `acciones`, `ruta`, `merma`, `donaciones`, `proveedores`, `pedido`, `runbrief`, `sistema`, `simular`, `scan_help`, `ayuda`, `tour`, `mapa`, `historial`, `merma7`, `donar_flow`, `esg`, `prediccion`, `citar`
 
-### Fase 2 — COMPLETADA — Chuwi intent classification
-
-- `_classify_intent(text)` — clasificador sin LLM, 0 tokens, 10 intents
-- `_build_intent_context(intent, store_id)` — contexto pre-cargado según intent
-- `_run_agent_loop()` acepta `intent_tag` e `intent_context`
-- `handle_message()` clasifica antes de llamar al loop
-- `agent_messages.intent_tag` guardado en cada turno
-
-### Fase 6 — COMPLETADA — Endpoints backend
-
-- `GET /api/v1/agent/conversations`
-- `GET /api/v1/agent/conversations/{id}/messages`
-- `GET /api/v1/agent/sessions`
-- `GET /api/v1/agent/activity`
-- `GET /api/v1/agent/status`
-- `GET /api/v1/telegram/status`
-
-### Fase 3 — Kuine supervisor trace — COMPLETADA
-
-- `agent_runs` extendida con tools\_used/count/duration\_ms/trigger\_source
-- `supervisor_decisions` tabla con cada decisión de Kuine (rebajar/donar/retirar...)
-- `run_daily_brief()` mide duración, guarda trace completo, obtiene run\_id
-- `create_action` en executor llama `log_supervisor_decision()` automáticamente
-- Endpoints: `GET /api/v1/agent/runs`, `GET /api/v1/agent/decisions`
-
-### Fase 4 — Clasificación de agentes — COMPLETADA
-
-- `/api/v1/agent/status` devuelve los 12 agentes con modelo, tipo y descripción real
-- `check_all.py` verifica imports y función principal de cada agente
-
-### Fase 5 — Flutter pantalla de actividad — COMPLETADA
-
-- `app/lib/features/agents/agents_screen.dart` — 4 tabs
-- Wired en `router.dart` como `/agents` y en `shell_scaffold.dart` como 6º nav item
-- API methods en `api_service.dart`: getAgentStatus, getAgentActivity, getAgentConversations, getAgentRuns, getSupervisorDecisions, getTelegramStatus
-
-### Fase 7 — Documentación viva (PENDIENTE)
-
-Solo falta: architecture.md, agents.md, api.md, demo-checklist.md. runbook.md ya existe.
-
-### Fase 8 — Calidad y defensa TFM (PENDIENTE)
+### Formato visual Telegram
+- `_format_brief_html(text)` en chuwi.py — convierte salida LLM a HTML visual con cabecera fija + secciones
+- `telegram_formatter.py` — `format_actions`, `format_stats`, `format_merma`, `format_donaciones`, `format_proveedores`, `format_pedido`, `format_estado`
+- `_pasillo_label()` en telegram_formatter.py — convierte número a nombre real, "Sin ubicación" si null
+- `_PASILLO_NAMES`: `{"1":"🍞 Panadería","2":"🥛 Lácteos","3":"🥩 Carnicería","4":"🐟 Pescadería","5":"🥦 Frutas y Verduras"}`
 
 ---
 
-## Arranque rápido — UN SOLO COMANDO
+## Scheduler — 15 trabajos cron
 
-```bash
-# Verifica .env + Supabase + Telegram + arranca backend + imprime guía completa
-make start
-# o equivalente:
-python scripts/start.py
+| Hora | Job | Función |
+|------|-----|---------|
+| 07:00 | Predicción | `_run_prediction` — Open-Meteo + historial |
+| 07:28 | Morning greeting | `_morning_greeting` — saludo proactivo |
+| 07:30 | Brief diario | `supervisor.run_daily_brief` — Kuine completo |
+| 12:00 | Check mediodía | `supervisor.run_intraday_check` |
+| 16:00 | Reflexión | `_retrospective_reflection` |
+| 20:00 | Cierre | `supervisor.run_closing` |
+| Lunes 06:00 | Semanal | `supervisor.run_weekly_report` |
+| Día 1 08:00 | Mensual | `supervisor.run_monthly_report` |
+| Cada 2h 8-20h | Escalación | `_escalate_critical_actions` (score≥85 sin resolver >4h) |
+| Cada 30min 8-21h | Monitor | `_proactive_monitor` — botones donación en Telegram |
+| Cada 15min 8-20h | SLA check | `_check_sla_violations` |
+| Cada 30min 8-21h | Spike | `_auto_brief_on_spike` |
+| Cada 30min 8-21h | Triggers | `_evaluate_intent_triggers` |
+| 21:30 | Anomalías | `_detect_inventory_anomalies` |
+| 9/13/18h | Health | `_run_health_check` |
 
-# Solo verificar sin arrancar
-make verify
+**Notifier quiet hours:** solo silencia 21:00-08:00. En horario 8-21h nunca silencia.
 
-# Diagnóstico completo (con backend ya corriendo)
-make check
+---
 
-# Tests
-python -m pytest backend/tests/ -q
+## Endpoints REST — principales
+
+```
+GET  /api/v1/dashboard              — KPIs en tiempo real
+GET  /api/v1/actions                — acciones pendientes
+POST /api/v1/actions/{id}/complete  — marcar completada (escribe merma_log)
+GET  /api/v1/export/actions         — CSV acciones completadas 30d
+GET  /api/v1/export/batches         — CSV lotes activos
+POST /api/v1/import/batches         — importar CSV desde TPV
+GET  /api/v1/agent/status           — estado 12 agentes
+GET  /api/v1/agent/conversations    — sesiones Chuwi
+GET  /api/v1/agent/runs             — runs Kuine
+GET  /api/v1/agent/decisions        — decisiones Kuine
+GET  /api/v1/reports/brief/pdf      — PDF brief diario
+GET  /api/v1/reports/weekly/pdf     — PDF informe semanal
+GET  /api/v1/telegram/status        — estado bot Telegram
 ```
 
-## Sesiones integradas en Chuwi
+---
 
-Chuwi crea/actualiza `agent_sessions` en Supabase en cada turno:
+## Flutter — features implementadas
 
-- `_session_cache[user_id]` → `session_id` (en memoria del proceso)
-- Al primer mensaje de un usuario: `create_agent_session()`
-- En cada turno: `increment_session_stats(tools_called, kuine_calls)`
-- Las sesiones son visibles en `/api/v1/agent/sessions` y en la pantalla Agentes de Flutter
+- **Dashboard:** KPIs streaming realtime, shimmer loading, donut urgencia, área chart merma 7d, impact card donaciones
+- **Acciones:** swipe to complete (manager) / bloqueado (staff), donación con deducción fiscal 35%, import CSV TPV, **export CSV** (share_plus), rol-based con `userRoleProvider`
+- **Mapa:** plano interactivo por pasillos, tab FEFO ordenado, tab Pasillos grid, QR por pasillo deeplink, "Sin ubicación" cuando pasillo es null
+- **Scan:** barcode + foto, Vision agent (Haiku), carga visual con CircularProgress
+- **Agentes:** 4 tabs (estado 12 agentes, conversaciones, runs Kuine, decisiones)
+- **Caché de productos:** `_allProductsCacheProvider` (map) + `_actionProductsCacheProvider` (actions) — fallback cuando join Supabase falla por RLS
 
-## Flutter — pantalla Agentes
+---
 
-- Ruta: `/agents` → `AgentsScreen`
-- Tab en bottom nav: icono `psychology` (6º elemento)
-- 4 tabs: estado de los 12 agentes, conversaciones Chuwi, runs Kuine, decisiones Kuine
-- Accessible desde el nav bar principal
+## Tablas Supabase
+
+**Operativas:** `stores`, `users`, `products`, `batches`, `warehouse_stock`, `actions`, `merma_log`, `daily_briefs`, `weekly_reports`, `monthly_reports`, `agent_runs`, `agent_memory`, `knowledge_base`, `suppliers`, `supplier_merma`, `donations`, `store_comparison`
+
+**Fase 1 (migradas):** `agent_conversations`, `agent_messages`, `agent_sessions`, `telegram_users`
 
 ---
 
@@ -200,21 +177,9 @@ Chuwi crea/actualiza `agent_sessions` en Supabase en cada turno:
 ```bash
 ANTHROPIC_API_KEY=sk-ant-...
 SUPABASE_URL=https://XXXX.supabase.co
-SUPABASE_KEY=sb_secret_...
-SUPABASE_SERVICE_KEY=sb_secret_...
+SUPABASE_KEY=sb_anon_...
+SUPABASE_SERVICE_KEY=sb_service_...
 TELEGRAM_BOT_TOKEN=123456:ABC...
 STORE_ID=demo-store-001
 APP_PORT=8001
-```
-
----
-
-## SQL de verificación post-migración (Supabase SQL Editor)
-
-```sql
-SELECT table_name FROM information_schema.tables
-WHERE table_schema = 'public'
-  AND table_name IN ('agent_conversations','agent_messages','agent_sessions','telegram_users')
-ORDER BY table_name;
--- Debe devolver 4 filas
 ```

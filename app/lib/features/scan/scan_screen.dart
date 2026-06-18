@@ -6,10 +6,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
-// Haptic feedback importado via flutter/services.dart (HapticFeedback)
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/api_service.dart';
 import '../../core/error_widget.dart';
+import '../../core/l10n.dart';
 import '../../core/supabase_client.dart';
 import '../../core/theme.dart';
 
@@ -20,9 +21,45 @@ final _cameraErrorProvider = StateProvider<String?>((ref) => null);
 final _scanDataProvider = StateProvider<Map<String, dynamic>?>((ref) => null);
 
 // ── Batch scan mode ───────────────────────────────────────────────────────────
-// Escanea múltiples productos seguidos y muestra todos los resultados en lista.
 final _batchModeProvider = StateProvider<bool>((ref) => false);
 final _batchResultsProvider = StateProvider<List<Map<String, dynamic>>>((ref) => []);
+
+// ── Historial de escaneos (persiste en SharedPreferences / localStorage web) ──
+const _historyKey = 'scan_history_v1';
+const _historyMax = 20;
+
+class _HistoryNotifier extends StateNotifier<List<Map<String, dynamic>>> {
+  _HistoryNotifier() : super([]) { _load(); }
+
+  Future<void> _load() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getStringList(_historyKey) ?? [];
+      state = raw.map((s) => Map<String, dynamic>.from(jsonDecode(s) as Map)).toList();
+    } catch (_) {}
+  }
+
+  Future<void> add(Map<String, dynamic> entry) async {
+    final updated = [entry, ...state].take(_historyMax).toList();
+    state = updated;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(_historyKey, updated.map(jsonEncode).toList());
+    } catch (_) {}
+  }
+
+  Future<void> clear() async {
+    state = [];
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_historyKey);
+    } catch (_) {}
+  }
+}
+
+final scanHistoryProvider = StateNotifierProvider<_HistoryNotifier, List<Map<String, dynamic>>>(
+  (_) => _HistoryNotifier(),
+);
 
 class ScanScreen extends ConsumerStatefulWidget {
   const ScanScreen({super.key});
@@ -92,6 +129,16 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
       final result = response['result'] as String? ?? 'Sin respuesta del servidor.';
       ref.read(_scanResultProvider.notifier).state = result;
       ref.read(_scanDataProvider.notifier).state = response;
+
+      // Guardar en historial
+      ref.read(scanHistoryProvider.notifier).add({
+        'type': 'barcode',
+        'barcode': barcode,
+        'product_name': response['product_name'] ?? barcode,
+        'action_type': response['final_action'] ?? response['action_type'] ?? '',
+        'priority_score': response['priority_score'] ?? 0,
+        'ts': DateTime.now().toIso8601String(),
+      });
 
       // Haptic: resultado recibido — urgencia por tipo
       final score = response['priority_score'] as int? ?? 0;
@@ -175,9 +222,58 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
     ref.read(_scanDataProvider.notifier).state = null;
     try {
       final response = await api.scan(barcode);
-      ref.read(_scanResultProvider.notifier).state =
-          response['result'] as String? ?? 'Sin respuesta del servidor.';
+      final result = response['result'] as String? ?? 'Sin respuesta del servidor.';
+      ref.read(_scanResultProvider.notifier).state = result;
       ref.read(_scanDataProvider.notifier).state = response;
+      ref.read(scanHistoryProvider.notifier).add({
+        'type': 'barcode',
+        'barcode': barcode,
+        'product_name': response['product_name'] ?? barcode,
+        'action_type': response['final_action'] ?? response['action_type'] ?? '',
+        'priority_score': response['priority_score'] ?? 0,
+        'ts': DateTime.now().toIso8601String(),
+      });
+    } catch (e) {
+      ref.read(_scanResultProvider.notifier).state = friendlyError(e);
+    } finally {
+      ref.read(_scanLoadingProvider.notifier).state = false;
+    }
+  }
+
+  Future<void> _analyzeShelf() async {
+    if (ref.read(_scanLoadingProvider)) return;
+    final picker = ImagePicker();
+    final picked = await picker.pickImage(
+      source: kIsWeb ? ImageSource.gallery : ImageSource.camera,
+      maxWidth: 1600,
+      imageQuality: 85,
+    );
+    if (picked == null) return;
+
+    ref.read(_scanLoadingProvider.notifier).state = true;
+    ref.read(_scanResultProvider.notifier).state = null;
+    ref.read(_lastBarcodeProvider.notifier).state = '🗂️ Pasillo';
+    _controller?.stop();
+    setState(() => _cameraActive = false);
+
+    try {
+      final bytes = await picked.readAsBytes();
+      final base64Image = base64Encode(bytes);
+      final result = await api.analyzeShelf(imageBase64: base64Image);
+      final productos = result['productos'] as List? ?? [];
+      final total = result['total'] as int? ?? productos.length;
+      final urgentes = result['urgentes'] as int? ?? 0;
+      final sb = StringBuffer();
+      sb.writeln('Análisis de pasillo — $total productos detectados, $urgentes urgentes\n');
+      for (final p in productos) {
+        final nombre = p['nombre'] as String? ?? 'Producto';
+        final accion = (p['accion'] as String? ?? 'revisar').toUpperCase();
+        final urgencia = p['urgencia'] as String? ?? '';
+        final estado = p['estado'] as String? ?? '';
+        final mark = urgencia == 'inmediata' ? '🔴' : urgencia == 'hoy' ? '🟡' : '🟢';
+        sb.writeln('$mark $nombre → $accion ($estado)');
+      }
+      ref.read(_scanResultProvider.notifier).state = sb.toString().trim();
     } catch (e) {
       ref.read(_scanResultProvider.notifier).state = friendlyError(e);
     } finally {
@@ -217,6 +313,15 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
       if (razon.isNotEmpty) sb.writeln('\n$razon');
       if (fechaVisible.isNotEmpty) sb.writeln('\nFecha visible en etiqueta: $fechaVisible');
       ref.read(_scanResultProvider.notifier).state = sb.toString().trim();
+
+      ref.read(scanHistoryProvider.notifier).add({
+        'type': 'photo',
+        'barcode': '📷',
+        'product_name': 'Foto — $estado',
+        'action_type': accion,
+        'priority_score': confianza ?? 0,
+        'ts': DateTime.now().toIso8601String(),
+      });
     } catch (e) {
       ref.read(_scanResultProvider.notifier).state = friendlyError(e);
     } finally {
@@ -283,9 +388,21 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
 
     if (kIsWeb) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Escanear producto')),
+        appBar: AppBar(
+          title: const Text('Escanear producto'),
+          actions: [
+            TextButton(
+              onPressed: () => ref.read(languageProvider.notifier).toggle(),
+              child: Text(ref.watch(languageProvider) == 'es' ? 'EN' : 'ES',
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
+            ),
+          ],
+        ),
         body: _WebBarcodeEntry(
           onAnalyze: _analyzeBarcode,
+          onAnalyzePhoto: () => _analyzePhoto(source: ImageSource.camera),
+          onAnalyzePhotoGallery: () => _analyzePhoto(source: ImageSource.gallery),
+          onAnalyzeShelf: _analyzeShelf,
           result: result,
           loading: loading,
           onReset: () {
@@ -338,6 +455,12 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
               icon: const Icon(Icons.photo_camera_outlined),
               tooltip: 'Analizar foto con IA',
               onPressed: loading ? null : () => _showPhotoOptions(context),
+            ),
+          if (!batchMode)
+            IconButton(
+              icon: const Icon(Icons.view_list_outlined),
+              tooltip: 'Analizar pasillo completo',
+              onPressed: loading ? null : _analyzeShelf,
             ),
           if (!batchMode && (result != null || !_cameraActive || cameraError != null))
             IconButton(
@@ -574,12 +697,18 @@ class _BatchScanBody extends StatelessWidget {
 
 class _WebBarcodeEntry extends StatefulWidget {
   final Future<void> Function(String) onAnalyze;
+  final Future<void> Function()? onAnalyzePhoto;
+  final Future<void> Function()? onAnalyzePhotoGallery;
+  final Future<void> Function()? onAnalyzeShelf;
   final String? result;
   final bool loading;
   final VoidCallback onReset;
 
   const _WebBarcodeEntry({
     required this.onAnalyze,
+    this.onAnalyzePhoto,
+    this.onAnalyzePhotoGallery,
+    this.onAnalyzeShelf,
     required this.result,
     required this.loading,
     required this.onReset,
@@ -606,92 +735,252 @@ class _WebBarcodeEntryState extends State<_WebBarcodeEntry> {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(24),
+    final isLoading = widget.loading;
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 40),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Info banner
-          Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF0FDF4),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFF6EE7B7)),
-            ),
-            child: const Row(
-              children: [
-                Icon(Icons.info_outline, color: Color(0xFF059669), size: 20),
-                SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    'Demo web: introduce el código de barras manualmente. '
-                    'La cámara está disponible en la app móvil.',
-                    style: TextStyle(fontSize: 13, color: Color(0xFF065F46)),
-                  ),
-                ),
-              ],
-            ),
+          // Primary action: camera / food detection
+          _ScanActionCard(
+            icon: Icons.camera_alt_rounded,
+            title: 'Detectar alimento con IA',
+            subtitle: 'Foto con cámara — analiza frescura, daño y caducidad',
+            color: const Color(0xFF059669),
+            loading: isLoading,
+            onTap: widget.onAnalyzePhoto,
           ),
+          const SizedBox(height: 12),
+
+          // Secondary: gallery
+          _ScanActionCard(
+            icon: Icons.photo_library_outlined,
+            title: 'Analizar foto de galería',
+            subtitle: 'Selecciona una imagen ya tomada',
+            color: const Color(0xFF0284C7),
+            loading: isLoading,
+            onTap: widget.onAnalyzePhotoGallery,
+          ),
+          const SizedBox(height: 12),
+
+          // Shelf analysis
+          if (widget.onAnalyzeShelf != null)
+            _ScanActionCard(
+              icon: Icons.view_list_outlined,
+              title: 'Analizar pasillo completo',
+              subtitle: 'Detecta múltiples productos en una sola foto',
+              color: const Color(0xFF7C3AED),
+              loading: isLoading,
+              onTap: widget.onAnalyzeShelf,
+            ),
+
           const SizedBox(height: 24),
 
-          // Barcode input
-          TextField(
-            controller: _ctrl,
-            keyboardType: TextInputType.number,
-            onSubmitted: (_) => _submit(),
-            decoration: InputDecoration(
-              labelText: 'Código de barras EAN',
-              hintText: 'Ej: 8410001000001',
-              prefixIcon: const Icon(Icons.qr_code),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-              suffixIcon: IconButton(
-                icon: const Icon(Icons.clear, size: 18),
-                onPressed: () {
-                  _ctrl.clear();
-                  widget.onReset();
-                },
-              ),
+          // Divider with label
+          Row(children: [
+            const Expanded(child: Divider()),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Text('o introduce código de barras',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
             ),
-          ),
+            const Expanded(child: Divider()),
+          ]),
+
           const SizedBox(height: 16),
 
-          SizedBox(
-            height: 50,
-            child: ElevatedButton.icon(
-              onPressed: widget.loading ? null : _submit,
-              icon: widget.loading
-                  ? const SizedBox(
-                      width: 18, height: 18,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white),
-                    )
-                  : const Icon(Icons.search, size: 20),
-              label: Text(widget.loading ? 'Analizando con Chuwi...' : 'Analizar producto'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF059669),
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10)),
-              ),
-            ),
-          ),
-
-          if (widget.result != null) ...[
-            const SizedBox(height: 24),
+          // Barcode input row
+          Row(children: [
             Expanded(
-              child: _ScanResult(
-                result: widget.result!,
-                onScanAgain: () {
-                  _ctrl.clear();
-                  widget.onReset();
-                },
+              child: TextField(
+                controller: _ctrl,
+                keyboardType: TextInputType.number,
+                onSubmitted: (_) => _submit(),
+                decoration: InputDecoration(
+                  labelText: 'EAN / código de barras',
+                  hintText: '8410001000001',
+                  prefixIcon: const Icon(Icons.qr_code),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                  contentPadding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
+                  suffixIcon: IconButton(
+                    icon: const Icon(Icons.clear, size: 18),
+                    onPressed: () { _ctrl.clear(); widget.onReset(); },
+                  ),
+                ),
               ),
             ),
-          ],
+            const SizedBox(width: 10),
+            SizedBox(
+              height: 54,
+              child: ElevatedButton(
+                onPressed: isLoading ? null : _submit,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF059669),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                ),
+                child: isLoading
+                    ? const SizedBox(width: 18, height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : const Icon(Icons.search, size: 22),
+              ),
+            ),
+          ]),
+
+          const SizedBox(height: 24),
+
+          // Result or history
+          if (widget.result != null)
+            _ScanResult(
+              result: widget.result!,
+              onScanAgain: () { _ctrl.clear(); widget.onReset(); },
+            )
+          else
+            const SizedBox(height: 320, child: _ScanHistoryWidget()),
         ],
       ),
     );
+  }
+}
+
+class _ScanActionCard extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Color color;
+  final bool loading;
+  final VoidCallback? onTap;
+
+  const _ScanActionCard({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.color,
+    required this.loading,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: color.withValues(alpha: 0.07),
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: loading ? null : onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(children: [
+            Container(
+              width: 48, height: 48,
+              decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(12)),
+              child: loading
+                  ? const Center(child: SizedBox(width: 22, height: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)))
+                  : Icon(icon, color: Colors.white, size: 24),
+            ),
+            const SizedBox(width: 14),
+            Expanded(child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: TextStyle(
+                    fontSize: 15, fontWeight: FontWeight.w700, color: color)),
+                const SizedBox(height: 2),
+                Text(subtitle, style: TextStyle(
+                    fontSize: 12, color: Colors.grey.shade600)),
+              ],
+            )),
+            Icon(Icons.chevron_right, color: color.withValues(alpha: 0.5)),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Historial de escaneos ─────────────────────────────────────────────────────
+
+class _ScanHistoryWidget extends ConsumerWidget {
+  const _ScanHistoryWidget();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final history = ref.watch(scanHistoryProvider);
+    if (history.isEmpty) {
+      return const Center(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Icon(Icons.history, size: 40, color: Color(0xFFD1D5DB)),
+          SizedBox(height: 8),
+          Text('Sin escaneos recientes',
+              style: TextStyle(color: Color(0xFF9CA3AF), fontSize: 13)),
+        ]),
+      );
+    }
+    return Column(children: [
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: Row(children: [
+          const Text('Últimos escaneos',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF6B7280))),
+          const Spacer(),
+          TextButton(
+            style: TextButton.styleFrom(
+                padding: EdgeInsets.zero, minimumSize: const Size(40, 24)),
+            onPressed: () => ref.read(scanHistoryProvider.notifier).clear(),
+            child: const Text('Limpiar',
+                style: TextStyle(fontSize: 11, color: Color(0xFF9CA3AF))),
+          ),
+        ]),
+      ),
+      Expanded(
+        child: ListView.separated(
+          padding: EdgeInsets.zero,
+          itemCount: history.length,
+          separatorBuilder: (_, __) => const Divider(height: 1),
+          itemBuilder: (_, i) {
+            final item = history[i];
+            final type = item['type'] as String? ?? 'barcode';
+            final name = item['product_name'] as String? ?? '';
+            final action = (item['action_type'] as String? ?? '').toUpperCase();
+            final score = item['priority_score'] as int? ?? 0;
+            final ts = item['ts'] as String? ?? '';
+            final time = ts.isNotEmpty ? ts.substring(11, 16) : '';
+
+            Color scoreColor = const Color(0xFF059669);
+            if (score >= 85) {
+              scoreColor = const Color(0xFFDC2626);
+            } else if (score >= 65) {
+              scoreColor = const Color(0xFFF59E0B);
+            }
+
+            return ListTile(
+              dense: true,
+              leading: Container(
+                width: 32, height: 32,
+                decoration: BoxDecoration(
+                  color: scoreColor.withValues(alpha: 0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: Center(child: Text(
+                  type == 'photo' ? '📷' : '📦',
+                  style: const TextStyle(fontSize: 14),
+                )),
+              ),
+              title: Text(name,
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                  maxLines: 1, overflow: TextOverflow.ellipsis),
+              subtitle: action.isNotEmpty
+                  ? Text(action,
+                      style: TextStyle(fontSize: 11, color: scoreColor))
+                  : null,
+              trailing: Text(time,
+                  style: const TextStyle(fontSize: 10, color: Color(0xFF9CA3AF))),
+            );
+          },
+        ),
+      ),
+    ]);
   }
 }
 

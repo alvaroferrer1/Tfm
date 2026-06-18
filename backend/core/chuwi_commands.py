@@ -54,6 +54,26 @@ async def _generate_brief_background(bot, chat_id: int) -> None:
     await _gbb(bot, chat_id, user=None)
 
 
+async def _run_cmd_from_action(cmd_fn, update_or_query, context, is_callback: bool) -> None:
+    """Adapta cmd_fn (espera Update) para llamadas desde callbacks o mensajes."""
+    from telegram import CallbackQuery
+    if is_callback and isinstance(update_or_query, CallbackQuery):
+        # Desde callback: crear un pseudo-update con message para que cmd_fn pueda usar update.message
+        class _FakeUpdate:
+            def __init__(self, msg):
+                self.message = msg
+                self.effective_chat = msg.chat
+                self.effective_user = update_or_query.from_user
+        try:
+            await update_or_query.answer()
+        except Exception:
+            pass
+        fake = _FakeUpdate(update_or_query.message)
+        await cmd_fn(fake, context)
+    else:
+        await cmd_fn(update_or_query, context)
+
+
 # ── Texto de presentación de los agentes ─────────────────────────────────────
 
 _AGENTES_TEXT = """🤖 <b>LOS 12 AGENTES DE MERMAOPS</b>
@@ -345,25 +365,57 @@ async def _cmd_estado(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         else:
             semaforo = "🟢 NORMAL"
 
+        _pasillo_names = {
+            "1": "Panadería", "2": "Lácteos", "3": "Carnicería",
+            "4": "Pescadería", "5": "Frutas/Verduras",
+        }
+        resto = len(pending) - len(critical) - len(alto)
+        semaforo_icon = "🔴" if "ALERTA" in semaforo else "🟡" if "ATENCIÓN" in semaforo else "🟢"
+
+        # Barra de urgencia visual
+        bar_criticos = "🟥" * min(len(critical), 8)
+        bar_altos = "🟨" * min(len(alto), 4)
+        bar_ok = "🟩" * min(resto, 4)
+        barra = (bar_criticos + bar_altos + bar_ok) or "⬜"
+
         text = (
-            f"📊 <b>SUPER MARTÍNEZ — Estado actual</b>\n"
-            f"Semáforo: {semaforo}\n\n"
-            f"Acciones pendientes: {len(pending)}\n"
-            f"  🔴 CRÍTICAS: {len(critical)}\n"
-            f"  🟡 ALTAS: {len(alto)}\n"
-            f"  🟢 Resto: {len(pending) - len(critical) - len(alto)}\n\n"
-            f"Lotes próximos a caducar (7d): {len(batches)}\n"
-            f"Valor en riesgo: {total_value:.2f} €\n"
+            f"{semaforo_icon} <b>SUPER MARTÍNEZ</b>  ·  {semaforo}\n"
+            f"<code>{barra}</code>\n\n"
+            f"📋 <b>{len(pending)} acciones pendientes</b>\n"
+            f"   🔴 Críticas · · · <b>{len(critical)}</b>\n"
+            f"   🟡 Altas  · · · · <b>{len(alto)}</b>\n"
+            f"   ✅ Resto  · · · · <b>{resto}</b>\n\n"
+            f"📦 Lotes próximos a caducar (7 días): <b>{len(batches)}</b>\n"
+            f"💶 Valor en riesgo: <b>{total_value:.2f} €</b>\n"
         )
         if brief:
-            text += f"\nÚltimo brief: {brief.get('date', '?')}"
+            text += f"\n📅 Último brief: <code>{brief.get('date', '?')}</code>"
 
         if critical:
-            text += "\n\n━━ CRÍTICOS AHORA ━━"
-            for a in critical[:3]:
+            text += "\n\n🔴 <b>CRÍTICOS — acción inmediata:</b>"
+            for a in critical[:5]:
                 b = (a.get("batches") or {})
                 p = (b.get("products") or {}) if b else {}
-                text += f"\n• {p.get('name', 'Producto')} | Pasillo {p.get('pasillo', '?')} | {a.get('action_type', '?').upper()}"
+                pname = p.get("name") or "Producto"
+                pasillo_num = str(p.get("pasillo") or "?")
+                pasillo_label = _pasillo_names.get(pasillo_num, f"Pasillo {pasillo_num}")
+                atype = (a.get("action_type") or "revisar").upper()
+                score = a.get("priority_score", 0)
+                expiry = b.get("expiry_date", "")
+                days_left = ""
+                if expiry:
+                    try:
+                        from datetime import date
+                        days = (date.fromisoformat(expiry) - date.today()).days
+                        days_left = f" · {'HOY' if days <= 0 else f'{days}d'}"
+                    except Exception:
+                        pass
+                text += (
+                    f"\n┄┄┄\n"
+                    f"<b>{pname}</b>\n"
+                    f"   📍 {pasillo_label}{days_left}\n"
+                    f"   ➜ {atype}  ·  Score {score}/100"
+                )
 
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("📋 Ver todas las acciones", callback_data="cmd:acciones")],
@@ -397,10 +449,11 @@ async def _cmd_criticos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             action_type = (a.get("action_type") or "revisar").upper()
             score = a.get("priority_score", 0)
             notes = (a.get("notes") or "")[:80]
+            _plabel = _PASILLO_NAMES.get(str(p.get('pasillo') or ''), f"Pasillo {p.get('pasillo','?')}") if p.get('pasillo') else 'Sin ubicación'
             lines.append(
                 f"{i}. <b>{p.get('name', 'Producto')}</b>\n"
-                f"   Pasillo {p.get('pasillo', '?')} | Score {score}/100 | {action_type}\n"
-                f"   {notes}"
+                f"   📍 {_plabel} | Score {score}/100 | {action_type}\n"
+                f"   <i>{notes}</i>"
             )
 
         kb = InlineKeyboardMarkup([
@@ -541,6 +594,228 @@ async def _cmd_reflexiones(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         "<i>Se usan automáticamente en el próximo mensaje.</i>"
     )
     await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=_back_keyboard())
+
+
+_PASILLO_NAMES = {
+    "1": "🍞 Panadería", "2": "🥛 Lácteos", "3": "🥩 Carnicería",
+    "4": "🐟 Pescadería", "5": "🥦 Frutas y Verduras",
+}
+
+
+async def _cmd_mapa(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Mapa visual del supermercado — muestra pasillos con productos y urgencia."""
+    loop = asyncio.get_running_loop()
+    msg = await update.message.reply_text("🗺 Cargando mapa del supermercado...")
+    try:
+        batches = await loop.run_in_executor(
+            None, database.get_batches_expiring_soon, STORE_ID, 14
+        )
+        pending = await loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
+        actions_by_batch = {a.get("batch_id"): a for a in pending}
+
+        by_pasillo: dict[str, list] = {}
+        for b in batches:
+            product = b.get("products") or {}
+            pasillo = str(product.get("pasillo") or "?")
+            by_pasillo.setdefault(pasillo, []).append(b)
+
+        if not by_pasillo:
+            await msg.edit_text(
+                "🗺 <b>MAPA SUPER MARTÍNEZ</b>\n\nNo hay productos próximos a caducar. ✅",
+                parse_mode=ParseMode.HTML, reply_markup=_back_keyboard(),
+            )
+            return
+
+        from datetime import date as _date
+        today = _date.today()
+        lines = ["🗺 <b>MAPA SUPER MARTÍNEZ</b>\n"]
+        total_valor = 0.0
+
+        for pasillo in sorted(by_pasillo.keys(), key=lambda x: (x == "?", x)):
+            label = _PASILLO_NAMES.get(pasillo, f"Pasillo {pasillo}")
+            items = sorted(by_pasillo[pasillo], key=lambda b: b.get("expiry_date") or "9999")
+            lines.append(f"\n📍 <b>{label}</b>")
+            for b in items:
+                p = b.get("products") or {}
+                name = (p.get("name") or "Producto")[:30]
+                qty = b.get("quantity") or 0
+                exp = b.get("expiry_date") or "?"
+                est = p.get("estanteria") or "?"
+                niv = p.get("nivel") or "?"
+                price = float(p.get("price") or 0)
+                valor = round(qty * price, 2)
+                total_valor += valor
+                try:
+                    days = (_date.fromisoformat(exp) - today).days
+                    days_txt = "HOY" if days <= 0 else f"{days}d"
+                except Exception:
+                    days_txt = "?"
+
+                action = actions_by_batch.get(b.get("id"))
+                if action:
+                    atype = (action.get("action_type") or "revisar").upper()
+                    score = action.get("priority_score") or 0
+                    icon = "🔴" if score >= 85 else "🟡" if score >= 65 else "🟢"
+                    badge = f" → <b>{atype}</b>"
+                else:
+                    _days_num = days if days_txt not in ("HOY", "?") else 0
+                    icon = "🔴" if _days_num <= 1 else ("🟡" if _days_num <= 3 else "🟢")
+                    badge = ""
+                lines.append(
+                    f"  {icon} <b>{html.escape(name)}</b> E{est}-N{niv}"
+                    f" · {qty} uds · caduca {html.escape(days_txt)}{badge}"
+                )
+
+        lines.append(f"\n💶 Valor total en riesgo: <b>{total_valor:.2f} €</b>")
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⚡ Ver acciones", callback_data="cmd:acciones"),
+             InlineKeyboardButton("🗺 Ruta del día", callback_data="cmd:ruta")],
+            [InlineKeyboardButton("↩ Menú", callback_data="cmd:menu")],
+        ])
+        await msg.edit_text("\n".join(lines), parse_mode=ParseMode.HTML, reply_markup=kb)
+    except Exception as e:
+        await msg.edit_text(f"❌ Error cargando mapa: {str(e)[:100]}", reply_markup=_back_keyboard())
+
+
+async def _cmd_historial(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Historial de acciones completadas — últimos 30 días."""
+    loop = asyncio.get_running_loop()
+    msg = await update.message.reply_text("📋 Cargando historial...")
+    try:
+        from datetime import datetime, timezone as _tz
+        cutoff = (datetime.now(_tz.utc).replace(tzinfo=None) - __import__("datetime").timedelta(days=30)).isoformat()
+        data = await loop.run_in_executor(None, lambda: (
+            database.get_db().table("actions")
+            .select("*, batches(*, products(*))")
+            .eq("store_id", STORE_ID)
+            .eq("status", "completed")
+            .gte("completed_at", cutoff)
+            .order("completed_at", desc=True)
+            .limit(40)
+            .execute()
+        ).data or [])
+
+        if not data:
+            await msg.edit_text(
+                "📋 <b>HISTORIAL DE ACCIONES</b>\n\nNo hay acciones completadas en los últimos 30 días.",
+                parse_mode=ParseMode.HTML, reply_markup=_back_keyboard(),
+            )
+            return
+
+        by_day: dict[str, list] = {}
+        for a in data:
+            completed_at = a.get("completed_at") or ""
+            try:
+                day = completed_at[:10]
+            except Exception:
+                day = "?"
+            by_day.setdefault(day, []).append(a)
+
+        lines = [f"📋 <b>HISTORIAL — últimos 30 días</b> ({len(data)} acciones)\n"]
+        _atype_icons = {"rebajar": "🏷", "retirar": "🗑", "donar": "❤️", "reponer": "📦", "revisar": "🔍"}
+        for day in list(by_day.keys())[:7]:
+            try:
+                from datetime import date as _d
+                d = _d.fromisoformat(day)
+                day_label = f"{d.day} {d.strftime('%b')}"
+            except Exception:
+                day_label = day
+            lines.append(f"\n📅 <b>{day_label}</b>")
+            for a in by_day[day][:5]:
+                b = a.get("batches") or {}
+                p = (b.get("products") or {}) if b else {}
+                name = (p.get("name") or "Producto")[:28]
+                atype = a.get("action_type") or "?"
+                icon = _atype_icons.get(atype, "✅")
+                by_who = (a.get("completed_by") or "?").split("@")[0]
+                lines.append(f"  {icon} <b>{html.escape(name)}</b> · {atype.upper()} · {by_who}")
+
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⚡ Pendientes ahora", callback_data="cmd:acciones")],
+            [InlineKeyboardButton("↩ Menú", callback_data="cmd:menu")],
+        ])
+        await msg.edit_text("\n".join(lines), parse_mode=ParseMode.HTML, reply_markup=kb)
+    except Exception as e:
+        await msg.edit_text(f"❌ Error: {str(e)[:100]}", reply_markup=_back_keyboard())
+
+
+async def _cmd_merma7(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Simulación de merma si no se actúa — proyección 7 días."""
+    loop = asyncio.get_running_loop()
+    msg = await update.message.reply_text("📊 Calculando proyección de merma 7 días...")
+    try:
+        from datetime import date as _d, timedelta as _td
+        today = _d.today()
+
+        batches = await loop.run_in_executor(
+            None, database.get_batches_expiring_soon, STORE_ID, 7
+        )
+        pending = await loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
+        merma_hist = await loop.run_in_executor(None, database.get_merma_history, STORE_ID, 7)
+        merma_real = sum(float(l.get("value_lost", 0)) for l in merma_hist)
+
+        by_day: dict[str, list] = {}
+        total_proj = 0.0
+        for b in batches:
+            exp = b.get("expiry_date")
+            if not exp:
+                continue
+            try:
+                days_left = (_d.fromisoformat(exp) - today).days
+            except Exception:
+                continue
+            qty = b.get("quantity") or 0
+            p = b.get("products") or {}
+            price = float(p.get("price") or 0)
+            cost = float(p.get("cost") or 0)
+            valor = round(qty * cost, 2)
+            total_proj += valor
+            day_key = exp
+            by_day.setdefault(day_key, []).append({
+                "name": p.get("name") or "Producto",
+                "qty": qty, "valor": valor, "days_left": days_left,
+                "pasillo": str(p.get("pasillo") or "?"),
+            })
+
+        actions_val = sum(
+            (a.get("batches") or {}).get("quantity", 0) *
+            float(((a.get("batches") or {}).get("products") or {}).get("cost", 0) or 0)
+            for a in pending
+        )
+        ahorro_potencial = round(actions_val * 0.75, 2)
+
+        lines = [
+            "📊 <b>PROYECCIÓN MERMA 7 DÍAS</b>",
+            f"<i>Si no se actúa sobre los productos en riesgo</i>\n",
+            f"💶 Merma proyectada: <b>{total_proj:.2f} €</b>",
+            f"💶 Merma real última semana: {merma_real:.2f} €",
+            f"✅ Ahorro potencial si se actúa: <b>{ahorro_potencial:.2f} €</b>",
+            f"⚡ Acciones pendientes: {len(pending)}\n",
+        ]
+
+        for day_key in sorted(by_day.keys())[:7]:
+            try:
+                d = _d.fromisoformat(day_key)
+                days_left = (d - today).days
+                label = "HOY" if days_left <= 0 else f"en {days_left}d ({d.day}/{d.month:02d})"
+            except Exception:
+                label = day_key
+            items = by_day[day_key]
+            total_day = sum(i["valor"] for i in items)
+            icon = "🔴" if (lambda x: x <= 1)(days_left) else ("🟡" if days_left <= 3 else "🟢")
+            lines.append(f"{icon} <b>Caduca {label}</b> · {total_day:.2f} €")
+            for item in items[:3]:
+                _pasillo_label = _PASILLO_NAMES.get(item["pasillo"], f"P{item['pasillo']}")
+                lines.append(f"   • {html.escape(item['name'][:28])} · {item['qty']} uds · {item['valor']:.2f}€")
+
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⚡ Ver acciones pendientes", callback_data="cmd:acciones")],
+            [InlineKeyboardButton("🔮 Predicción con clima", callback_data="cmd:prediccion")],
+            [InlineKeyboardButton("↩ Menú", callback_data="cmd:menu")],
+        ])
+        await msg.edit_text("\n".join(lines), parse_mode=ParseMode.HTML, reply_markup=kb)
+    except Exception as e:
+        await msg.edit_text(f"❌ Error: {str(e)[:100]}", reply_markup=_back_keyboard())
 
 
 # ── PDF helpers ───────────────────────────────────────────────────────────────

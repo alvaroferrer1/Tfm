@@ -3,6 +3,7 @@ Endpoints REST — usados por la app Flutter y por Chuwi para acciones en BD.
 """
 import logging
 import os
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request, UploadFile, File, Query
 from pydantic import BaseModel
 
@@ -154,6 +155,92 @@ def complete_action(body: CompleteActionRequest, _auth: dict = Depends(verify_to
         raise HTTPException(status_code=500, detail="Error interno del servidor. Inténtalo de nuevo.")
 
 
+# ── Proposals (staff propone, manager aprueba) ───────────────────────────────
+
+@router.post("/actions/{action_id}/propose")
+def propose_action(action_id: str, body: dict, auth: dict = Depends(verify_token)):
+    """Staff propone un tipo de acción. Marca como in_progress para revisión del encargado."""
+    proposed_type = body.get("action_type", "")
+    reason = body.get("reason", "")
+    proposed_by = auth.get("email") or auth.get("sub", "staff")
+    if not proposed_type:
+        raise HTTPException(status_code=400, detail="action_type requerido")
+    try:
+        db = database.get_db()
+        row = db.table("actions").select("store_id,notes").eq("id", action_id).maybe_single().execute()
+        if not row.data:
+            raise HTTPException(status_code=404, detail="Acción no encontrada")
+        proposal_note = f"[PROPUESTA de {proposed_by}: {proposed_type.upper()}" + (f" — {reason}" if reason else "") + "]"
+        db.table("actions").update({
+            "status": "in_progress",
+            "completed_by": proposed_by,
+            "notes": proposal_note,
+        }).eq("id", action_id).execute()
+        return {"ok": True, "proposal": proposal_note}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"propose_action error: {e}")
+        raise HTTPException(status_code=500, detail="Error interno")
+
+
+@router.post("/actions/{action_id}/approve")
+def approve_action(action_id: str, body: dict, auth: dict = Depends(verify_token)):
+    """Encargado aprueba o decide sobre una propuesta. Completa la acción."""
+    final_type = body.get("action_type")
+    manager_notes = body.get("notes", "")
+    approved_by = auth.get("email") or auth.get("sub", "manager")
+    try:
+        db = database.get_db()
+        row = db.table("actions").select("store_id,action_type,notes").eq("id", action_id).maybe_single().execute()
+        if not row.data:
+            raise HTTPException(status_code=404, detail="Acción no encontrada")
+        update: dict = {
+            "status": "completed",
+            "completed_by": approved_by,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "notes": manager_notes or row.data.get("notes", ""),
+        }
+        if final_type:
+            update["action_type"] = final_type
+        db.table("actions").update(update).eq("id", action_id).execute()
+        return {"ok": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"approve_action error: {e}")
+        raise HTTPException(status_code=500, detail="Error interno")
+
+
+@router.post("/actions/{action_id}/reject")
+def reject_action(action_id: str, body: dict, auth: dict = Depends(verify_token)):
+    """Encargado rechaza propuesta — la acción vuelve a pendiente."""
+    reason = body.get("reason", "Propuesta rechazada por el encargado")
+    try:
+        db = database.get_db()
+        db.table("actions").update({
+            "status": "pending",
+            "completed_by": None,
+            "notes": reason,
+        }).eq("id", action_id).execute()
+        return {"ok": True}
+    except Exception as e:
+        logger.error(f"reject_action error: {e}")
+        raise HTTPException(status_code=500, detail="Error interno")
+
+
+@router.get("/actions/proposals")
+def get_proposals(_auth: dict = Depends(verify_token)):
+    """Acciones propuestas por staff pendientes de revisión del encargado."""
+    try:
+        db = database.get_db()
+        rows = db.table("actions").select("*, batches(*, products(*))").eq("store_id", STORE_ID).eq("status", "in_progress").order("priority_score", desc=True).execute()
+        return {"proposals": rows.data or []}
+    except Exception as e:
+        logger.error(f"get_proposals error: {e}")
+        raise HTTPException(status_code=500, detail="Error interno")
+
+
 # ── Products ──────────────────────────────────────────────────────────────────
 
 @router.get("/products/expiring")
@@ -164,6 +251,16 @@ def get_expiring(days: int = Query(default=7, ge=1, le=365), _auth: dict = Depen
     except Exception as e:
         logger.error(f"API error: {e}")
         raise HTTPException(status_code=500, detail="Error interno del servidor. Inténtalo de nuevo.")
+
+
+@router.get("/products")
+def get_products(_auth: dict = Depends(verify_token)):
+    """Todos los productos de la tienda (bypassa RLS via service key)."""
+    try:
+        return database.get_all_products(STORE_ID)
+    except Exception as e:
+        logger.error(f"Error: {e}")
+        raise HTTPException(status_code=500, detail="Error interno del servidor.")
 
 
 # ── Reports ───────────────────────────────────────────────────────────────────
@@ -674,6 +771,48 @@ def scan_vision(request: Request, body: VisionAnalysisRequest, _auth: dict = Dep
     except Exception as e:
         logger.error(f"Vision scan error: {e}")
         raise HTTPException(status_code=500, detail="Error interno del servidor. Inténtalo de nuevo.")
+
+
+# ── Análisis visual de pasillo completo ───────────────────────────────────────
+
+class ShelfAnalysisRequest(BaseModel):
+    image_base64: str
+    pasillo: str = ""
+    media_type: str = "image/jpeg"
+
+    def validated_media_type(self) -> str:
+        allowed = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+        return self.media_type if self.media_type in allowed else "image/jpeg"
+
+
+@router.post("/scan/shelf")
+@limiter.limit("10/minute")
+def scan_shelf(request: Request, body: ShelfAnalysisRequest, _auth: dict = Depends(verify_token)):
+    """
+    Analiza una foto de pasillo/sección completa con Claude Vision.
+    Detecta todos los productos visibles y su estado.
+    """
+    if not body.image_base64:
+        raise HTTPException(status_code=400, detail="image_base64 requerido")
+    if len(body.image_base64) > 10_000_000:
+        raise HTTPException(status_code=413, detail="Imagen demasiado grande")
+    try:
+        from backend.agents.vision import analyze_shelf
+        productos = analyze_shelf(
+            image_base64=body.image_base64,
+            pasillo=body.pasillo,
+            media_type=body.validated_media_type(),
+        )
+        urgentes = [p for p in productos if p.get("urgencia") in ("inmediata", "hoy")]
+        return {
+            "productos": productos,
+            "total": len(productos),
+            "urgentes": len(urgentes),
+            "pasillo": body.pasillo or "sección",
+        }
+    except Exception as e:
+        logger.error(f"Shelf scan error: {e}")
+        raise HTTPException(status_code=500, detail="Error interno del servidor.")
 
 
 # ── Demo temporal — avanza el tiempo en la BD para la presentación ───────────
@@ -1459,3 +1598,119 @@ def get_llm_stats(_auth: dict = Depends(verify_token)):
             "parallel_tools": "ThreadPoolExecutor — hasta 5 tools en paralelo por iteración",
         },
     }
+
+
+# ── Export CSV ────────────────────────────────────────────────────────────────
+
+@router.get("/export/actions")
+def export_actions_csv(_auth: dict = Depends(verify_token)):
+    """Exporta acciones completadas (últimos 30 días) como CSV."""
+    import csv
+    import io
+    from datetime import datetime, timedelta
+    from fastapi.responses import StreamingResponse
+
+    cutoff = (datetime.now() - timedelta(days=30)).isoformat()
+    try:
+        rows = database.get_db().table("actions") \
+            .select("*, batches(expiry_date, quantity, products(name, pasillo, estanteria, nivel, price))") \
+            .eq("store_id", STORE_ID) \
+            .eq("status", "completed") \
+            .gte("completed_at", cutoff) \
+            .order("completed_at", desc=True) \
+            .limit(500) \
+            .execute().data or []
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Error al exportar datos")
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["fecha", "producto", "pasillo", "estanteria", "nivel",
+                     "accion", "cantidad", "precio_u", "valor_total",
+                     "caducidad", "completado_por"])
+    for r in rows:
+        batch = r.get("batches") or {}
+        product = (batch.get("products") or {}) if batch else {}
+        qty = batch.get("quantity") or 0
+        price = float(product.get("price") or 0)
+        writer.writerow([
+            (r.get("completed_at") or "")[:10],
+            product.get("name", ""),
+            product.get("pasillo", ""),
+            product.get("estanteria", ""),
+            product.get("nivel", ""),
+            r.get("action_type", ""),
+            qty,
+            f"{price:.2f}",
+            f"{qty * price:.2f}",
+            batch.get("expiry_date", ""),
+            r.get("completed_by", ""),
+        ])
+
+    output.seek(0)
+    filename = f"mermaops_acciones_{datetime.now().strftime('%Y%m%d')}.csv"
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@router.get("/export/batches")
+def export_batches_csv(_auth: dict = Depends(verify_token)):
+    """Exporta lotes activos con fecha de caducidad y ubicación como CSV."""
+    import csv
+    import io
+    from datetime import datetime
+    from fastapi.responses import StreamingResponse
+
+    try:
+        rows = database.get_db().table("batches") \
+            .select("*, products(name, barcode, pasillo, estanteria, nivel, category, price, cost)") \
+            .eq("store_id", STORE_ID) \
+            .eq("status", "active") \
+            .order("expiry_date") \
+            .limit(500) \
+            .execute().data or []
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Error al exportar datos")
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["barcode", "nombre", "categoria", "pasillo", "estanteria",
+                     "nivel", "cantidad", "precio_u", "coste_u",
+                     "valor_venta", "valor_coste", "caducidad", "dias_restantes"])
+    today = __import__("datetime").date.today()
+    for r in rows:
+        product = r.get("products") or {}
+        qty = r.get("quantity") or 0
+        price = float(product.get("price") or 0)
+        cost = float(product.get("cost") or 0)
+        exp = r.get("expiry_date") or ""
+        try:
+            days = (__import__("datetime").date.fromisoformat(exp) - today).days
+        except Exception:
+            days = ""
+        writer.writerow([
+            product.get("barcode", ""),
+            product.get("name", ""),
+            product.get("category", ""),
+            product.get("pasillo", ""),
+            product.get("estanteria", ""),
+            product.get("nivel", ""),
+            qty,
+            f"{price:.2f}",
+            f"{cost:.2f}",
+            f"{qty * price:.2f}",
+            f"{qty * cost:.2f}",
+            exp,
+            days,
+        ])
+
+    output.seek(0)
+    filename = f"mermaops_lotes_{datetime.now().strftime('%Y%m%d')}.csv"
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )

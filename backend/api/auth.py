@@ -4,6 +4,8 @@ Middleware ligero: extrae el JWT del header Authorization y valida con Supabase.
 """
 from __future__ import annotations
 import os
+import base64
+import json
 import logging
 from functools import lru_cache
 
@@ -19,6 +21,19 @@ _bearer = HTTPBearer(auto_error=False)
 def _get_supabase_jwt_secret() -> str:
     """JWT secret de Supabase — está en el panel Settings > API > JWT Secret."""
     return os.getenv("SUPABASE_JWT_SECRET", "")
+
+
+def _decode_jwt_payload(token: str) -> dict:
+    """Decode JWT payload sin verificar firma — solo para dev/demo."""
+    try:
+        parts = token.split(".")
+        if len(parts) != 3:
+            return {}
+        payload = parts[1]
+        payload += "=" * (4 - len(payload) % 4)
+        return json.loads(base64.b64decode(payload))
+    except Exception:
+        return {}
 
 
 def verify_token(
@@ -59,27 +74,30 @@ def verify_token(
     try:
         db = database_module().get_db()
         user_response = db.auth.get_user(jwt=token)
-        if not user_response or not user_response.user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token inválido o expirado.",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        user = user_response.user
-        return {
-            "sub": user.id,
-            "email": user.email,
-            "role": "authenticated",
-        }
+        if user_response and user_response.user:
+            user = user_response.user
+            return {"sub": user.id, "email": user.email, "role": "authenticated"}
     except HTTPException:
         raise
     except Exception as e:
-        logger.warning(f"[auth] Error verificando token: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No se pudo verificar la autenticación.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        logger.warning(f"[auth] Supabase verify failed: {e}")
+
+    # En dev: fallback a decodificar JWT sin verificar firma (suficiente para demo)
+    if _is_dev:
+        payload = _decode_jwt_payload(token)
+        if payload.get("sub"):
+            logger.debug(f"[auth] DEV fallback JWT decode — sub={payload['sub']}")
+            return {
+                "sub": payload["sub"],
+                "email": payload.get("email", ""),
+                "role": "authenticated",
+            }
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="No se pudo verificar la autenticación.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 
 def database_module():
