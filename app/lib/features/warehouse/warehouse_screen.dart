@@ -1,13 +1,74 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/api_service.dart';
 import '../../core/error_widget.dart';
+import '../../core/store_provider.dart';
+import '../../core/supabase_client.dart';
 import '../../core/theme.dart' show ShimmerList;
 import '../../core/user_role_provider.dart';
 
 final _warehouseProvider = FutureProvider.autoDispose<Map<String, dynamic>>((ref) async {
-  return ApiService().getWarehouseStock();
+  try {
+    return await ApiService().getWarehouseStock();
+  } catch (_) {
+    // Backend down — query Supabase directly
+    final sid = ref.read(resolvedStoreIdProvider);
+    final rows = await supabase
+        .from('warehouse_stock')
+        .select('*, products(name, category, price, unit)')
+        .eq('store_id', sid)
+        .order('quantity');
+
+    final items = <Map<String, dynamic>>[];
+    int criticalCount = 0, lowCount = 0;
+    double totalValue = 0;
+    int totalUnits = 0;
+
+    for (final row in rows) {
+      final product = row['products'] as Map<String, dynamic>?;
+      final qty = (row['quantity'] as int?) ?? 0;
+      final minQty = (row['min_quantity'] as int?) ?? 5;
+      final price = (product?['price'] as num?)?.toDouble() ?? 0.0;
+
+      final String status;
+      if (qty == 0 || qty < (minQty * 0.3).ceil()) {
+        status = 'critical';
+        criticalCount++;
+      } else if (qty < minQty) {
+        status = 'low';
+        lowCount++;
+      } else {
+        status = 'ok';
+      }
+
+      totalValue += qty * price;
+      totalUnits += qty;
+
+      items.add({
+        'id': row['id'],
+        'product_id': row['product_id'],
+        'product_name': product?['name'] ?? 'Producto',
+        'category': product?['category'] ?? 'otros',
+        'quantity': qty,
+        'min_quantity': minQty,
+        'unit': product?['unit'] ?? row['unit'] ?? 'uds',
+        'status': status,
+        'price': price,
+        'updated_at': row['updated_at'],
+      });
+    }
+
+    return {
+      'items': items,
+      'total_products': items.length,
+      'total_units': totalUnits,
+      'total_value': totalValue,
+      'critical_count': criticalCount,
+      'low_count': lowCount,
+    };
+  }
 });
 
 const _categoryIcons = <String, IconData>{
@@ -80,7 +141,7 @@ class _WarehouseScreenState extends ConsumerState<WarehouseScreen>
         backgroundColor: const Color(0xFF0F172A),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios_new, size: 18),
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: () => context.go('/map'),
         ),
         actions: [
           IconButton(

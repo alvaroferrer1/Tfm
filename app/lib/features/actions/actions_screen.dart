@@ -189,7 +189,10 @@ class _ActionsScreenState extends ConsumerState<ActionsScreen>
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error exportando PDF: $e'), backgroundColor: Colors.red),
+          const SnackBar(
+            content: Text('No se pudo exportar. Comprueba que el servidor está activo.'),
+            backgroundColor: Color(0xFFDC2626),
+          ),
         );
       }
     }

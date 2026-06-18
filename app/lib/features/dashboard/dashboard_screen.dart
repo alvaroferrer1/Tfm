@@ -494,6 +494,7 @@ class _DashboardBodyState extends State<_DashboardBody>
     final headerBg = _headerColor(critical);
     final ref = widget.ref;
 
+    final isWide = MediaQuery.of(context).size.width > 700;
     return ListView(
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 40),
@@ -507,62 +508,33 @@ class _DashboardBodyState extends State<_DashboardBody>
                     headerBg: headerBg,
                   ),
                   const SizedBox(height: 16),
-                  // KPI grid
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _KpiCard(
-                          label: tr(ref, 'pending_actions'),
-                          value: pending,
-                          icon: Icons.task_alt_rounded,
-                          color: pending > 0
-                              ? UrgencyColors.high
-                              : UrgencyColors.low,
-                          onTap: () => context.go('/actions'),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: _KpiCard(
-                          label: tr(ref, 'critical_now'),
-                          value: critical,
-                          icon: Icons.crisis_alert_rounded,
-                          color: critical > 0
-                              ? UrgencyColors.critical
-                              : UrgencyColors.low,
-                          glow: critical > 0,
-                          onTap: () => context.go('/actions'),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _KpiCard(
-                          label: tr(ref, 'value_at_risk'),
-                          value: null,
-                          valueStr: '${valueAtRisk.toStringAsFixed(0)} €',
-                          icon: Icons.euro_rounded,
-                          color: valueAtRisk > 50
-                              ? UrgencyColors.high
-                              : UrgencyColors.low,
-                          onTap: () => context.go('/reports'),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: _KpiCard(
-                          label: tr(ref, 'expiring_7d'),
-                          value: expiring,
-                          icon: Icons.schedule_rounded,
-                          color: UrgencyColors.medium,
-                          onTap: () => context.go('/map'),
-                        ),
-                      ),
-                    ],
-                  ),
+                  // KPI grid — 4 columnas en wide, 2x2 en móvil
+                  Builder(builder: (ctx) {
+                    if (isWide) {
+                      return Row(children: [
+                        Expanded(child: _KpiCard(label: tr(ref, 'pending_actions'), value: pending, icon: Icons.task_alt_rounded, color: pending > 0 ? UrgencyColors.high : UrgencyColors.low, onTap: () => context.go('/actions'))),
+                        const SizedBox(width: 12),
+                        Expanded(child: _KpiCard(label: tr(ref, 'critical_now'), value: critical, icon: Icons.crisis_alert_rounded, color: critical > 0 ? UrgencyColors.critical : UrgencyColors.low, glow: critical > 0, onTap: () => context.go('/actions'))),
+                        const SizedBox(width: 12),
+                        Expanded(child: _KpiCard(label: tr(ref, 'value_at_risk'), value: null, valueStr: '${valueAtRisk.toStringAsFixed(0)} €', icon: Icons.euro_rounded, color: valueAtRisk > 50 ? UrgencyColors.high : UrgencyColors.low, onTap: () => context.go('/reports'))),
+                        const SizedBox(width: 12),
+                        Expanded(child: _KpiCard(label: tr(ref, 'expiring_7d'), value: expiring, icon: Icons.schedule_rounded, color: UrgencyColors.medium, onTap: () => context.go('/map'))),
+                      ]);
+                    }
+                    return Column(children: [
+                      Row(children: [
+                        Expanded(child: _KpiCard(label: tr(ref, 'pending_actions'), value: pending, icon: Icons.task_alt_rounded, color: pending > 0 ? UrgencyColors.high : UrgencyColors.low, onTap: () => context.go('/actions'))),
+                        const SizedBox(width: 12),
+                        Expanded(child: _KpiCard(label: tr(ref, 'critical_now'), value: critical, icon: Icons.crisis_alert_rounded, color: critical > 0 ? UrgencyColors.critical : UrgencyColors.low, glow: critical > 0, onTap: () => context.go('/actions'))),
+                      ]),
+                      const SizedBox(height: 12),
+                      Row(children: [
+                        Expanded(child: _KpiCard(label: tr(ref, 'value_at_risk'), value: null, valueStr: '${valueAtRisk.toStringAsFixed(0)} €', icon: Icons.euro_rounded, color: valueAtRisk > 50 ? UrgencyColors.high : UrgencyColors.low, onTap: () => context.go('/reports'))),
+                        const SizedBox(width: 12),
+                        Expanded(child: _KpiCard(label: tr(ref, 'expiring_7d'), value: expiring, icon: Icons.schedule_rounded, color: UrgencyColors.medium, onTap: () => context.go('/map'))),
+                      ]),
+                    ]);
+                  }),
                   const SizedBox(height: 16),
 
                   // Weather card — tiempo real por ubicación del super

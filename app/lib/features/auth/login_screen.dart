@@ -219,6 +219,69 @@ class _LoginScreenState extends State<LoginScreen>
     _animCtrl.forward(from: 0);
   }
 
+  void _showForgotPassword() {
+    final emailCtrl = TextEditingController(text: _emailCtrl.text.trim());
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(children: [
+          Icon(Icons.lock_reset_outlined, color: Color(0xFF059669), size: 22),
+          SizedBox(width: 8),
+          Text('Recuperar contraseña', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+        ]),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text(
+            'Introduce tu email y te enviaremos un enlace para restablecer tu contraseña.',
+            style: TextStyle(fontSize: 13, color: Color(0xFF6B7280)),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: emailCtrl,
+            keyboardType: TextInputType.emailAddress,
+            autofocus: true,
+            decoration: InputDecoration(
+              labelText: 'Email',
+              prefixIcon: const Icon(Icons.email_outlined, size: 20),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+            ),
+          ),
+        ]),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancelar', style: TextStyle(color: Color(0xFF6B7280))),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF059669),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              elevation: 0,
+            ),
+            onPressed: () async {
+              final email = emailCtrl.text.trim();
+              if (email.isEmpty || !email.contains('@')) return;
+              Navigator.of(ctx).pop();
+              try {
+                await supabase.auth.resetPasswordForEmail(email);
+                if (mounted) {
+                  setState(() => _success = 'Email enviado a $email. Revisa tu bandeja de entrada.');
+                }
+              } catch (_) {
+                if (mounted) {
+                  setState(() => _error = 'No se pudo enviar el email. Comprueba la dirección.');
+                }
+              }
+            },
+            child: const Text('Enviar enlace', style: TextStyle(fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ── UI ────────────────────────────────────────────────────────────────────
 
   @override
@@ -355,6 +418,29 @@ class _LoginScreenState extends State<LoginScreen>
                                 ? (_) => setState(() {})
                                 : null,
                           ),
+
+                          // Olvidé mi contraseña (solo en login)
+                          if (!_isRegister) ...[
+                            const SizedBox(height: 4),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: TextButton(
+                                onPressed: _showForgotPassword,
+                                style: TextButton.styleFrom(
+                                  minimumSize: Size.zero,
+                                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                ),
+                                child: const Text(
+                                  '¿Olvidaste tu contraseña?',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Color(0xFF059669),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
 
                           // Confirmar contraseña (solo en registro)
                           if (_isRegister) ...[

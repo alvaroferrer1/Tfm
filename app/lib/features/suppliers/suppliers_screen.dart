@@ -6,6 +6,8 @@ import '../../core/api_service.dart';
 import '../../core/error_widget.dart';
 import '../../core/file_download.dart';
 import '../../core/l10n.dart';
+import '../../core/store_provider.dart';
+import '../../core/supabase_client.dart';
 import '../../core/theme.dart' show ShimmerList;
 
 // Guards LinearGradient.createShader() against zero-area rects (CanvasKit crash on Flutter web)
@@ -25,7 +27,34 @@ class _SafeGradient extends LinearGradient {
 }
 
 final _suppliersProvider = FutureProvider<List<Map<String, dynamic>>>((ref) async {
-  return ApiService().getSupplierStats();
+  try {
+    return await ApiService().getSupplierStats();
+  } catch (_) {
+    // Backend down — query Supabase directly
+    final sid = ref.read(resolvedStoreIdProvider);
+    final suppliers = await supabase
+        .from('suppliers')
+        .select('id, name, contact, supplier_merma(merma_pct, product_id, period)')
+        .eq('store_id', sid) as List;
+    return suppliers.map<Map<String, dynamic>>((sup) {
+      final mermaRows = (sup['supplier_merma'] as List?) ?? [];
+      final avgMerma = mermaRows.isEmpty
+          ? 0.0
+          : mermaRows.fold<double>(0, (s, r) => s + ((r['merma_pct'] as num?)?.toDouble() ?? 0)) /
+              mermaRows.length;
+      final avg = double.parse(avgMerma.toStringAsFixed(1));
+      return {
+        'id': sup['id'],
+        'name': sup['name'] ?? 'Proveedor',
+        'contact': sup['contact'] ?? '',
+        'product_count': mermaRows.length,
+        'avg_merma_pct': avg,
+        'products': mermaRows.map((r) => r['product_id']).where((id) => id != null).toList(),
+        'period': mermaRows.isNotEmpty ? mermaRows.first['period'] : null,
+        'risk': avg > 15 ? 'ALTO' : avg > 8 ? 'MEDIO' : 'BAJO',
+      };
+    }).toList();
+  }
 });
 
 final _suppliersWithProductsProvider = FutureProvider<Map<String, dynamic>>((ref) async {

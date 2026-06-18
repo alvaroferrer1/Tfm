@@ -703,7 +703,7 @@ class _StorePlanState extends State<_StorePlan> {
             ),
           ),
           const SizedBox(height: 10),
-          _Legend(),
+          _Legend(showMapAreas: true),
           const SizedBox(height: 8),
           ...widget.pasillos.map((p) {
             final items = grouped[p] ?? [];
@@ -1137,63 +1137,115 @@ class _SupermarketPainter extends CustomPainter {
 }
 
 class _Legend extends StatelessWidget {
+  final bool showMapAreas;
+  const _Legend({this.showMapAreas = false});
+
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: const Color(0xFFE5E7EB)),
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _LegendItem(color: UrgencyColors.critical, label: 'Hoy/Mañana'),
-          _LegendItem(color: UrgencyColors.high, label: '2-3 días'),
-          _LegendItem(color: UrgencyColors.medium, label: '4-5 días'),
-          _LegendItem(color: UrgencyColors.low, label: '6-7 días'),
+          const Text('Urgencia por caducidad',
+              style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Color(0xFF374151), letterSpacing: 0.5)),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              _LegendItem(color: UrgencyColors.critical, label: 'Hoy/Mañana'),
+              _LegendItem(color: UrgencyColors.high, label: '2-3 días'),
+              _LegendItem(color: UrgencyColors.medium, label: '4-5 días'),
+              _LegendItem(color: UrgencyColors.low, label: '6-7 días'),
+            ],
+          ),
+          if (showMapAreas) ...[
+            const SizedBox(height: 10),
+            const Divider(height: 1, color: Color(0xFFF3F4F6)),
+            const SizedBox(height: 10),
+            const Text('Zonas del plano',
+                style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Color(0xFF374151), letterSpacing: 0.5)),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 14,
+              runSpacing: 6,
+              children: [
+                _MapAreaItem(color: const Color(0xFF334155), label: 'Almacén (arriba)'),
+                _MapAreaItem(color: const Color(0xFF6B7280), label: 'Pasillos (toca)'),
+                _MapAreaItem(color: const Color(0xFFE2E8F0), label: 'Cajas de cobro'),
+                _MapAreaItem(color: const Color(0xFF065F46), label: 'Entrada/Salida'),
+              ],
+            ),
+          ],
         ],
       ),
     );
   }
 }
 
-// ── Pasillo grid tab ───────────────────────────────────────────────────────────
+class _MapAreaItem extends StatelessWidget {
+  final Color color;
+  final String label;
+  const _MapAreaItem({required this.color, required this.label});
 
-class _PasilloGrid extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      Container(
+        width: 16, height: 10,
+        decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(2)),
+      ),
+      const SizedBox(width: 5),
+      Text(label, style: const TextStyle(fontSize: 10, color: Color(0xFF6B7280))),
+    ]);
+  }
+}
+
+// ── Pasillo route tab (aisle pick list, expandable) ───────────────────────────
+
+class _PasilloGrid extends StatefulWidget {
   final List<Map<String, dynamic>> batches;
   final void Function(String) onSelectPasillo;
   const _PasilloGrid({required this.batches, required this.onSelectPasillo});
 
+  @override
+  State<_PasilloGrid> createState() => _PasilloGridState();
+}
+
+class _PasilloGridState extends State<_PasilloGrid> {
+  final Set<String> _expanded = {'1', '2', '3', '4', '5'};
+
   Map<String, List<Map<String, dynamic>>> _groupByPasillo() {
     final map = <String, List<Map<String, dynamic>>>{};
-    for (final b in batches) {
+    for (final b in widget.batches) {
       final product = b['products'] as Map<String, dynamic>?;
-      final pasillo = (product?['pasillo'] as String?)?.isNotEmpty == true ? product!['pasillo'] as String : 'Sin ubicación';
+      final pasillo = (product?['pasillo'] as String?)?.isNotEmpty == true
+          ? product!['pasillo'] as String
+          : 'Sin ubicación';
       map.putIfAbsent(pasillo, () => []).add(b);
     }
-    return Map.fromEntries(
-      map.entries.toList()..sort((a, b) => a.key.compareTo(b.key)),
-    );
+    return Map.fromEntries(map.entries.toList()..sort((a, b) => a.key.compareTo(b.key)));
   }
 
-  Color _pasilloColor(List<Map<String, dynamic>> items) {
-    int minDays = 999;
+  int _minDaysGroup(List<Map<String, dynamic>> items) {
+    int min = 999;
     for (final b in items) {
       final d = _daysLeft(b['expiry_date'] ?? '');
-      if (d < minDays) minDays = d;
+      if (d < min) min = d;
     }
-    return _urgencyColor(minDays);
+    return min;
   }
 
   double _valueAtRisk(List<Map<String, dynamic>> items) {
     double total = 0;
     for (final b in items) {
       final product = b['products'] as Map<String, dynamic>?;
-      final qty = (b['quantity'] as int?) ?? 0;
-      final price = (product?['price'] as num?)?.toDouble() ?? 0.0;
-      total += qty * price;
+      total += ((b['quantity'] as int?) ?? 0) * ((product?['price'] as num?)?.toDouble() ?? 0.0);
     }
     return total;
   }
@@ -1203,123 +1255,219 @@ class _PasilloGrid extends StatelessWidget {
     final grouped = _groupByPasillo();
     if (grouped.isEmpty) {
       return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: const [
-            Icon(Icons.check_circle, size: 48, color: Color(0xFF22C55E)),
-            SizedBox(height: 12),
-            Text('Sin productos próximos a caducar',
-                style: TextStyle(color: Colors.grey)),
-            Text('¡Todo en orden esta semana!',
-                style: TextStyle(fontSize: 12, color: Colors.grey)),
-          ],
-        ),
+        child: Column(mainAxisSize: MainAxisSize.min, children: const [
+          Icon(Icons.check_circle, size: 48, color: Color(0xFF22C55E)),
+          SizedBox(height: 12),
+          Text('Sin productos próximos a caducar', style: TextStyle(color: Colors.grey)),
+          Text('¡Todo en orden esta semana!', style: TextStyle(fontSize: 12, color: Colors.grey)),
+        ]),
       );
     }
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final cols = constraints.maxWidth >= 600 ? 3 : 2;
-        final spacing = 10.0;
-        final cardWidth = (constraints.maxWidth - 32 - spacing * (cols - 1)) / cols;
+    // Sort by urgency (most critical first)
+    final sortedEntries = grouped.entries.toList()
+      ..sort((a, b) => _minDaysGroup(a.value).compareTo(_minDaysGroup(b.value)));
 
-        return SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
+    final totalItems = widget.batches.length;
+    final criticalCount = widget.batches
+        .where((b) => _daysLeft(b['expiry_date'] ?? '') <= 1)
+        .length;
+    final totalVal = widget.batches.fold(0.0, (sum, b) {
+      final p = b['products'] as Map<String, dynamic>?;
+      return sum + ((b['quantity'] as int?) ?? 0) * ((p?['price'] as num?)?.toDouble() ?? 0.0);
+    });
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
+      children: [
+        // Route summary header
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF065F46), Color(0xFF047857)],
+              begin: Alignment.topLeft, end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(children: [
+            const Icon(Icons.route, color: Colors.white, size: 22),
+            const SizedBox(width: 10),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('Ruta de reposición',
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15)),
               Text(
-                '${grouped.length} pasillos con urgencias · Toca para ver el detalle',
-                style: const TextStyle(fontSize: 12, color: Colors.grey),
+                '$totalItems productos · ${totalVal.toStringAsFixed(0)} € en riesgo'
+                '${criticalCount > 0 ? ' · $criticalCount críticos' : ''}',
+                style: const TextStyle(color: Colors.white70, fontSize: 11),
               ),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: spacing,
-                runSpacing: spacing,
-                children: grouped.entries.map((entry) {
-                  final color = _pasilloColor(entry.value);
-                  final count = entry.value.length;
-                  final val = _valueAtRisk(entry.value);
-                  // Worst days
-                  int minDays = 999;
-                  for (final b in entry.value) {
-                    final d = _daysLeft(b['expiry_date'] ?? '');
-                    if (d < minDays) minDays = d;
+            ])),
+            Column(children: [
+              Text('${sortedEntries.length}',
+                  style: const TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.w900, height: 1)),
+              const Text('pasillos', style: TextStyle(color: Colors.white60, fontSize: 9)),
+            ]),
+          ]),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Ordenado por urgencia · Toca el encabezado para expandir/colapsar',
+          style: TextStyle(fontSize: 11, color: Color(0xFF9CA3AF), fontStyle: FontStyle.italic),
+        ),
+        const SizedBox(height: 8),
+        ...sortedEntries.asMap().entries.map((e) {
+          final stepNum = e.key + 1;
+          final pasillo = e.value.key;
+          final items = e.value.value;
+          final minD = _minDaysGroup(items);
+          final color = _urgencyColor(minD);
+          final val = _valueAtRisk(items);
+          final isExpanded = _expanded.contains(pasillo);
+
+          // Sort items within aisle by expiry (most urgent first)
+          final sortedItems = List<Map<String, dynamic>>.from(items)
+            ..sort((a, b) =>
+                _daysLeft(a['expiry_date'] ?? '').compareTo(_daysLeft(b['expiry_date'] ?? '')));
+
+          return Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: color.withValues(alpha: isExpanded ? 0.4 : 0.2)),
+              boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 6, offset: const Offset(0, 2))],
+            ),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              // Header row
+              InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: () => setState(() {
+                  if (isExpanded) {
+                    _expanded.remove(pasillo);
+                  } else {
+                    _expanded.add(pasillo);
                   }
-                  return GestureDetector(
-                    onTap: () => onSelectPasillo(entry.key),
-                    child: Container(
-                      width: cardWidth,
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: color.withValues(alpha: 0.4), width: 2),
-                        boxShadow: [
-                          BoxShadow(
-                            color: color.withValues(alpha: 0.12),
-                            blurRadius: 8,
-                            offset: const Offset(0, 3),
-                          ),
-                        ],
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Container(
-                                width: 14,
-                                height: 14,
-                                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-                              ),
-                              const SizedBox(width: 6),
-                              Expanded(
-                                child: Text(
-                                  _pasilloLabel(entry.key),
-                                  style: TextStyle(
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w700,
-                                    color: color,
-                                  ),
-                                ),
-                              ),
-                              GestureDetector(
-                                onTap: () => _showQrDialog(context, entry.key),
-                                child: Icon(Icons.qr_code, size: 20,
-                                    color: color.withValues(alpha: 0.7)),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            '$count producto${count != 1 ? 's' : ''}',
-                            style: const TextStyle(fontSize: 12, color: Colors.grey),
-                          ),
-                          Text(
-                            _urgencyLabel(minDays),
-                            style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
-                                color: color),
-                          ),
-                          if (val > 0)
-                            Text(
-                              '${val.toStringAsFixed(2)} € en riesgo',
-                              style: const TextStyle(fontSize: 10, color: Colors.grey),
-                            ),
-                        ],
+                }),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Row(children: [
+                    Container(
+                      width: 30, height: 30,
+                      decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(15)),
+                      child: Center(child: Text('$stepNum',
+                          style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w800))),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(_pasilloLabel(pasillo),
+                          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: color)),
+                      Text('${items.length} producto${items.length != 1 ? 's' : ''} · ${val.toStringAsFixed(2)} €',
+                          style: const TextStyle(fontSize: 11, color: Color(0xFF6B7280))),
+                    ])),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(6)),
+                      child: Text(_urgencyLabel(minD),
+                          style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w800)),
+                    ),
+                    const SizedBox(width: 4),
+                    InkWell(
+                      onTap: () => _showQrDialog(context, pasillo),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Padding(
+                        padding: const EdgeInsets.all(6),
+                        child: Icon(Icons.qr_code_2, size: 18, color: color.withValues(alpha: 0.65)),
                       ),
                     ),
-                  );
-                }).toList(),
+                    Icon(
+                      isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                      size: 20, color: const Color(0xFF9CA3AF),
+                    ),
+                  ]),
+                ),
               ),
-              const SizedBox(height: 24),
-              _Legend(),
-            ],
-          ),
-        );
-      },
+              // Expanded product list
+              if (isExpanded) ...[
+                const Divider(height: 1, color: Color(0xFFF3F4F6)),
+                ...sortedItems.map((b) {
+                  final product = b['products'] as Map<String, dynamic>?;
+                  final name = product?['name'] as String? ?? 'Producto';
+                  final cat = product?['category'] as String? ?? '';
+                  final est = product?['estanteria'] as String?;
+                  final niv = product?['nivel'] as String?;
+                  final qty = b['quantity'] as int? ?? 0;
+                  final price = (product?['price'] as num?)?.toDouble() ?? 0.0;
+                  final expiry = b['expiry_date'] as String? ?? '';
+                  final days = _daysLeft(expiry);
+                  final bColor = _urgencyColor(days);
+                  final itemVal = qty * price;
+
+                  final locParts = <String>[];
+                  if (est != null && est.isNotEmpty) locParts.add('Estante $est');
+                  if (niv != null && niv.isNotEmpty) locParts.add('Nivel $niv');
+
+                  return Container(
+                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+                    decoration: BoxDecoration(
+                      color: bColor.withValues(alpha: 0.03),
+                      border: Border(
+                        top: const BorderSide(color: Color(0xFFF3F4F6)),
+                        left: BorderSide(color: bColor, width: 3),
+                      ),
+                    ),
+                    child: Row(children: [
+                      Icon(_categoryIcon(cat), size: 20, color: bColor),
+                      const SizedBox(width: 10),
+                      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text(name, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 2),
+                        Row(children: [
+                          if (locParts.isNotEmpty) ...[
+                            Icon(Icons.location_on_outlined, size: 11, color: const Color(0xFF9CA3AF)),
+                            const SizedBox(width: 2),
+                            Text(locParts.join(' · '),
+                                style: const TextStyle(fontSize: 10, color: Color(0xFF9CA3AF))),
+                            const SizedBox(width: 8),
+                          ],
+                          Text('$qty uds', style: const TextStyle(fontSize: 11, color: Color(0xFF6B7280))),
+                          const SizedBox(width: 6),
+                          Text('${itemVal.toStringAsFixed(2)} €',
+                              style: const TextStyle(fontSize: 11, color: Color(0xFF059669), fontWeight: FontWeight.w600)),
+                        ]),
+                      ])),
+                      Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                          decoration: BoxDecoration(color: bColor, borderRadius: BorderRadius.circular(6)),
+                          child: Text(_urgencyLabel(days),
+                              style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w800)),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(expiry, style: const TextStyle(fontSize: 9, color: Color(0xFF9CA3AF))),
+                      ]),
+                    ]),
+                  );
+                }),
+                // See full detail button
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
+                  child: GestureDetector(
+                    onTap: () => widget.onSelectPasillo(pasillo),
+                    child: Row(children: [
+                      Icon(Icons.open_in_full, size: 12, color: color.withValues(alpha: 0.7)),
+                      const SizedBox(width: 6),
+                      Text('Ver ficha completa del pasillo',
+                          style: TextStyle(fontSize: 11, color: color.withValues(alpha: 0.8), fontWeight: FontWeight.w600)),
+                    ]),
+                  ),
+                ),
+              ],
+            ]),
+          );
+        }),
+        const SizedBox(height: 8),
+        _Legend(),
+      ],
     );
   }
 
@@ -1573,6 +1721,7 @@ class _FefoListState extends State<_FefoList> {
     final todayItems  = all.where((b) { final d = _daysLeft(b['expiry_date'] ?? ''); return d <= 0; }).length;
     final critItems   = all.where((b) { final d = _daysLeft(b['expiry_date'] ?? ''); return d == 1; }).length;
     final urgentItems = all.where((b) { final d = _daysLeft(b['expiry_date'] ?? ''); return d >= 2 && d <= 3; }).length;
+    final normalItems = (all.length - todayItems - critItems - urgentItems).clamp(0, all.length);
     final filtered    = _filtered;
 
     if (all.isEmpty) {
@@ -1595,29 +1744,44 @@ class _FefoListState extends State<_FefoList> {
       children: [
         // Stats header
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          decoration: const BoxDecoration(
-            color: Color(0xFFF8FAFC),
-            border: Border(bottom: BorderSide(color: Color(0xFFE2E8F0))),
-          ),
-          child: Row(children: [
-            _FefoStatBadge('${all.length}', 'total', const Color(0xFF6B7280)),
-            const SizedBox(width: 8),
-            if (todayItems > 0) ...[
-              _FefoStatBadge('$todayItems', 'hoy', const Color(0xFFEF4444)),
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+          decoration: const BoxDecoration(color: Color(0xFFF8FAFC)),
+          child: Column(children: [
+            Row(children: [
+              _FefoStatBadge('${all.length}', 'total', const Color(0xFF6B7280)),
               const SizedBox(width: 8),
-            ],
-            if (critItems > 0) ...[
-              _FefoStatBadge('$critItems', '1 día', const Color(0xFFF97316)),
-              const SizedBox(width: 8),
-            ],
-            if (urgentItems > 0) ...[
-              _FefoStatBadge('$urgentItems', '2-3 días', const Color(0xFFF59E0B)),
-              const SizedBox(width: 8),
-            ],
-            const Spacer(),
-            Text('FEFO: First Expired, First Out',
-                style: const TextStyle(fontSize: 9, color: Colors.grey, fontStyle: FontStyle.italic)),
+              if (todayItems > 0) ...[
+                _FefoStatBadge('$todayItems', 'hoy', const Color(0xFFEF4444)),
+                const SizedBox(width: 8),
+              ],
+              if (critItems > 0) ...[
+                _FefoStatBadge('$critItems', '1 día', const Color(0xFFF97316)),
+                const SizedBox(width: 8),
+              ],
+              if (urgentItems > 0) ...[
+                _FefoStatBadge('$urgentItems', '2-3 días', const Color(0xFFF59E0B)),
+                const SizedBox(width: 8),
+              ],
+              const Spacer(),
+              const Text('FEFO · First Expired First Out',
+                  style: TextStyle(fontSize: 9, color: Colors.grey, fontStyle: FontStyle.italic)),
+            ]),
+            const SizedBox(height: 8),
+            // Urgency distribution bar
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: SizedBox(
+                height: 6,
+                child: Row(children: [
+                  if (todayItems > 0) Expanded(flex: todayItems, child: Container(color: const Color(0xFFEF4444))),
+                  if (critItems > 0) Expanded(flex: critItems, child: Container(color: const Color(0xFFF97316))),
+                  if (urgentItems > 0) Expanded(flex: urgentItems, child: Container(color: const Color(0xFFF59E0B))),
+                  if (normalItems > 0) Expanded(flex: normalItems, child: Container(color: const Color(0xFF10B981))),
+                ]),
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Divider(height: 1, color: Color(0xFFE2E8F0)),
           ]),
         ),
         // Search bar
@@ -1653,6 +1817,8 @@ class _FefoListState extends State<_FefoList> {
                 final name     = product?['name'] as String? ?? 'Producto';
                 final category = product?['category'] as String? ?? '';
                 final pasillo  = (product?['pasillo'] as String?)?.isNotEmpty == true ? product!['pasillo'] as String : 'Sin ubicación';
+                final est      = product?['estanteria'] as String?;
+                final niv      = product?['nivel'] as String?;
                 final expiry   = b['expiry_date'] as String? ?? '';
                 final qty      = b['quantity'] as int? ?? 0;
                 final price    = (product?['price'] as num?)?.toDouble() ?? 0.0;
@@ -1705,7 +1871,13 @@ class _FefoListState extends State<_FefoList> {
                         Row(children: [
                           Icon(Icons.map_outlined, size: 11, color: Colors.grey[500]),
                           const SizedBox(width: 3),
-                          Text('P.$pasillo', style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+                          Flexible(
+                            child: Text(
+                              'P.$pasillo${est != null && est.isNotEmpty ? ' · E.$est' : ''}${niv != null && niv.isNotEmpty ? ' · N.$niv' : ''}',
+                              style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
                           const SizedBox(width: 8),
                           Icon(Icons.inventory_2_outlined, size: 11, color: Colors.grey[500]),
                           const SizedBox(width: 3),
@@ -1863,7 +2035,7 @@ class _WarehouseQuickTab extends ConsumerWidget {
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton.icon(
-                      onPressed: () => Navigator.of(context).pushNamed('/warehouse'),
+                      onPressed: () => context.go('/warehouse'),
                       icon: const Icon(Icons.open_in_new, size: 16, color: Colors.white),
                       label: const Text('Abrir almacén completo', style: TextStyle(color: Colors.white)),
                       style: OutlinedButton.styleFrom(
@@ -1911,7 +2083,7 @@ class _WarehouseQuickTab extends ConsumerWidget {
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
                   child: TextButton.icon(
-                    onPressed: () => Navigator.of(context).pushNamed('/warehouse'),
+                    onPressed: () => context.go('/warehouse'),
                     icon: const Icon(Icons.arrow_forward, size: 16),
                     label: Text('Ver los ${items.length - 15} productos restantes'),
                   ),

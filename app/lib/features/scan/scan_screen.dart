@@ -974,12 +974,173 @@ class _ScanHistoryWidget extends ConsumerWidget {
                   ? Text(action,
                       style: TextStyle(fontSize: 11, color: scoreColor))
                   : null,
-              trailing: Text(time,
-                  style: const TextStyle(fontSize: 10, color: Color(0xFF9CA3AF))),
+              trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                Text(time, style: const TextStyle(fontSize: 10, color: Color(0xFF9CA3AF))),
+                const SizedBox(width: 4),
+                const Icon(Icons.chevron_right, size: 14, color: Color(0xFFD1D5DB)),
+              ]),
+              onTap: () => _showScanHistoryDetail(context, item),
             );
           },
         ),
       ),
+    ]);
+  }
+}
+
+void _showScanHistoryDetail(BuildContext context, Map<String, dynamic> item) {
+  final type = item['type'] as String? ?? 'barcode';
+  final name = item['product_name'] as String? ?? '';
+  final barcode = item['barcode'] as String? ?? '';
+  final action = item['action_type'] as String? ?? '';
+  final score = item['priority_score'] as int? ?? 0;
+  final ts = item['ts'] as String? ?? '';
+
+  Color scoreColor;
+  String scoreLabel;
+  if (score >= 85) {
+    scoreColor = const Color(0xFFDC2626);
+    scoreLabel = 'CRÍTICO';
+  } else if (score >= 65) {
+    scoreColor = const Color(0xFFF59E0B);
+    scoreLabel = 'URGENTE';
+  } else if (score > 0) {
+    scoreColor = const Color(0xFF059669);
+    scoreLabel = 'NORMAL';
+  } else {
+    scoreColor = const Color(0xFF9CA3AF);
+    scoreLabel = '';
+  }
+
+  String dateStr = '';
+  String timeStr = '';
+  if (ts.isNotEmpty) {
+    try {
+      final dt = DateTime.parse(ts).toLocal();
+      const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+      dateStr = '${dt.day} ${months[dt.month - 1]} ${dt.year}';
+      timeStr = '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+    } catch (_) {}
+  }
+
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: Colors.transparent,
+    isScrollControlled: true,
+    builder: (_) => Container(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 40),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Container(
+              width: 36, height: 4,
+              margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
+            ),
+          ),
+          Row(children: [
+            Container(
+              width: 52, height: 52,
+              decoration: BoxDecoration(
+                color: scoreColor.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Center(child: Text(
+                type == 'photo' ? '📷' : '📦',
+                style: const TextStyle(fontSize: 26),
+              )),
+            ),
+            const SizedBox(width: 14),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(
+                name.isNotEmpty ? name : 'Sin nombre',
+                style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: Color(0xFF111827)),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                type == 'photo' ? 'Análisis de fotografía' : 'Escaneo de código de barras',
+                style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+              ),
+            ])),
+          ]),
+          const SizedBox(height: 16),
+          const Divider(),
+          const SizedBox(height: 8),
+          if (barcode.isNotEmpty && barcode != '📷') ...[
+            _ScanDetailRow(icon: Icons.qr_code_outlined, label: 'Código', value: barcode),
+            const SizedBox(height: 10),
+          ],
+          if (action.isNotEmpty) ...[
+            _ScanDetailRow(icon: Icons.flag_outlined, label: 'Acción recomendada', value: action),
+            const SizedBox(height: 10),
+          ],
+          if (score > 0) ...[
+            Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+              const Icon(Icons.speed_outlined, size: 16, color: Color(0xFF6B7280)),
+              const SizedBox(width: 10),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Text('Prioridad', style: TextStyle(fontSize: 11, color: Color(0xFF9CA3AF))),
+                const SizedBox(height: 4),
+                Row(children: [
+                  Expanded(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: LinearProgressIndicator(
+                        value: score / 100,
+                        backgroundColor: Colors.grey[200],
+                        valueColor: AlwaysStoppedAnimation<Color>(scoreColor),
+                        minHeight: 8,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text('$score', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: scoreColor)),
+                  if (scoreLabel.isNotEmpty) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: scoreColor.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(scoreLabel, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: scoreColor)),
+                    ),
+                  ],
+                ]),
+              ])),
+            ]),
+            const SizedBox(height: 10),
+          ],
+          if (dateStr.isNotEmpty)
+            _ScanDetailRow(icon: Icons.calendar_today_outlined, label: 'Fecha y hora', value: '$dateStr · $timeStr'),
+        ],
+      ),
+    ),
+  );
+}
+
+class _ScanDetailRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  const _ScanDetailRow({required this.icon, required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Icon(icon, size: 16, color: const Color(0xFF6B7280)),
+      const SizedBox(width: 10),
+      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(label, style: const TextStyle(fontSize: 11, color: Color(0xFF9CA3AF))),
+        const SizedBox(height: 2),
+        Text(value, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF111827))),
+      ])),
     ]);
   }
 }

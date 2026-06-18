@@ -7,7 +7,6 @@ import 'l10n.dart';
 import 'theme.dart';
 import 'user_role_provider.dart';
 
-// Botón persistente EN/ES visible en todas las páginas
 class LangToggleButton extends ConsumerWidget {
   const LangToggleButton({super.key});
   @override
@@ -26,7 +25,6 @@ class LangToggleButton extends ConsumerWidget {
   }
 }
 
-// Definición de un tab con su ruta, iconos y rol mínimo requerido
 class _NavTab {
   final String route;
   final IconData icon;
@@ -44,13 +42,13 @@ class _NavTab {
 }
 
 const _allTabs = [
-  _NavTab(route: '/',        icon: Icons.dashboard_outlined,        activeIcon: Icons.dashboard,             labelKey: 'nav_dashboard'),
-  _NavTab(route: '/scan',    icon: Icons.qr_code_scanner_outlined,  activeIcon: Icons.qr_code_scanner,       labelKey: 'nav_scan'),
-  _NavTab(route: '/actions', icon: Icons.task_alt_outlined,         activeIcon: Icons.task_alt,               labelKey: 'nav_actions'),
-  _NavTab(route: '/map',     icon: Icons.map_outlined,              activeIcon: Icons.map,                    labelKey: 'nav_map'),
-  _NavTab(route: '/reports',   icon: Icons.bar_chart_outlined,        activeIcon: Icons.bar_chart,              labelKey: 'nav_reports',   minRole: UserRole.manager),
-  _NavTab(route: '/suppliers', icon: Icons.local_shipping_outlined,   activeIcon: Icons.local_shipping,         labelKey: 'nav_suppliers', minRole: UserRole.manager),
-  _NavTab(route: '/chat',      icon: Icons.chat_bubble_outline_rounded, activeIcon: Icons.chat_bubble_rounded,  labelKey: 'nav_chat'),
+  _NavTab(route: '/',          icon: Icons.dashboard_outlined,          activeIcon: Icons.dashboard,               labelKey: 'nav_dashboard'),
+  _NavTab(route: '/scan',      icon: Icons.qr_code_scanner_outlined,    activeIcon: Icons.qr_code_scanner,         labelKey: 'nav_scan'),
+  _NavTab(route: '/actions',   icon: Icons.task_alt_outlined,           activeIcon: Icons.task_alt,                labelKey: 'nav_actions'),
+  _NavTab(route: '/map',       icon: Icons.map_outlined,                activeIcon: Icons.map,                     labelKey: 'nav_map'),
+  _NavTab(route: '/reports',   icon: Icons.bar_chart_outlined,          activeIcon: Icons.bar_chart,               labelKey: 'nav_reports',   minRole: UserRole.manager),
+  _NavTab(route: '/suppliers', icon: Icons.local_shipping_outlined,     activeIcon: Icons.local_shipping,          labelKey: 'nav_suppliers', minRole: UserRole.manager),
+  _NavTab(route: '/chat',      icon: Icons.chat_bubble_outline_rounded, activeIcon: Icons.chat_bubble_rounded,     labelKey: 'nav_chat'),
 ];
 
 class ShellScaffold extends ConsumerStatefulWidget {
@@ -69,7 +67,6 @@ class _ShellScaffoldState extends ConsumerState<ShellScaffold> {
   Widget build(BuildContext context) {
     final location = GoRouterState.of(context).matchedLocation;
 
-    // Role-based tab filtering: staff ve solo sus tabs, manager ve todos
     final roleAsync = ref.watch(userRoleProvider);
     final userRole = roleAsync.when(
       data: (r) => r,
@@ -77,10 +74,8 @@ class _ShellScaffoldState extends ConsumerState<ShellScaffold> {
       error: (_, __) => UserRole.staff,
     );
 
-    // Tabs visibles para este rol
     final visibleTabs = _allTabs.where((t) => userRole.index >= t.minRole.index).toList();
 
-    // Índice del tab actual dentro de los visibles
     final currentIndex = () {
       for (int i = 0; i < visibleTabs.length; i++) {
         final r = visibleTabs[i].route;
@@ -89,7 +84,6 @@ class _ShellScaffoldState extends ConsumerState<ShellScaffold> {
       return 0;
     }();
 
-    // Badge count + alerta en tiempo real via Supabase Realtime (StreamProvider)
     final actionsAsync = ref.watch(pendingActionsStreamProvider);
     final criticalCount = actionsAsync.when(
       data: (actions) => actions.where((a) => (a['priority_score'] as int? ?? 0) >= 85).length,
@@ -97,13 +91,11 @@ class _ShellScaffoldState extends ConsumerState<ShellScaffold> {
       error: (_, __) => 0,
     );
 
-    // Detectar acciones críticas NUEVAS y mostrar banner (funciona en web y móvil)
     ref.listen<AsyncValue<List<Map<String, dynamic>>>>(
       pendingActionsStreamProvider,
       (_, next) {
         next.whenData((actions) {
           if (!_initialized) {
-            // Primera carga: marcar todas como conocidas, sin alertar
             _seenIds.addAll(actions.map((a) => a['id']?.toString() ?? ''));
             _initialized = true;
             return;

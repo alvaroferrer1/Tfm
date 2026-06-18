@@ -280,7 +280,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         children: [
           if (messages.isNotEmpty) _SuggestionsBar(onTap: _send),
 
-          // Active tool banner — shows what Chuwi is doing right now
+          // Active tool banner
           Consumer(builder: (_, ref, __) {
             final activeTool = ref.watch(_activeToolProvider);
             if (activeTool.isEmpty) return const SizedBox.shrink();
@@ -307,7 +307,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     controller: _scroll,
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     itemCount: messages.length + (loading ? 1 : 0),
-                    itemBuilder: (ctx, i) {
+                    itemBuilder: (ctx2, i) {
                       if (i == messages.length) return const _TypingIndicator();
                       return _MessageBubble(msg: messages[i]);
                     },
