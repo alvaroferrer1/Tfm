@@ -98,6 +98,32 @@ def _safe_err(e: Exception) -> str:
         return "Demasiadas peticiones. Espera un momento e inténtalo de nuevo."
     return "Error interno. Inténtalo de nuevo. Si continúa, contacta al administrador."
 
+# ── Streak counter ───────────────────────────────────────────────────────────
+# telegram_user_id (str) -> {"count": int, "date": str}
+_streak: dict[str, dict] = {}
+
+
+def _update_streak(tg_user_id: str) -> int:
+    """Increments and returns today's action completion streak for this user."""
+    today = date.today().isoformat()
+    entry = _streak.get(str(tg_user_id), {})
+    if entry.get("date") != today:
+        entry = {"count": 0, "date": today}
+    entry["count"] += 1
+    _streak[str(tg_user_id)] = entry
+    return entry["count"]
+
+
+def _streak_text(count: int) -> str:
+    if count < 2:
+        return ""
+    if count >= 10:
+        return f"\n\n🔥🔥 <b>{count} acciones completadas</b> hoy — ¡máquina!"
+    if count >= 5:
+        return f"\n\n🔥 <b>Racha de {count}</b> — sigue así"
+    return f"\n\n✨ <b>{count} completadas</b> hoy"
+
+
 # ── OpenAI / Whisper (opcional) ───────────────────────────────────────────────
 
 _openai_client = None
@@ -622,9 +648,12 @@ def _format_action_card(action: dict, index: int = 0, total: int = 0) -> str:
 
     lines.append("")
 
+    # Compute new_price from discount % if not explicitly set
+    if atype == "rebajar" and not new_price and price_adj and current_price:
+        new_price = round(current_price * (1 - abs(int(price_adj)) / 100), 2)
     if atype == "rebajar" and new_price and current_price:
         recuperacion = round(new_price * qty, 2)
-        pct = int(price_adj) if price_adj else int((1 - new_price / current_price) * 100)
+        pct = abs(int(price_adj)) if price_adj else int((1 - new_price / current_price) * 100)
         lines += [
             f"💶 Precio actual: {current_price:.2f}€",
             f"💰 <b>Nuevo precio: {new_price:.2f}€  (−{abs(pct)}%)</b>",
@@ -669,7 +698,13 @@ def _action_card_keyboard(action: dict, remaining: int = 0) -> InlineKeyboardMar
     rows = []
 
     if atype == "rebajar":
-        price_label = f"✅ Confirmar {new_price:.2f}€" if new_price else "✅ Confirmar rebaja"
+        # Compute display price from discount % if new_price not stored
+        if not new_price:
+            _orig = float((action.get("batches") or {}).get("products", {}).get("price") or 0) if action.get("batches") else 0
+            _pct = abs(int(action.get("price_adjustment_pct") or 0))
+            if _orig and _pct:
+                new_price = round(_orig * (1 - _pct / 100), 2)
+        price_label = f"✅ Confirmar {new_price:.2f}€ (−{abs(int(action.get('price_adjustment_pct') or 0))}%)" if new_price else "✅ Confirmar rebaja"
         rows.append([
             InlineKeyboardButton(price_label, callback_data=f"action_confirm:{action_id}"),
             InlineKeyboardButton("❤️ Donar en vez", callback_data=f"action_donate:{action_id}"),
@@ -913,17 +948,48 @@ def _get_store_quick_stats() -> dict:
     """Estadísticas rápidas de la tienda para el mensaje de bienvenida."""
     try:
         actions = database.get_pending_actions(STORE_ID)
-        critical = sum(1 for a in actions if (a.get("priority_score") or 0) >= 85)
-        high = sum(1 for a in actions if (a.get("priority_score") or 0) >= 60)
-        return {"pending": len(actions), "critical": critical, "high": high - critical}
+        critical = [a for a in actions if (a.get("priority_score") or 0) >= 85]
+        high = [a for a in actions if 65 <= (a.get("priority_score") or 0) < 85]
+
+        critical_products = []
+        for a in critical[:3]:
+            batch = a.get("batches") or {}
+            prod = (batch.get("products") or {}) if batch else {}
+            name = prod.get("name", "Producto")
+            expiry = (batch.get("expiry_date") or "")
+            try:
+                days = (date.fromisoformat(expiry) - date.today()).days
+                days_txt = "HOY" if days == 0 else ("mañana" if days == 1 else f"en {days}d")
+            except Exception:
+                days_txt = expiry
+            critical_products.append({"name": name, "days": days_txt, "id": str(a.get("id", ""))})
+
+        first_action_id = critical[0].get("id", "") if critical else (actions[0].get("id", "") if actions else "")
+        return {
+            "pending": len(actions),
+            "critical": len(critical),
+            "high": len(high),
+            "critical_products": critical_products,
+            "first_action_id": str(first_action_id),
+        }
     except Exception:
-        return {"pending": 0, "critical": 0, "high": 0}
+        return {"pending": 0, "critical": 0, "high": 0, "critical_products": [], "first_action_id": ""}
 
 
 def _welcome_text(name: str, is_manager: bool, stats: dict | None = None) -> str:
     pending = (stats or {}).get("pending", 0)
     critical = (stats or {}).get("critical", 0)
     high = (stats or {}).get("high", 0)
+    critical_products = (stats or {}).get("critical_products", [])
+
+    # Saludo según la hora del día
+    _hour = datetime.now().hour
+    if 5 <= _hour < 12:
+        greeting_prefix = "Buenos días"
+    elif 12 <= _hour < 20:
+        greeting_prefix = "Buenas tardes"
+    else:
+        greeting_prefix = "Buenas noches"
 
     if critical >= 3:
         status_icon = "🔴"
@@ -942,6 +1008,14 @@ def _welcome_text(name: str, is_manager: bool, stats: dict | None = None) -> str
         status_icon = "✅"
         status_text = "Sin alertas. La tienda está en orden."
 
+    # Lista de productos críticos
+    critical_list = ""
+    if critical_products:
+        lines = []
+        for cp in critical_products:
+            lines.append(f"  🔴 <b>{html.escape(cp['name'])}</b> — caduca {cp['days']}")
+        critical_list = "\n" + "\n".join(lines) + "\n"
+
     if is_manager:
         role_line = "🔑 <b>ENCARGADO</b> — acceso completo al sistema"
         menu_hint = (
@@ -958,8 +1032,9 @@ def _welcome_text(name: str, is_manager: bool, stats: dict | None = None) -> str
         )
 
     return (
-        f"Hola <b>{html.escape(name)}</b> 👋\n\n"
-        f"{status_icon}  {status_text}\n\n"
+        f"{greeting_prefix}, <b>{html.escape(name)}</b> 👋\n\n"
+        f"{status_icon}  {status_text}"
+        f"{critical_list}\n"
         f"{role_line}\n\n"
         f"{menu_hint}\n\n"
         f"Escríbeme en lenguaje natural o usa el menú de abajo."
@@ -1380,26 +1455,92 @@ async def _action_proveedores(update_or_query, context, user: Optional[dict], is
 
 
 async def _action_pedido(update_or_query, context, user: Optional[dict], is_callback=False):
-    keyboard = _back_keyboard()
     if not _is_manager(user):
         text = "🔒 La sugerencia de pedido es solo para encargados."
+        kb = _back_keyboard()
         if is_callback:
-            await update_or_query.edit_message_text(text, reply_markup=keyboard)
+            await update_or_query.edit_message_text(text, reply_markup=kb)
         else:
-            await _send(update_or_query, text, reply_markup=keyboard)
+            await _send(update_or_query, text, reply_markup=kb)
         return
+
+    # Show thinking indicator
+    if is_callback:
+        await update_or_query.edit_message_text("🛒 Analizando stock y merma histórica...")
+    else:
+        await _send(update_or_query, "🛒 Analizando stock y merma histórica...")
 
     try:
         loop = asyncio.get_running_loop()
         suggestions = await loop.run_in_executor(None, database.get_order_suggestions, STORE_ID)
-        text = _fmt.format_pedido(suggestions)
+
+        # Enrich with merma history per product
+        try:
+            merma_history = await loop.run_in_executor(None, database.get_merma_history, STORE_ID, 30)
+            # Build merma map: product_id -> total lost
+            merma_map: dict[str, float] = {}
+            for log in merma_history:
+                pid = str(log.get("product_id") or log.get("batch_id") or "")
+                if pid:
+                    merma_map[pid] = merma_map.get(pid, 0) + float(log.get("value_lost") or 0)
+        except Exception:
+            merma_map = {}
+
+        # Format AI-enhanced order suggestions
+        lines = [
+            "🛒 <b>Pedido semanal — análisis IA</b>",
+            f"<i>Basado en {len(suggestions)} productos · merma últimos 30d</i>",
+            "",
+        ]
+
+        if not suggestions:
+            lines.append("Sin sugerencias de pedido para esta semana.")
+        else:
+            for s in suggestions[:12]:
+                pid = str(s.get("product_id", ""))
+                name = (s.get("product_name") or s.get("name") or "Producto")[:28]
+                current = s.get("current_stock", s.get("quantity", 0))
+                suggested = s.get("suggested_quantity", s.get("reorder_qty", 20))
+                supplier = (s.get("supplier_name") or s.get("supplier") or "")[:16]
+                merma_val = merma_map.get(pid, 0)
+
+                # Risk indicator based on merma history
+                risk = "🔴" if merma_val > 20 else "🟡" if merma_val > 5 else "🟢"
+                merma_note = f" · merma {merma_val:.0f}€/mes" if merma_val > 0 else ""
+                supplier_note = f" · {supplier}" if supplier else ""
+
+                lines.append(f"{risk} <b>{name}</b>")
+                lines.append(f"   Stock: {current} uds → pedir <b>{suggested}</b>{supplier_note}{merma_note}")
+                lines.append("")
+
+        # AI recommendation note
+        high_merma = [(s, merma_map.get(str(s.get("product_id", "")), 0)) for s in suggestions]
+        high_merma.sort(key=lambda x: -x[1])
+        if high_merma and high_merma[0][1] > 10:
+            worst = high_merma[0][0]
+            worst_name = (worst.get("product_name") or worst.get("name") or "")[:20]
+            lines += [
+                f"⚠️ <b>Atención:</b> {worst_name} tiene alta merma histórica.",
+                "Considera pedir menos cantidad y con más frecuencia.",
+                "",
+            ]
+
+        text = "\n".join(lines)
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📄 Exportar PDF", callback_data="cmd:semana"),
+             InlineKeyboardButton("↩ Menú", callback_data="cmd:menu")],
+        ])
+
     except Exception as e:
+        logger.error(f"[pedido] Error: {e}", exc_info=True)
         text = "❌ Error calculando pedido. Inténtalo de nuevo."
+        kb = _back_keyboard()
 
     if is_callback:
-        await update_or_query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+        await update_or_query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
     else:
-        await _send(update_or_query, text, reply_markup=keyboard)
+        # Send as new message (the previous "analizando..." was already sent)
+        await _send(update_or_query, text, reply_markup=kb)
 
 
 async def _action_runbrief(update_or_query, context, user: Optional[dict], is_callback=False):
@@ -2453,6 +2594,14 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     stats = await _loop.run_in_executor(None, _get_store_quick_stats)
     manager = _is_manager(user)
     keyboard = _main_menu_keyboard(manager)
+
+    # Si hay acción urgente, añadir botón primario "Empezar por aquí" como primera fila
+    first_action_id = stats.get("first_action_id", "")
+    if first_action_id:
+        primary_row = [InlineKeyboardButton("⚡ Empezar por aquí →", callback_data=f"action_detail:{first_action_id}")]
+        combined_rows = [primary_row] + list(keyboard.inline_keyboard)
+        keyboard = InlineKeyboardMarkup(combined_rows)
+
     await update.message.reply_text(
         _welcome_text(tg_name, manager, stats),
         parse_mode=ParseMode.HTML,
@@ -2631,9 +2780,21 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         u_id = user.get("id", "") if user else ""
         u_name = (user.get("email") or "empleado").split("@")[0] if user else "empleado"
         try:
-            # Recuperar info antes de completar
+            # Recuperar info antes de completar — guard contra doble-tap
             pending = await _loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
             action = next((a for a in pending if a.get("id") == action_id), None)
+            if not action:
+                remaining = await _loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
+                text = "✅ <b>Ya estaba completada</b>\n\nEsta acción ya fue registrada anteriormente."
+                if remaining:
+                    keyboard = InlineKeyboardMarkup([
+                        [InlineKeyboardButton("▶️ Ver siguiente pendiente", callback_data=f"action_detail:{remaining[0]['id']}")],
+                        [InlineKeyboardButton("📋 Ver todas", callback_data="cmd:acciones"), InlineKeyboardButton("↩ Menú", callback_data="cmd:menu")],
+                    ])
+                else:
+                    keyboard = _main_menu_keyboard(_is_manager(user))
+                await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+                return
             await _loop.run_in_executor(None, database.complete_action, action_id, u_id)
 
             # Parar SLA tracking — el empleado ha confirmado la acción
@@ -2672,11 +2833,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 atype = action.get("action_type", "completar")
                 new_price = action.get("new_price")
                 original_price = float(product.get("price") or 0)
-                discount_pct = int(action.get("price_adjustment_pct") or 0)
+                discount_pct = abs(int(action.get("price_adjustment_pct") or 0))
                 qty = int(batch.get("quantity") or 0)
                 expiry = (batch.get("expiry_date") or "")
+                # Compute new_price from discount % if not stored
+                if atype == "rebajar" and not new_price and discount_pct and original_price > 0:
+                    new_price = round(original_price * (1 - discount_pct / 100), 2)
                 atype_text = {
-                    "rebajar": f"Precio actualizado a {new_price:.2f}€ — etiqueta el estante",
+                    "rebajar": f"Precio actualizado a {new_price:.2f}€ — etiqueta el estante" if new_price else "Precio rebajado — etiqueta el estante",
                     "retirar": f"{qty} unidades retiradas — registra en albarán de merma",
                     "mover": f"{qty} unidades trasladadas del almacén a tienda",
                     "revisar": "Revisado y conforme",
@@ -2704,6 +2868,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                         logger.debug(f"[label] PDF error: {_pe}")
             else:
                 summary = "✅ Acción completada"
+
+            # Streak counter
+            try:
+                tg_uid = str(update.effective_user.id) if hasattr(update, 'effective_user') and update.effective_user else ""
+                streak = _update_streak(tg_uid) if tg_uid else 0
+                summary += _streak_text(streak)
+            except Exception:
+                pass
 
             # Mostrar siguiente acción pendiente
             remaining = await _loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
@@ -2778,6 +2950,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         try:
             pending = await _loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
             action = next((a for a in pending if a.get("id") == action_id), None)
+            if not action:
+                rem = await _loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
+                text = "✅ <b>Ya estaba completada</b>\n\nEsta donación ya fue registrada anteriormente."
+                kb = InlineKeyboardMarkup([[InlineKeyboardButton("▶️ Siguiente", callback_data=f"action_detail:{rem[0]['id']}")]]) if rem else _main_menu_keyboard(_is_manager(user))
+                await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+                return
             batch = (action.get("batches") or {}) if action else {}
             product = (batch.get("products") or {}) if batch else {}
             name = product.get("name", "Producto")
@@ -2821,6 +2999,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 f"Deducción fiscal: <b>{deduccion:.2f}€</b>\n\n"
                 f"Quedan {len(remaining)} acciones pendientes."
             )
+            # Streak counter
+            try:
+                tg_uid = str(update.effective_user.id) if hasattr(update, 'effective_user') and update.effective_user else ""
+                streak = _update_streak(tg_uid) if tg_uid else 0
+                text += _streak_text(streak)
+            except Exception:
+                pass
             if remaining:
                 keyboard = InlineKeyboardMarkup([
                     [InlineKeyboardButton("▶️ Siguiente acción", callback_data=f"action_detail:{remaining[0]['id']}")],
@@ -2873,7 +3058,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 await _loop.run_in_executor(None, lambda: database.get_db().table("actions").update({
                     "action_type": "rebajar",
                     "new_price": new_price,
-                    "price_adjustment_pct": -50,
+                    "price_adjustment_pct": 50,
                     "notes": "Cambiado de donación a rebaja de precio",
                 }).eq("id", action_id).execute())
                 updated = await _loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
@@ -3480,6 +3665,18 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     # ── Callbacks de alertas de stock ──────────────────────────────────────────
     if data == "stock_skip":
         await query.answer("Entendido.")
+        await query.edit_message_reply_markup(reply_markup=None)
+        return
+
+    # ── SLA dismiss — empleado descarta seguimiento ──
+    if data.startswith("sla_dismiss:"):
+        action_id = data[12:]
+        try:
+            from backend.agents import notifier as _notifier
+            _notifier.acknowledge_alert(action_id)
+        except Exception:
+            pass
+        await query.answer("Entendido. Te avisaré si la situación empeora.")
         await query.edit_message_reply_markup(reply_markup=None)
         return
 
@@ -4674,6 +4871,7 @@ def run() -> None:
     app.add_handler(CommandHandler("logout", _cmd_logout))
     app.add_handler(CommandHandler("informe", _cmds._cmd_informe))
     app.add_handler(CommandHandler("semana", _cmds._cmd_semana))
+    app.add_handler(CommandHandler("hoja", _cmds._cmd_hoja))
     app.add_handler(CommandHandler("costes", _cmds._cmd_costes))
     app.add_handler(CommandHandler("reflexiones", _cmds._cmd_reflexiones))
     app.add_handler(CommandHandler("mapa", _cmds._cmd_mapa))

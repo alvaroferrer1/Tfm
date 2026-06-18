@@ -544,6 +544,13 @@ def _check_sla_violations(store_id: str) -> None:
         if violations:
             notifier.send_sla_escalation(store_id, violations)
             logger.info(f"[sla] {len(violations)} violaciones de SLA escaladas en {store_id}")
+        # Send follow-up DMs for unacknowledged critical alerts
+        try:
+            followups = notifier.check_sla_followups()
+            if followups:
+                logger.info(f"[sla] {followups} seguimientos enviados")
+        except Exception as fe:
+            logger.debug(f"[sla] check_sla_followups error: {fe}")
     except Exception as e:
         logger.debug(f"[sla] check_sla_violations error: {e}")
 

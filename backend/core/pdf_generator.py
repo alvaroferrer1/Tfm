@@ -457,6 +457,31 @@ def generate_price_label(
     pdf.set_xy(1, 97)
     pdf.cell(146, 6, "MermaOps  -  Reduccion inteligente de merma alimentaria", fill=True, align="C")
 
+    # QR code — product URL or encoded info (fallback: skip silently if qrcode not available)
+    try:
+        import qrcode
+        from PIL import Image
+        import tempfile
+        import os as _os
+        qr_content = f"MermaOps|{product_name[:20]}|{new_price:.2f}EUR|{expiry_date}"
+        qr = qrcode.QRCode(version=1, box_size=3, border=1)
+        qr.add_data(qr_content)
+        qr.make(fit=True)
+        qr_img = qr.make_image(fill_color="black", back_color="white")
+        tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        qr_img.save(tmp.name)
+        tmp.close()
+        # Place QR bottom-right: x=118, y=55, width=27, height=27
+        pdf.image(tmp.name, x=118, y=52, w=27, h=27)
+        _os.unlink(tmp.name)
+        # Small label under QR
+        pdf.set_text_color(100, 100, 100)
+        pdf.set_font("Helvetica", "", 5)
+        pdf.set_xy(118, 79)
+        pdf.cell(27, 4, "Escanea para info", align="C")
+    except Exception:
+        pass  # QR optional — label still works without it
+
     buf = io.BytesIO()
     pdf.output(buf)
     return buf.getvalue()
@@ -1295,6 +1320,90 @@ def generate_promo_onepager_pdf(store_name: str = "", kpis: dict | None = None) 
     pdf.set_text_color(140, 220, 180)
     pdf.set_xy(110, 287)
     pdf.cell(86, 7, "alvaroferrermarg@gmail.com  |  @ChuwiMermaOpsBot", align="R")
+
+    buf = io.BytesIO()
+    pdf.output(buf)
+    return buf.getvalue()
+
+
+# ── Parte diario firmable ──────────────────────────────────────────────────────
+
+def generate_daily_sheet_pdf(
+    store_name: str,
+    date_str: str,
+    completed_actions: list,
+    encargado: str = "",
+) -> bytes:
+    """
+    Parte diario firmable: lista de acciones completadas con firma al pie.
+    Formato A4 vertical.
+    """
+    pdf = _make_pdf(store_name)
+    pdf.add_page()
+
+    # Header
+    pdf.set_fill_color(*_GREEN_DARK)
+    pdf.rect(0, 0, 210, 28, style="F")
+    pdf.set_text_color(*_WHITE)
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.set_xy(0, 6)
+    pdf.cell(210, 10, _safe(f"PARTE DIARIO - {date_str}"), align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_xy(0, 17)
+    pdf.cell(210, 8, _safe(f"{store_name}  .  MermaOps"), align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
+    pdf.set_text_color(*_TEXT_DARK)
+    pdf.set_xy(15, 35)
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.cell(180, 8, _safe(f"Acciones completadas: {len(completed_actions)}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
+    pdf.set_xy(15, 44)
+    pdf.set_font("Helvetica", "", 9)
+
+    if not completed_actions:
+        pdf.cell(180, 8, "No se han completado acciones hoy.", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    else:
+        # Table header
+        pdf.set_fill_color(243, 244, 246)
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.cell(70, 7, "Producto", border=1, fill=True)
+        pdf.cell(30, 7, "Accion", border=1, fill=True)
+        pdf.cell(20, 7, "Cant.", border=1, fill=True)
+        pdf.cell(30, 7, "Completada por", border=1, fill=True)
+        pdf.cell(30, 7, "Hora", border=1, fill=True, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
+        pdf.set_font("Helvetica", "", 8)
+        for a in completed_actions[:25]:
+            batch = a.get("batches") or {}
+            prod = (batch.get("products") or {}) if batch else {}
+            name = _safe((prod.get("name", "Producto"))[:28])
+            atype = _safe(((a.get("action_type") or "?").upper())[:12])
+            qty = str(int((batch.get("quantity") or 0)))
+            completed_by = _safe(((a.get("completed_by") or "?").split("@")[0])[:14])
+            completed_at = (a.get("completed_at") or "")[:16].replace("T", " ")
+
+            pdf.cell(70, 6, name, border=1)
+            pdf.cell(30, 6, atype, border=1)
+            pdf.cell(20, 6, qty, border=1)
+            pdf.cell(30, 6, completed_by, border=1)
+            pdf.cell(30, 6, completed_at[-5:] if completed_at else "-", border=1, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
+    # Firma al pie
+    y_sign = max(pdf.get_y() + 20, 240)
+    pdf.set_xy(15, y_sign)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.cell(90, 8, _safe(f"Encargado: {encargado}"))
+    pdf.cell(90, 8, _safe(f"Fecha: {date_str}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.set_xy(15, y_sign + 15)
+    pdf.cell(80, 8, "Firma: _________________________")
+    pdf.cell(80, 8, "Sello: _________________________")
+
+    # Footer
+    pdf.set_xy(0, 285)
+    pdf.set_fill_color(*_GREEN_DARK)
+    pdf.set_text_color(*_WHITE)
+    pdf.set_font("Helvetica", "B", 7)
+    pdf.cell(210, 8, "MermaOps  -  Reduccion inteligente de merma alimentaria", fill=True, align="C")
 
     buf = io.BytesIO()
     pdf.output(buf)

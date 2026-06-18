@@ -410,6 +410,8 @@ def notify_critical_action(store_id: str, action: dict) -> None:
         ]]}
 
     # Registrar SLA antes de enviar
+    sent_to = []
+    photo_url = product.get("photo_url") or product.get("image_url") or ""
     if action_id:
         _sla_tracker[action_id] = {
             "sent_at": time.monotonic(),
@@ -417,6 +419,11 @@ def notify_critical_action(store_id: str, action: dict) -> None:
             "acknowledged": False,
             "store_id": store_id,
             "title": f"{action_type} — {name}",
+            "chat_ids": sent_to,
+            "followup_sent": False,
+            "expiry": expiry,
+            "name": name,
+            "action_type": (action.get("action_type") or "acción").lower(),
         }
 
     url = f"https://api.telegram.org/bot{_TOKEN}/sendMessage"
@@ -424,18 +431,110 @@ def notify_critical_action(store_id: str, action: dict) -> None:
         tg_id = u.get("telegram_user_id")
         if not tg_id:
             continue
+        sent = False
+        if photo_url:
+            try:
+                resp = requests.post(
+                    f"https://api.telegram.org/bot{_TOKEN}/sendPhoto",
+                    json={
+                        "chat_id": str(tg_id),
+                        "photo": photo_url,
+                        "caption": text[:1024],
+                        "parse_mode": "HTML",
+                        "reply_markup": keyboard,
+                    },
+                    timeout=10,
+                )
+                sent = resp.status_code == 200
+            except Exception:
+                pass
+        if not sent:
+            try:
+                resp = requests.post(url, json={
+                    "chat_id": str(tg_id),
+                    "text": text,
+                    "parse_mode": "HTML",
+                    "reply_markup": keyboard,
+                }, timeout=10)
+                if resp.status_code == 200:
+                    sent = True
+                else:
+                    _send_chunk(str(tg_id), text.replace("<b>", "").replace("</b>", "").replace("<i>", "").replace("</i>", ""))
+            except Exception as e:
+                logger.warning(f"[notifier] DM falló para {tg_id}: {e}")
+        if sent:
+            sent_to.append(str(tg_id))
+
+
+def check_sla_followups() -> int:
+    """
+    Checks for unacknowledged critical alerts and sends follow-up reminders.
+    Call this from the scheduler every 30 minutes.
+    Returns number of follow-ups sent.
+    """
+    if not _TOKEN:
+        return 0
+    sent = 0
+    now = time.monotonic()
+    for action_id, entry in list(_sla_tracker.items()):
+        if entry.get("acknowledged") or entry.get("followup_sent"):
+            continue
+        elapsed_min = (now - entry["sent_at"]) / 60
+        if elapsed_min < _SLA_CRITICAL_MINUTES:
+            continue
+
+        # Check if action is still pending in DB
         try:
-            resp = requests.post(url, json={
-                "chat_id": str(tg_id),
-                "text": text,
-                "parse_mode": "HTML",
-                "reply_markup": keyboard,
-            }, timeout=10)
-            if resp.status_code != 200:
-                # Fallback sin botones
-                _send_chunk(str(tg_id), text.replace("<b>", "").replace("</b>", "").replace("<i>", "").replace("</i>", ""))
-        except Exception as e:
-            logger.warning(f"[notifier] DM con botones falló para {tg_id}: {e}")
+            from backend.core.database import get_db
+            row = get_db().table("actions").select("status").eq("id", action_id).maybe_single().execute()
+            if not row.data or row.data.get("status") != "pending":
+                entry["acknowledged"] = True
+                continue
+        except Exception:
+            continue
+
+        name = entry.get("name", "producto")
+        action_type = entry.get("action_type", "acción")
+        expiry = entry.get("expiry", "")
+        chat_ids = entry.get("chat_ids", [])
+
+        # Compute time remaining
+        try:
+            from datetime import date as _date_cls
+            days_left = (_date_cls.fromisoformat(expiry) - _date_cls.today()).days if expiry else 1
+            urgency = "⚠️ QUEDAN POCAS HORAS" if days_left <= 0 else f"caduca en {days_left}d"
+        except Exception:
+            urgency = "acción pendiente"
+
+        followup_text = (
+            f"🔔 <b>Seguimiento — sin respuesta</b>\n\n"
+            f"<b>{name}</b> sigue sin {action_type}.\n"
+            f"Han pasado {int(elapsed_min)} minutos · {urgency}.\n\n"
+            f"¿Lo gestionas ahora?"
+        )
+        keyboard = {"inline_keyboard": [[
+            {"text": "✅ Lo gestiono ahora", "callback_data": f"action_detail:{action_id}"},
+            {"text": "⏸ Ignorar", "callback_data": f"sla_dismiss:{action_id}"},
+        ]]}
+
+        url = f"https://api.telegram.org/bot{_TOKEN}/sendMessage"
+        for chat_id in chat_ids:
+            try:
+                resp = requests.post(url, json={
+                    "chat_id": str(chat_id),
+                    "text": followup_text,
+                    "parse_mode": "HTML",
+                    "reply_markup": keyboard,
+                }, timeout=10)
+                if resp.status_code == 200:
+                    sent += 1
+            except Exception as e:
+                logger.warning(f"[sla followup] Error: {e}")
+
+        entry["followup_sent"] = True
+        logger.info(f"[sla] Follow-up sent for action {action_id} after {int(elapsed_min)} min")
+
+    return sent
 
 
 def notify_low_stock(store_id: str, alerts: list[dict]) -> int:

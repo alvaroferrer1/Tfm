@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import html
+import logging
 from datetime import date
 from typing import Optional
 
@@ -27,6 +28,8 @@ from backend.core import database, llm
 from backend.core.chuwi_persistence import (
     STORE_ID, _get_user, _is_manager,
 )
+
+logger = logging.getLogger("mermaops.chuwi_commands")
 
 
 # ── Utilities re-exported from chuwi.py (cargadas en runtime) ─────────────────
@@ -948,6 +951,56 @@ async def _cmd_semana(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         done.set()
         await task
         await placeholder.edit_text(_safe_err(e))
+
+
+async def _cmd_hoja(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Genera el parte diario en PDF — lista de acciones completadas firmable."""
+    user = await asyncio.get_running_loop().run_in_executor(None, _get_user, update.effective_user.id)
+    if not user:
+        await update.message.reply_text("Primero vincula tu cuenta. Escribe /start.")
+        return
+
+    await update.message.reply_text("Generando parte del dia...")
+
+    try:
+        today = date.today().isoformat()
+        # Get today's completed actions
+        completed = database.get_db().table("actions") \
+            .select("*, batches(expiry_date, quantity, products(name, category, price, pasillo))") \
+            .eq("store_id", STORE_ID) \
+            .eq("status", "completed") \
+            .gte("completed_at", f"{today}T00:00:00") \
+            .order("completed_at", desc=False) \
+            .execute()
+
+        actions_data = completed.data or []
+
+        from backend.core.pdf_generator import generate_daily_sheet_pdf
+        pdf_bytes = generate_daily_sheet_pdf(
+            store_name="Super Martinez",
+            date_str=today,
+            completed_actions=actions_data,
+            encargado=user.get("email", "").split("@")[0],
+        )
+
+        import io
+        await update.message.reply_document(
+            document=io.BytesIO(pdf_bytes),
+            filename=f"parte_{today}.pdf",
+            caption=(
+                f"<b>Parte del dia - {today}</b>\n"
+                f"{len(actions_data)} acciones completadas\n"
+                "Firmar y archivar."
+            ),
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception as e:
+        logger.error(f"[hoja] Error: {e}", exc_info=True)
+        await update.message.reply_text(
+            "No se pudo generar el parte. Intentalo de nuevo.\n"
+            f"<i>Error: {str(e)[:80]}</i>",
+            parse_mode=ParseMode.HTML,
+        )
 
 
 # ── Demo callbacks ────────────────────────────────────────────────────────────
