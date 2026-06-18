@@ -431,6 +431,9 @@ def _main_menu_keyboard(is_manager: bool) -> InlineKeyboardMarkup:
             InlineKeyboardButton("📊 Proyección 7 días", callback_data="cmd:merma7"),
             InlineKeyboardButton("🌤 Tiempo tienda", callback_data="cmd:tiempo"),
         ],
+        [
+            InlineKeyboardButton("📦 Almacén", callback_data="cmd:almacen"),
+        ],
     ]
     if is_manager:
         rows.append([
@@ -444,6 +447,10 @@ def _main_menu_keyboard(is_manager: bool) -> InlineKeyboardMarkup:
         rows.append([
             InlineKeyboardButton("✨ Insights IA", callback_data="cmd:insights"),
             InlineKeyboardButton("🌤 Tiempo tienda", callback_data="cmd:tiempo"),
+        ])
+        rows.append([
+            InlineKeyboardButton("📊 Comparativa tiendas", callback_data="cmd:comparativa"),
+            InlineKeyboardButton("⚙️ Perfil tienda", callback_data="cmd:perfil"),
         ])
         rows.append([
             InlineKeyboardButton("⚙️ Generar brief ahora", callback_data="cmd:runbrief"),
@@ -2708,6 +2715,248 @@ async def _cmd_simular(update, context):
     await _action_simular(update, context, user, is_callback=False)
 
 
+async def _action_almacen(update_or_query, context, user: Optional[dict], is_callback=False):
+    """Resumen del almacén: stock con alertas de caducidad próxima."""
+    keyboard = _back_keyboard()
+    try:
+        loop = asyncio.get_running_loop()
+        batches = await loop.run_in_executor(None, database.get_batches_expiring_soon, STORE_ID, 14)
+
+        if not batches:
+            text = (
+                "✅ <b>Almacén sin lotes próximos a caducar</b>\n\n"
+                "<i>No hay productos en almacén con caducidad en los próximos 14 días.</i>"
+            )
+        else:
+            criticos = [b for b in batches if (
+                date.fromisoformat(b.get("expiry_date", "9999-12-31")) - date.today()
+            ).days <= 3]
+            proximos = [b for b in batches if 3 < (
+                date.fromisoformat(b.get("expiry_date", "9999-12-31")) - date.today()
+            ).days <= 7]
+            resto = [b for b in batches if (
+                date.fromisoformat(b.get("expiry_date", "9999-12-31")) - date.today()
+            ).days > 7]
+
+            total_val = sum(
+                (b.get("quantity") or 0) * float((b.get("products") or {}).get("price") or 0)
+                for b in batches
+            )
+
+            lines = [
+                f"┌{'━' * 34}┐",
+                f"│  📦  <b>ALMACÉN — stock próx. caducidad</b>",
+                f"│  📅  {date.today().isoformat()}",
+                f"└{'━' * 34}┘",
+                "",
+                f"<i>{len(batches)} lotes · 💰 {total_val:.2f}€ en riesgo</i>",
+                "",
+            ]
+
+            if criticos:
+                lines += [f"🔴 <b>CRÍTICO ≤3 días</b>  <i>({len(criticos)} lotes)</i>", "─" * 30]
+                for b in criticos[:5]:
+                    p = (b.get("products") or {})
+                    name = p.get("name", "Producto")
+                    qty = b.get("quantity") or 0
+                    exp = b.get("expiry_date", "")
+                    try:
+                        d = (date.fromisoformat(exp) - date.today()).days
+                        d_txt = "<b>HOY</b>" if d == 0 else f"<b>{d}d</b>"
+                    except Exception:
+                        d_txt = exp
+                    lines.append(f"• <b>{html.escape(name)}</b>  ·  {qty} uds  ·  {d_txt}")
+                lines.append("")
+
+            if proximos:
+                lines += [f"🟡 <b>ATENCIÓN 4-7 días</b>  <i>({len(proximos)} lotes)</i>", "─" * 30]
+                for b in proximos[:5]:
+                    p = (b.get("products") or {})
+                    name = p.get("name", "Producto")
+                    qty = b.get("quantity") or 0
+                    exp = b.get("expiry_date", "")
+                    try:
+                        d = (date.fromisoformat(exp) - date.today()).days
+                    except Exception:
+                        d = "?"
+                    lines.append(f"• {html.escape(name)}  ·  {qty} uds  ·  {d}d")
+                lines.append("")
+
+            if resto:
+                lines.append(f"🟢 <b>OK 8-14 días:</b> {len(resto)} lotes más sin urgencia")
+
+            lines.append("\n<i>Mover a tienda los críticos antes del brief de mañana</i>")
+            text = "\n".join(lines)
+
+    except Exception as e:
+        logger.error(f"[almacen] {e}", exc_info=True)
+        text = "❌ Error obteniendo datos del almacén. Inténtalo de nuevo."
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⚡ Ver acciones pendientes", callback_data="cmd:acciones"),
+         InlineKeyboardButton("🗺 Ruta del día", callback_data="cmd:ruta")],
+        [InlineKeyboardButton("↩ Menú", callback_data="cmd:menu")],
+    ])
+    if is_callback:
+        await update_or_query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+    else:
+        await _send(update_or_query, text, reply_markup=kb)
+
+
+async def _action_perfil(update_or_query, context, user: Optional[dict], is_callback=False):
+    """Ver y configurar el perfil de la tienda — solo encargado."""
+    keyboard = _back_keyboard()
+
+    if not _is_manager(user):
+        text = "🔒 La configuración de la tienda es solo para encargados."
+        if is_callback:
+            await update_or_query.edit_message_text(text, reply_markup=keyboard)
+        else:
+            await _send(update_or_query, text, reply_markup=keyboard)
+        return
+
+    try:
+        loop = asyncio.get_running_loop()
+
+        def _get_profile():
+            store = database.get_db().table("stores").select("id, name, config").eq("id", STORE_ID).single().execute()
+            d = store.data or {}
+            cfg = d.get("config") or {}
+            return d, cfg
+
+        store_data, cfg = await loop.run_in_executor(None, _get_profile)
+        name = store_data.get("name") or "Super Martínez"
+        city = cfg.get("city") or "Madrid"
+        zone = cfg.get("zone_type") or "residencial"
+        size = cfg.get("store_size") or "mediano"
+        lat = cfg.get("lat") or 40.4168
+        lon = cfg.get("lon") or -3.7038
+
+        lines = [
+            f"┌{'━' * 34}┐",
+            f"│  🏪  <b>PERFIL TIENDA</b>",
+            f"│  🆔  <i>{html.escape(STORE_ID)}</i>",
+            f"└{'━' * 34}┘",
+            "",
+            f"🏪 <b>Nombre:</b> {html.escape(name)}",
+            f"🏙 <b>Ciudad:</b> {html.escape(city)}",
+            f"📍 <b>Coordenadas:</b> {lat:.4f}, {lon:.4f}",
+            f"📐 <b>Tamaño:</b> {html.escape(size)}",
+            f"🗺 <b>Zona:</b> {html.escape(zone)}",
+            "",
+            "━" * 36,
+            "⚙️ <b>Configurar</b> — escribe en Telegram:",
+            "",
+            "<code>/perfil ciudad Madrid</code>",
+            "<code>/perfil zona residencial</code>",
+            "<code>/perfil tamano grande</code>",
+            "<code>/perfil lat 40.4168 lon -3.7038</code>",
+            "",
+            "<i>Las coordenadas afectan al tiempo Open-Meteo que ves en /tiempo</i>",
+        ]
+        text = "\n".join(lines)
+
+    except Exception as e:
+        logger.error(f"[perfil] {e}", exc_info=True)
+        text = "❌ Error obteniendo el perfil. Inténtalo de nuevo."
+
+    if is_callback:
+        await update_or_query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+    else:
+        await _send(update_or_query, text, reply_markup=keyboard)
+
+
+async def _action_comparativa(update_or_query, context, user: Optional[dict], is_callback=False):
+    """Benchmark de la tienda vs otras de la cadena — solo encargado."""
+    keyboard = _back_keyboard()
+
+    if not _is_manager(user):
+        text = "🔒 La comparativa entre tiendas es solo para encargados."
+        if is_callback:
+            await update_or_query.edit_message_text(text, reply_markup=keyboard)
+        else:
+            await _send(update_or_query, text, reply_markup=keyboard)
+        return
+
+    try:
+        loop = asyncio.get_running_loop()
+        stores = await loop.run_in_executor(None, database.get_stores_comparison, STORE_ID)
+
+        if not stores:
+            text = (
+                "📊 <b>Sin datos de comparativa</b>\n\n"
+                "La tabla de benchmark está vacía todavía.\n"
+                "Los datos se acumulan automáticamente cada mes."
+            )
+        else:
+            current = next((s for s in stores if s.get("is_current")), None)
+            others = [s for s in stores if not s.get("is_current")]
+
+            lines = [
+                f"┌{'━' * 34}┐",
+                f"│  📊  <b>COMPARATIVA — cadena de tiendas</b>",
+                f"└{'━' * 34}┘",
+                "",
+            ]
+
+            if current:
+                rank = current.get("rank", "?")
+                total = len(stores)
+                merma_pct = float(current.get("merma_rate_pct") or 0)
+                val = float(current.get("merma_value_eur") or 0)
+                actions = current.get("actions_completed") or 0
+                donated = float(current.get("donated_value_eur") or 0)
+
+                medal = "🥇" if rank == 1 else "🥈" if rank == 2 else "🥉" if rank == 3 else f"#{rank}"
+                lines += [
+                    f"{medal} <b>Tu tienda — Posición {rank}/{total}</b>",
+                    f"  📉 Tasa merma: <b>{merma_pct:.2f}%</b>",
+                    f"  💸 Merma mes: <b>{val:.2f}€</b>",
+                    f"  ✅ Acciones: <b>{actions}</b>",
+                    f"  ❤️  Donado: <b>{donated:.2f}€</b>",
+                    "",
+                    "━" * 36,
+                    "<b>Ranking completo:</b>",
+                ]
+
+            for s in stores[:8]:
+                rank = s.get("rank", "?")
+                sname = html.escape((s.get("store_name") or f"Tienda {rank}")[:20])
+                merma = float(s.get("merma_rate_pct") or 0)
+                is_curr = s.get("is_current", False)
+                medal = "🥇" if rank == 1 else "🥈" if rank == 2 else "🥉" if rank == 3 else f"  {rank}."
+                curr_mark = " ← <b>tú</b>" if is_curr else ""
+                trend = "📈" if float(s.get("trend_vs_prev_month") or 0) > 0 else "📉"
+                lines.append(f"{medal} {sname}  ·  {merma:.2f}% merma {trend}{curr_mark}")
+
+            if not current:
+                lines.append("\n<i>Tu tienda no tiene datos en este período todavía.</i>")
+            else:
+                if rank == 1:
+                    lines.append("\n🏆 <b>¡Sois la tienda con menos merma de la cadena!</b>")
+                elif rank <= len(stores) // 2:
+                    lines.append(f"\n💪 Estáis en la primera mitad. A por el top 3.")
+                else:
+                    gap = float(stores[0].get("merma_rate_pct") or 0)
+                    lines.append(f"\n🎯 La líder tiene {gap:.2f}% merma. Reducid {merma_pct - gap:.2f}pp para llegar al 1er puesto.")
+
+            text = "\n".join(str(l) for l in lines)
+
+    except Exception as e:
+        logger.error(f"[comparativa] {e}", exc_info=True)
+        text = "❌ Error obteniendo comparativa. Inténtalo de nuevo."
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🌱 ESG / Impacto", callback_data="cmd:esg"),
+         InlineKeyboardButton("📊 Dashboard", callback_data="cmd:stats")],
+        [InlineKeyboardButton("↩ Menú", callback_data="cmd:menu")],
+    ])
+    if is_callback:
+        await update_or_query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+    else:
+        await _send(update_or_query, text, reply_markup=kb)
+
+
 _ACTION_MAP = {
     "brief": _action_brief,
     "stats": _action_stats,
@@ -2735,6 +2984,9 @@ _ACTION_MAP = {
     "merma7": _action_merma7,
     "tiempo": _action_tiempo,
     "insights": _action_insights,
+    "almacen": _action_almacen,
+    "perfil": _action_perfil,
+    "comparativa": _action_comparativa,
 }
 
 
@@ -4776,6 +5028,9 @@ async def _post_init(application) -> None:
         BotCommand("hoy", "Resumen express del día en segundos"),
         BotCommand("tiempo", "Tiempo de la tienda hoy y 5 días 🌤"),
         BotCommand("insights", "Insights IA estratégicos del día ✨ (encargado)"),
+        BotCommand("almacen", "Stock del almacén con alertas de caducidad próxima 📦"),
+        BotCommand("comparativa", "Benchmark vs otras tiendas de la cadena 📊 (encargado)"),
+        BotCommand("perfil", "Ver y configurar parámetros de la tienda ⚙️ (encargado)"),
     ])
 
 
@@ -4968,11 +5223,68 @@ def run() -> None:
         user = await asyncio.get_running_loop().run_in_executor(None, _get_user, update.effective_user.id)
         await _action_insights(update, ctx, user, is_callback=False)
 
+    async def handle_almacen(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        user = await asyncio.get_running_loop().run_in_executor(None, _get_user, update.effective_user.id)
+        await _action_almacen(update, ctx, user, is_callback=False)
+
+    async def handle_comparativa(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        user = await asyncio.get_running_loop().run_in_executor(None, _get_user, update.effective_user.id)
+        await _action_comparativa(update, ctx, user, is_callback=False)
+
+    async def handle_perfil_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        """Muestra perfil o actualiza parámetros: /perfil ciudad Madrid, /perfil lat 40.4 lon -3.7"""
+        user = await asyncio.get_running_loop().run_in_executor(None, _get_user, update.effective_user.id)
+        if not _is_manager(user):
+            await update.message.reply_text("🔒 Solo para encargados.", reply_markup=_back_keyboard())
+            return
+        args = ctx.args or []
+        if not args:
+            await _action_perfil(update, ctx, user, is_callback=False)
+            return
+        # /perfil ciudad Madrid / /perfil zona residencial / /perfil tamano grande / /perfil lat X lon Y
+        key = args[0].lower()
+        val = " ".join(args[1:])
+        valid_keys = {"ciudad", "zona", "tamano", "tamaño"}
+        try:
+            loop = asyncio.get_running_loop()
+            def _update_cfg():
+                store = database.get_db().table("stores").select("config").eq("id", STORE_ID).single().execute()
+                cfg = dict(store.data.get("config") or {})
+                if key == "ciudad":
+                    cfg["city"] = val
+                elif key in ("zona", "zone"):
+                    cfg["zone_type"] = val
+                elif key in ("tamano", "tamaño", "size"):
+                    cfg["store_size"] = val
+                elif key == "lat" and len(args) >= 4 and args[2].lower() == "lon":
+                    cfg["lat"] = float(args[1])
+                    cfg["lon"] = float(args[3])
+                else:
+                    return None
+                database.get_db().table("stores").update({"config": cfg}).eq("id", STORE_ID).execute()
+                return cfg
+            new_cfg = await loop.run_in_executor(None, _update_cfg)
+            if new_cfg is None:
+                await update.message.reply_text(
+                    "Uso: /perfil ciudad [ciudad] | /perfil zona [tipo] | /perfil tamano [pequeño/mediano/grande] | /perfil lat X lon Y",
+                    reply_markup=_back_keyboard()
+                )
+            else:
+                await update.message.reply_text(
+                    f"✅ Perfil actualizado.\n\nUsa /tiempo para ver el tiempo con las nuevas coordenadas.",
+                    reply_markup=_back_keyboard()
+                )
+        except Exception as e:
+            await update.message.reply_text(f"❌ Error actualizando perfil: {str(e)[:80]}", reply_markup=_back_keyboard())
+
     app.add_handler(CommandHandler("donar", handle_donar))
     app.add_handler(CommandHandler("esg", handle_esg))
     app.add_handler(CommandHandler("prediccion", handle_prediccion))
     app.add_handler(CommandHandler("tiempo", handle_tiempo))
     app.add_handler(CommandHandler("insights", handle_insights))
+    app.add_handler(CommandHandler("almacen", handle_almacen))
+    app.add_handler(CommandHandler("comparativa", handle_comparativa))
+    app.add_handler(CommandHandler("perfil", handle_perfil_cmd))
 
     async def handle_merma(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         user = await asyncio.get_running_loop().run_in_executor(None, _get_user, update.effective_user.id)

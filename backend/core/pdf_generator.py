@@ -936,7 +936,7 @@ def generate_tfm_defense_pdf(
         ("IA / LLM", "Claude API (Anthropic): Opus 4.8, Sonnet 4.6, Haiku 4.5"),
         ("Base de datos", "Supabase (PostgreSQL + Auth + Realtime + Vector embeddings RAG)"),
         ("App movil", "Flutter (Android/iOS/Web) - 9 pantallas, Material 3, GoRouter, Realtime, plano CustomPainter"),
-        ("Telegram", "python-telegram-bot 21 - 30+ comandos, streaming, botones inline, fotos/voz, /tiempo, /insights"),
+        ("Telegram", "python-telegram-bot 21 - 35+ comandos: /tiempo /insights /almacen /comparativa /perfil, fotos, voz"),
         ("Meteorologia", "Open-Meteo API - tiempo por coordenadas reales de la tienda, 7 dias"),
         ("Seguridad", "JWT Supabase, rate limiting, validacion barcode, CORS configurable"),
         ("Tests", "pytest, 774 tests, 0 fallos, < 3s, sin conexion real a Supabase"),
@@ -1000,6 +1000,14 @@ def generate_tfm_defense_pdf(
             "y permite botones inline para confirmar acciones con un toque. En la demo: "
             "80% de acciones completadas desde Telegram sin abrir la app."
         ),
+        (
+            "Como funciona el benchmark multi-tienda y el tiempo real?",
+            "La tabla store_comparison agrega merma, donaciones y acciones por tienda y mes. "
+            "/comparativa muestra ranking con posicion actual y gap vs lider. "
+            "El tiempo real usa Open-Meteo con lat/lon propias de cada tienda (configurables "
+            "con /perfil lat X lon Y). Si hay calor >30C 2 dias, la prediccion sube urgencia "
+            "de carnicos y lacteos automaticamente. Cada tienda tiene su propio contexto climatico."
+        ),
     ]):
         pdf.set_fill_color(*_GREEN_LIGHT)
         pdf.set_text_color(*_GREEN_DARK)
@@ -1060,8 +1068,8 @@ def generate_tfm_defense_pdf(
         ("Predictor", "Open-Meteo real. Lenguaje practico: 'Vienen dias de calor...' Streaming activo."),
         ("Vision", "Detecta desperfectos fisicos (abollado, humedo, golpes). Lenguaje de pasillo."),
         ("Reportero", "Brief en 30 segundos. Jerga espanola. Normativa citada. Tendencia automatica."),
-        ("Flutter app", "9 pantallas. Plano real CustomPainter. Tarjeta tiempo Open-Meteo. Insights IA. Export CSV."),
-        ("Telegram", "30+ comandos. /tiempo Open-Meteo. /insights Haiku. PDF descargable. Fotos+voz."),
+        ("Flutter app", "9 pantallas. Plano CustomPainter. Tiempo Open-Meteo. Insights IA. Almacen. Export CSV."),
+        ("Telegram", "35+ comandos. /almacen /tiempo /insights /comparativa /perfil. PDF. Fotos+voz."),
         ("Seguridad", "Barcode SQL injection bloqueado. CORS seguro en prod. Auth en todos endpoints."),
         ("Tests", "774 tests reales. 0 fallos. Flujos scan->Kuine, FEFO, simulacion supervisor/empleado."),
         ("PDF defensa", "6 paginas + esta. Preguntas del tribunal. Metricas reales. Descargable via API."),
@@ -1287,7 +1295,9 @@ def generate_pitch_deck_pdf(store_name: str = "", kpis: dict | None = None) -> b
         ("Ruta", "Task routing", "Aisle-optimized sequence  -  saves ~8min per employee per day"),
         ("Vision", "Photo analysis", "Haiku 4.5 Vision  -  damage, expiry, freshness in < 2s  -  cached"),
         ("Notificador", "Proactive alerts", "Quiet hours + dedup 1/day/batch  -  low-stock Telegram alerts"),
-        ("Reportero", "Reports & PDFs", "Daily briefs + weekly/monthly PDFs  -  ESG metrics"),
+        ("Reportero", "Reports & PDFs", "Daily briefs + weekly/monthly PDFs  -  ESG  -  Insights IA (Haiku)"),
+        ("Almacen", "Warehouse alerts", "/almacen: expiry by aisle, 14-day horizon, move-to-shelf suggestions"),
+        ("Comparativa", "Chain benchmark", "/comparativa: rank vs all stores, merma rate, trend vs prev month"),
     ]
     palette = [_ACCENT, _ACCENT2, (200, 80, 200), (255, 160, 0)]
     for i, (name, role, desc) in enumerate(agents):

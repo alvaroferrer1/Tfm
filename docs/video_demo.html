@@ -308,8 +308,52 @@ canvas{position:fixed;top:0;left:0;pointer-events:none;opacity:.12}
   </div>
 </div>
 
-<!-- ESCENA 7: Cierre -->
-<div class="scene sc1-bg" id="s6">
+<!-- ESCENA 7: Telegram nuevos comandos -->
+<div class="scene" id="s6">
+  <div class="scene-content">
+    <div class="scene-label fade-up">Telegram — Nuevas capacidades</div>
+    <div class="scene-title fade-up delay-1" style="font-size:34px">35+ comandos. El encargado<br>controla todo desde <span>el móvil</span></div>
+    <div class="two-up fade-up delay-2" style="margin-top:20px;gap:20px;align-items:flex-start">
+      <div style="display:flex;flex-direction:column;gap:10px;width:300px">
+        <div class="card" style="border-left:3px solid #f59e0b">
+          <div class="card-title">📦 /almacen</div>
+          <div class="card-sub">Stock con caducidad en 14 días · críticos en rojo · mover a tienda</div>
+        </div>
+        <div class="card" style="border-left:3px solid #8b5cf6">
+          <div class="card-title">✨ /insights</div>
+          <div class="card-sub">5 insights estratégicos IA · Haiku 4.5 · basado en merma + tiempo + acciones</div>
+        </div>
+        <div class="card" style="border-left:3px solid #3b82f6">
+          <div class="card-title">📊 /comparativa</div>
+          <div class="card-sub">Ranking de tiendas de la cadena · posición actual · gap vs líder</div>
+        </div>
+        <div class="card" style="border-left:3px solid #059669">
+          <div class="card-title">🌤 /tiempo</div>
+          <div class="card-sub">Open-Meteo por lat/lon real de la tienda · forecast 5 días · alertas calor</div>
+        </div>
+        <div class="card" style="border-left:3px solid #6b7280">
+          <div class="card-title">⚙️ /perfil</div>
+          <div class="card-sub">Configura ciudad, zona, tamaño, coordenadas · afecta al tiempo y predictor</div>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;max-width:320px">
+        <div class="brief-box">
+          <div class="brief-title">📱 Menú encargado</div>
+          <div class="brief-line"><span class="brief-key">📋 Brief</span><span class="card-badge">PDF incluido</span></div>
+          <div class="brief-line"><span class="brief-key">⚡ Acciones</span><span class="card-badge">swipe confirm</span></div>
+          <div class="brief-line"><span class="brief-key">🔮 Predicción</span><span class="card-badge">7 días</span></div>
+          <div class="brief-line"><span class="brief-key">✨ Insights IA</span><span class="card-badge" style="background:#8b5cf6">nuevo</span></div>
+          <div class="brief-line"><span class="brief-key">📊 Comparativa</span><span class="card-badge" style="background:#3b82f6">nuevo</span></div>
+          <div class="brief-line"><span class="brief-key">📦 Almacén</span><span class="card-badge" style="background:#f59e0b">nuevo</span></div>
+          <div class="brief-line" style="border:none"><span class="brief-key">⚙️ Perfil</span><span class="card-badge" style="background:#6b7280">nuevo</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ESCENA 8: Cierre -->
+<div class="scene sc1-bg" id="s7">
   <div class="scene-content" style="text-align:center">
     <div class="scene-label fade-up" style="font-size:13px;letter-spacing:4px">SISTEMA EN PRODUCCIÓN</div>
     <div class="scene-title fade-up delay-1" style="font-size:56px">Merma<span>Ops</span></div>
@@ -340,13 +384,14 @@ draw();
 
 // scenes
 const SCENES = [
-  {dur:6000},  // intro
-  {dur:7000},  // problema
-  {dur:11000}, // telegram
-  {dur:9000},  // dashboard
-  {dur:8000},  // accion
-  {dur:8000},  // agentes
-  {dur:7000},  // cierre
+  {dur:6000},  // s0 intro
+  {dur:7000},  // s1 problema
+  {dur:11000}, // s2 telegram
+  {dur:9000},  // s3 dashboard
+  {dur:8000},  // s4 accion
+  {dur:8000},  // s5 agentes
+  {dur:9000},  // s6 telegram nuevos comandos
+  {dur:7000},  // s7 cierre
 ];
 let cur=0, elapsed=0, total=SCENES.reduce((a,b)=>a+b.dur,0);
 let running=true, t0=Date.now();
