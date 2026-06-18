@@ -15,6 +15,7 @@ import '../features/suppliers/suppliers_screen.dart';
 import '../features/chat/chat_screen.dart';
 import '../features/onboarding/onboarding_screen.dart';
 import '../features/demo/demo_control_screen.dart';
+import '../features/warehouse/warehouse_screen.dart';
 import 'shell_scaffold.dart';
 
 CustomTransitionPage<void> _sharedAxisPage(
@@ -128,6 +129,12 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: '/demo',
             pageBuilder: (context, state) => _fadePage(
               state, const DemoControlScreen(),
+            ),
+          ),
+          GoRoute(
+            path: '/warehouse',
+            pageBuilder: (context, state) => _sharedAxisPage(
+              state, const WarehouseScreen(),
             ),
           ),
           GoRoute(

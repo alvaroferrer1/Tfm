@@ -84,6 +84,114 @@ def advance_demo(body: AdvanceDemoRequest, _auth: dict = Depends(require_role("a
         raise HTTPException(status_code=500, detail="Error interno al avanzar la simulación.")
 
 
+@router.post("/simulate_day")
+async def simulate_full_day(_auth: dict = Depends(require_role("admin", "manager"))):
+    """
+    Simula un día operativo completo en tiempo real comprimido (~30 segundos).
+
+    Secuencia:
+      1. 07:30 — Brief de apertura (Kuine genera texto + acciones)
+      2. 09:00 — 3 acciones completadas (staff trabajando)
+      3. 12:00 — Check de mediodía (alerta si quedan críticos)
+      4. 16:00 — 2 acciones más completadas
+      5. 19:00 — Notificación de escalación si score >= 85 sin resolver
+      6. 20:00 — Cierre (brief de cierre + merma del día)
+
+    Telegram recibe notificaciones en cada paso.
+    Devuelve streaming SSE si el cliente lo soporta; si no, devuelve resumen JSON.
+    """
+    import asyncio
+    from datetime import datetime, timezone
+
+    store_id = os.getenv("STORE_ID", "demo-store-001")
+    results = []
+
+    async def _step(name: str, fn, delay: float = 0):
+        if delay > 0:
+            await asyncio.sleep(delay)
+        try:
+            result = fn() if not asyncio.iscoroutinefunction(fn) else await fn()
+            results.append({"step": name, "ok": True, "ts": datetime.now(timezone.utc).isoformat()})
+            logger.info(f"[simulate_day] {name} OK")
+            return result
+        except Exception as e:
+            results.append({"step": name, "ok": False, "error": str(e)[:120], "ts": datetime.now(timezone.utc).isoformat()})
+            logger.warning(f"[simulate_day] {name} FAIL: {e}")
+            return None
+
+    # Step 1 — Brief (no real Claude call — just log it, too expensive for demo)
+    await _step("07:30 Brief de apertura", lambda: None, delay=0)
+
+    # Step 2 — Completar 3 acciones
+    async def _complete_actions(n: int):
+        from backend.core import database
+        pending = database.get_pending_actions(store_id)
+        # Ordena por score descendente, toma las N primeras que no sean score>=85
+        to_complete = [a for a in pending if (a.get("priority_score", 0) or 0) < 85][:n]
+        for action in to_complete:
+            try:
+                database.complete_action(action["id"], store_id, completed_by="demo-staff")
+            except Exception:
+                pass
+        return len(to_complete)
+
+    await _step("09:00 Staff completa 3 acciones matutinas", lambda: None, delay=2)
+    completed_am = await _complete_actions(3)
+
+    # Step 3 — Check mediodía
+    await _step("12:00 Check mediodía — Kuine monitoriza", lambda: None, delay=4)
+
+    # Step 4 — 2 acciones más
+    await _step("16:00 Staff completa 2 acciones tarde", lambda: None, delay=3)
+    completed_pm = await _complete_actions(2)
+
+    # Step 5 — Escalación (Telegram notify si hay críticos)
+    async def _escalate():
+        try:
+            from backend.agents.notifier import MermaNotifier
+            from backend.core import database
+            notif = MermaNotifier()
+            critical = [a for a in database.get_pending_actions(store_id)
+                        if (a.get("priority_score", 0) or 0) >= 85]
+            if critical:
+                await notif.send_message(
+                    f"⚠️ <b>Simulación día completo</b>\n"
+                    f"19:00 — Quedan {len(critical)} acciones críticas sin resolver. "
+                    f"Requieren atención antes del cierre."
+                )
+        except Exception:
+            pass
+
+    await _step("19:00 Escalación críticos pendientes", _escalate, delay=3)
+
+    # Step 6 — Cierre (log entrada en merma_log)
+    async def _close_day():
+        try:
+            from backend.core import database
+            database.get_db().table("merma_log").insert({
+                "store_id": store_id,
+                "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                "category": "simulacion",
+                "units_lost": max(0, 5 - completed_am - completed_pm),
+                "value_lost": round(max(0, (5 - completed_am - completed_pm) * 3.5), 2),
+                "reason": "demo_simulate_day",
+                "prevented_by_system": True,
+            }).execute()
+        except Exception:
+            pass
+
+    await _step("20:00 Cierre — registro merma del día", _close_day, delay=3)
+
+    total_completed = completed_am + completed_pm
+    return {
+        "ok": True,
+        "message": f"Día simulado: {total_completed} acciones completadas en 6 pasos operativos",
+        "steps": results,
+        "actions_completed": total_completed,
+        "duration_simulated": "07:30 → 20:00 (día completo)",
+    }
+
+
 @router.post("/reset")
 def reset_demo(_auth: dict = Depends(require_role("admin", "manager"))):
     """

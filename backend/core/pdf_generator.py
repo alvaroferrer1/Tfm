@@ -184,6 +184,99 @@ def _make_pdf(store_name: str = "") -> _MermaPDF:
 
 # ── Brief diario ──────────────────────────────────────────────────────────────
 
+def _draw_score_bar(pdf: "_MermaPDF", score: int, x: float, y: float, w: float = 40, h: float = 5) -> None:
+    """Dibuja una barra de score de 0-100 con color semáforo."""
+    pdf.set_fill_color(229, 231, 235)
+    pdf.rect(x, y, w, h, style="F")
+    fill_w = int(w * score / 100)
+    if score >= 70:
+        color = _RED
+    elif score >= 40:
+        color = _AMBER
+    else:
+        color = _GREEN_MID
+    pdf.set_fill_color(*color)
+    pdf.rect(x, y, fill_w, h, style="F")
+
+
+def _draw_kpi_card(
+    pdf: "_MermaPDF", x: float, y: float, w: float, h: float,
+    value: str, label: str, color: tuple, bg: tuple | None = None
+) -> None:
+    """Tarjeta KPI con fondo de color, valor grande y etiqueta pequeña."""
+    bg_color = bg or tuple(min(255, 255 - (255 - c) // 8) for c in color)
+    pdf.set_fill_color(*bg_color)
+    pdf.set_draw_color(*color)
+    pdf.rect(x, y, w - 2, h, style="FD")
+    # valor
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.set_text_color(*color)
+    pdf.set_xy(x + 2, y + 3)
+    pdf.cell(w - 6, 10, _safe(value), align="C")
+    # etiqueta
+    pdf.set_font("Helvetica", "", 7)
+    pdf.set_text_color(*_TEXT_MID)
+    pdf.set_xy(x + 2, y + 13)
+    pdf.cell(w - 6, 5, _safe(label), align="C")
+
+
+def _draw_weather_strip(pdf: "_MermaPDF", forecast: list[dict]) -> None:
+    """Franja de previsión meteorológica 5 días."""
+    if not forecast:
+        return
+    pdf.section_header("PREVISION METEOROLOGICA (7 dias)  -  fuente: Open-Meteo", _BLUE)
+    days_to_show = forecast[:7]
+    col_w = 190 / max(len(days_to_show), 1)
+    y0 = pdf.get_y()
+    for i, day in enumerate(days_to_show):
+        x = 10 + i * col_w
+        temp = day.get("temp_max")
+        rain = day.get("precipitation_mm", 0)
+        humid = day.get("humidity_max", day.get("relative_humidity_2m_max", 0))
+        uv = day.get("uv_index_max", 0)
+        is_hot = day.get("is_hot", False)
+        is_rainy = day.get("is_rainy", False)
+        date_str = str(day.get("date", ""))[-5:]  # MM-DD
+        # fondo
+        bg = (255, 220, 210) if is_hot else ((220, 235, 255) if is_rainy else (240, 250, 244))
+        pdf.set_fill_color(*bg)
+        pdf.rect(x, y0, col_w - 1, 28, style="F")
+        # fecha
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.set_text_color(*_TEXT_DARK)
+        pdf.set_xy(x, y0 + 1)
+        pdf.cell(col_w - 1, 5, date_str, align="C")
+        # temp
+        temp_color = _RED if is_hot else (_BLUE if is_rainy else _GREEN_MID)
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.set_text_color(*temp_color)
+        pdf.set_xy(x, y0 + 7)
+        pdf.cell(col_w - 1, 7, f"{temp:.0f}C" if temp is not None else "?", align="C")
+        # iconos
+        icon_parts = []
+        if is_rainy:
+            icon_parts.append(f"{rain:.0f}mm")
+        if humid:
+            icon_parts.append(f"H{humid:.0f}%")
+        if uv and float(uv) >= 6:
+            icon_parts.append(f"UV{uv:.0f}")
+        pdf.set_font("Helvetica", "", 6)
+        pdf.set_text_color(*_TEXT_MID)
+        pdf.set_xy(x, y0 + 15)
+        pdf.cell(col_w - 1, 4, " ".join(icon_parts)[:12], align="C")
+        # alerta
+        if is_hot or is_rainy:
+            alert_txt = "CALOR" if is_hot else "LLUVIA"
+            alert_col = _RED if is_hot else _BLUE
+            pdf.set_fill_color(*alert_col)
+            pdf.set_text_color(*_WHITE)
+            pdf.set_font("Helvetica", "B", 6)
+            pdf.set_xy(x + 1, y0 + 21)
+            pdf.cell(col_w - 3, 5, alert_txt, fill=True, align="C")
+    pdf.set_y(y0 + 32)
+    pdf.ln(2)
+
+
 def generate_brief_pdf(
     brief_text: str,
     brief_date: str = "",
@@ -195,49 +288,88 @@ def generate_brief_pdf(
     store_name: str = "",
     critical_actions: list[dict] | None = None,
     high_actions: list[dict] | None = None,
+    weather_forecast: list[dict] | None = None,
+    predictions: list[dict] | None = None,
+    upcoming_events: list[str] | None = None,
 ) -> bytes:
     if not brief_text or not brief_text.strip():
         raise ValueError("brief_text no puede estar vacío")
+    from datetime import date as dt
+
     pdf = _make_pdf(store_name)
     pdf.add_page()
-
     fecha = brief_date or _date.today().isoformat()
+    _sname = store_name or _DEFAULT_STORE_NAME
 
-    # Title block
+    # ── Hero header ─────────────────────────────────────────────────────────────
     pdf.set_fill_color(*_GREEN_DARK)
+    pdf.rect(0, 0, 210, 36, style="F")
     pdf.set_text_color(*_WHITE)
-    pdf.set_font("Helvetica", "B", 18)
-    pdf.cell(0, 14, f"BRIEF DE APERTURA", fill=True, align="C",
+    pdf.set_font("Helvetica", "B", 22)
+    pdf.set_xy(0, 6)
+    pdf.cell(210, 13, "BRIEF DE APERTURA", align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(180, 240, 210)
+    pdf.set_xy(0, 21)
+    pdf.cell(210, 8, _safe(f"{_sname}   |   {fecha}   |   Generado por Kuine"), align="C",
              new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    pdf.set_font("Helvetica", "", 11)
-    pdf.set_fill_color(*_GREEN_MID)
-    pdf.cell(0, 8, _safe(f"{store_name}  |  {fecha}"), fill=True, align="C",
-             new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    pdf.ln(6)
+    pdf.set_y(40)
 
-    # KPIs
-    sem_label = "ALERTA" if critical_count >= 3 else "NORMAL"
+    # ── KPI cards row ────────────────────────────────────────────────────────────
+    sem_label = "ALERTA" if critical_count >= 3 else ("ATENCION" if critical_count >= 1 else "NORMAL")
     sem_color = _RED if critical_count >= 3 else (_AMBER if critical_count >= 1 else _GREEN_MID)
-    pdf.kpi_row([
-        ("Semáforo", sem_label, sem_color),
-        ("Críticos", str(critical_count), _RED),
-        ("Altos", str(high_count), _AMBER),
-        ("Acciones", str(actions_count), _BLUE),
-        ("En riesgo", f"{value_at_risk:.0f}€", _GREEN_DARK),
-        ("Ruta", f"{route_minutes}min", _TEXT_MID),
-    ])
+    kpi_y = pdf.get_y()
+    kpi_data = [
+        (str(critical_count), "Criticos", _RED),
+        (str(high_count), "Atencion", _AMBER),
+        (str(actions_count), "Acciones", _BLUE),
+        (f"{value_at_risk:.0f}EUR", "En riesgo", _GREEN_DARK),
+        (f"{route_minutes}min", "Ruta", _TEXT_MID),
+        (sem_label, "Semaforo", sem_color),
+    ]
+    card_w = 190 / len(kpi_data)
+    for i, (val, lbl, col) in enumerate(kpi_data):
+        _draw_kpi_card(pdf, 10 + i * card_w, kpi_y, card_w, 22, val, lbl, col)
+    pdf.set_y(kpi_y + 26)
 
-    # Critical products table
+    # ── Eventos próximos ─────────────────────────────────────────────────────────
+    if upcoming_events:
+        pdf.set_fill_color(254, 249, 195)
+        pdf.set_draw_color(234, 179, 8)
+        pdf.set_text_color(120, 80, 0)
+        pdf.set_font("Helvetica", "B", 9)
+        events_str = "  |  ".join(_safe(e) for e in upcoming_events[:4])
+        pdf.rect(10, pdf.get_y(), 190, 9, style="FD")
+        pdf.set_xy(12, pdf.get_y() + 1)
+        pdf.cell(186, 7, f"Proximos eventos: {events_str}")
+        pdf.ln(13)
+
+    # ── Previsión meteorológica ──────────────────────────────────────────────────
+    if weather_forecast:
+        _draw_weather_strip(pdf, weather_forecast)
+    else:
+        pdf.ln(2)
+
+    # ── Productos críticos ───────────────────────────────────────────────────────
     if critical_actions:
-        from datetime import date as dt
-        pdf.section_header("PRODUCTOS CRITICOS -- accion inmediata requerida", _RED)
-        for a in critical_actions[:10]:
+        pdf.section_header("CRITICOS  -  accion inmediata requerida", _RED)
+        # Cabecera tabla
+        pdf.set_fill_color(254, 242, 242)
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.set_text_color(*_RED)
+        pdf.cell(70, 6, "Producto", border="B", fill=True)
+        pdf.cell(22, 6, "Pasillo", border="B", fill=True, align="C")
+        pdf.cell(16, 6, "Caduca", border="B", fill=True, align="C")
+        pdf.cell(30, 6, "Accion", border="B", fill=True, align="C")
+        pdf.cell(28, 6, "Score", border="B", fill=True, align="C")
+        pdf.cell(24, 6, "Precio", border="B", fill=True, align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        for i, a in enumerate(critical_actions[:8]):
             b = a.get("batches") or {}
             p = (b.get("products") or {}) if b else {}
-            name = p.get("name", "Producto")
-            pasillo = str(p.get("pasillo", "?"))
-            action_type = a.get("action_type", "revisar")
-            score = a.get("priority_score", 0)
+            name = _safe((p.get("name", "Producto"))[:28])
+            pasillo = _safe(str(p.get("pasillo", "?")))
+            action_type = _safe((a.get("action_type", "revisar"))[:12].upper())
+            score = int(a.get("priority_score", 0))
             exp = b.get("expiry_date", "")
             new_price = float(a.get("new_price") or 0)
             confidence = int(a.get("confidence_pct") or 0)
@@ -245,20 +377,56 @@ def generate_brief_pdf(
                 days_left = (dt.fromisoformat(exp) - dt.today()).days if exp else None
             except Exception:
                 days_left = None
-            pdf.product_row(name, pasillo, action_type, days_left, score, "CRÍTICO",
-                            confidence_pct=confidence, new_price=new_price)
+            days_str = "HOY" if days_left == 0 else (f"{days_left}d" if days_left is not None else "?")
+            fill = i % 2 == 0
+            bg = (255, 248, 248) if fill else (255, 255, 255)
+            pdf.set_fill_color(*bg)
+            pdf.set_text_color(*_TEXT_DARK)
+            pdf.set_font("Helvetica", "B" if i == 0 else "", 9)
+            row_y = pdf.get_y()
+            pdf.cell(70, 8, name, border="B", fill=fill)
+            pdf.set_font("Helvetica", "", 9)
+            pdf.cell(22, 8, pasillo, border="B", fill=fill, align="C")
+            day_col = _RED if days_left is not None and days_left <= 1 else _AMBER
+            pdf.set_text_color(*day_col)
+            pdf.cell(16, 8, days_str, border="B", fill=fill, align="C")
+            pdf.set_fill_color(220, 38, 38)
+            pdf.set_text_color(*_WHITE)
+            pdf.set_font("Helvetica", "B", 8)
+            pdf.cell(30, 8, action_type, border="B", fill=True, align="C")
+            # Score bar
+            pdf.set_fill_color(*bg)
+            pdf.set_text_color(*_TEXT_MID)
+            pdf.set_font("Helvetica", "", 8)
+            bar_x = pdf.get_x() + 2
+            bar_y = row_y + 1
+            pdf.cell(28, 8, "", border="B", fill=fill)
+            _draw_score_bar(pdf, score, bar_x, bar_y + 2, 24, 4)
+            price_str = f"→{new_price:.2f}EUR" if new_price > 0 else (f"{confidence}% conf." if confidence > 0 else "-")
+            pdf.set_fill_color(*bg)
+            pdf.set_text_color(*_GREEN_DARK)
+            pdf.cell(24, 8, _safe(price_str), border="B", fill=fill, align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         pdf.ln(4)
 
+    # ── Productos de atención ────────────────────────────────────────────────────
     if high_actions:
-        from datetime import date as dt
-        pdf.section_header("PRODUCTOS DE ATENCION -- antes del mediodia", _AMBER)
-        for a in high_actions[:8]:
+        pdf.section_header("ATENCION  -  actuar antes del mediodia", _AMBER)
+        pdf.set_fill_color(255, 251, 235)
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.set_text_color(*_AMBER)
+        pdf.cell(70, 6, "Producto", border="B", fill=True)
+        pdf.cell(22, 6, "Pasillo", border="B", fill=True, align="C")
+        pdf.cell(16, 6, "Caduca", border="B", fill=True, align="C")
+        pdf.cell(30, 6, "Accion", border="B", fill=True, align="C")
+        pdf.cell(28, 6, "Score", border="B", fill=True, align="C")
+        pdf.cell(24, 6, "Confianza", border="B", fill=True, align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        for i, a in enumerate(high_actions[:6]):
             b = a.get("batches") or {}
             p = (b.get("products") or {}) if b else {}
-            name = p.get("name", "Producto")
-            pasillo = str(p.get("pasillo", "?"))
-            action_type = a.get("action_type", "revisar")
-            score = a.get("priority_score", 0)
+            name = _safe((p.get("name", "Producto"))[:28])
+            pasillo = _safe(str(p.get("pasillo", "?")))
+            action_type = _safe((a.get("action_type", "revisar"))[:12].upper())
+            score = int(a.get("priority_score", 0))
             exp = b.get("expiry_date", "")
             new_price = float(a.get("new_price") or 0)
             confidence = int(a.get("confidence_pct") or 0)
@@ -266,24 +434,86 @@ def generate_brief_pdf(
                 days_left = (dt.fromisoformat(exp) - dt.today()).days if exp else None
             except Exception:
                 days_left = None
-            pdf.product_row(name, pasillo, action_type, days_left, score, "ALTO",
-                            confidence_pct=confidence, new_price=new_price)
+            days_str = f"{days_left}d" if days_left is not None else "?"
+            fill = i % 2 == 0
+            bg = (255, 254, 245) if fill else (255, 255, 255)
+            pdf.set_fill_color(*bg)
+            pdf.set_text_color(*_TEXT_DARK)
+            pdf.set_font("Helvetica", "", 9)
+            row_y = pdf.get_y()
+            pdf.cell(70, 8, name, border="B", fill=fill)
+            pdf.cell(22, 8, pasillo, border="B", fill=fill, align="C")
+            pdf.set_text_color(*_AMBER)
+            pdf.cell(16, 8, days_str, border="B", fill=fill, align="C")
+            pdf.set_fill_color(217, 119, 6)
+            pdf.set_text_color(*_WHITE)
+            pdf.set_font("Helvetica", "B", 8)
+            pdf.cell(30, 8, action_type, border="B", fill=True, align="C")
+            pdf.set_fill_color(*bg)
+            pdf.set_text_color(*_TEXT_MID)
+            pdf.set_font("Helvetica", "", 8)
+            bar_x = pdf.get_x() + 2
+            bar_y = row_y + 1
+            pdf.cell(28, 8, "", border="B", fill=fill)
+            _draw_score_bar(pdf, score, bar_x, bar_y + 2, 24, 4)
+            conf_str = f"{confidence}%" if confidence > 0 else "-"
+            pdf.set_fill_color(*bg)
+            pdf.cell(24, 8, _safe(conf_str), border="B", fill=fill, align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         pdf.ln(4)
 
-    # Brief text body
-    pdf.section_header("📋  ANÁLISIS DE KUINE", _GREEN_DARK)
+    # ── Predicciones preventivas ─────────────────────────────────────────────────
+    if predictions:
+        high_preds = [p for p in predictions if p.get("risk_score", 0) >= 50][:5]
+        if high_preds:
+            pdf.section_header("RADAR PREDICTIVO  -  riesgos en los proximos 7 dias", _BLUE)
+            pdf.set_font("Helvetica", "B", 8)
+            pdf.set_text_color(*_BLUE)
+            pdf.set_fill_color(239, 246, 255)
+            pdf.cell(62, 6, "Producto", border="B", fill=True)
+            pdf.cell(20, 6, "Cat.", border="B", fill=True, align="C")
+            pdf.cell(18, 6, "Caduca", border="B", fill=True, align="C")
+            pdf.cell(30, 6, "Riesgo pred.", border="B", fill=True, align="C")
+            pdf.cell(60, 6, "Accion preventiva", border="B", fill=True, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            for i, pred in enumerate(high_preds):
+                fill = i % 2 == 0
+                bg = (245, 250, 255) if fill else (255, 255, 255)
+                pdf.set_fill_color(*bg)
+                pdf.set_text_color(*_TEXT_DARK)
+                pdf.set_font("Helvetica", "", 8)
+                name = _safe((pred.get("product_name", ""))[:28])
+                cat = _safe((pred.get("category", ""))[:10])
+                days_p = pred.get("days_until_expiry", 0)
+                score_p = pred.get("risk_score", 0)
+                action_p = _safe((pred.get("recommended_preemptive_action", ""))[:40])
+                row_y = pdf.get_y()
+                pdf.cell(62, 7, name, border="B", fill=fill)
+                pdf.cell(20, 7, cat, border="B", fill=fill, align="C")
+                pdf.set_text_color(*_BLUE)
+                pdf.cell(18, 7, f"{days_p}d", border="B", fill=fill, align="C")
+                pdf.set_fill_color(*bg)
+                pdf.set_text_color(*_TEXT_MID)
+                bar_x2 = pdf.get_x() + 2
+                pdf.cell(30, 7, "", border="B", fill=fill)
+                _draw_score_bar(pdf, score_p, bar_x2, row_y + 2, 26, 4)
+                pdf.set_text_color(*_TEXT_DARK)
+                pdf.cell(60, 7, action_p, border="B", fill=fill, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            pdf.ln(4)
+
+    # ── Análisis de Kuine ────────────────────────────────────────────────────────
+    pdf.section_header("ANALISIS DE KUINE  -  resumen operativo", _GREEN_DARK)
     pdf.body_text(brief_text)
 
-    # Footer note
-    pdf.ln(6)
-    pdf.set_fill_color(*_GREEN_LIGHT)
+    # ── Pie de página declarativo ────────────────────────────────────────────────
+    pdf.ln(4)
+    pdf.set_fill_color(240, 250, 245)
+    pdf.set_draw_color(*_GREEN_MID)
     pdf.set_text_color(*_GREEN_DARK)
-    pdf.set_font("Helvetica", "I", 9)
+    pdf.set_font("Helvetica", "I", 8)
     pdf.multi_cell(0, 5,
-        "Este brief ha sido generado automáticamente por Kuine (MermaOps) "
-        "usando análisis de IA sobre el inventario actual. "
-        "Las decisiones finales son responsabilidad del encargado.",
-        fill=True, new_x=XPos.LMARGIN, new_y=YPos.NEXT,
+        _safe("Este brief ha sido generado automaticamente por Kuine (MermaOps) "
+              "usando analisis de IA sobre el inventario actual. "
+              "Las decisiones finales son responsabilidad del encargado de turno."),
+        fill=True, border=1, new_x=XPos.LMARGIN, new_y=YPos.NEXT,
     )
 
     buf = io.BytesIO()
@@ -1408,3 +1638,91 @@ def generate_daily_sheet_pdf(
     buf = io.BytesIO()
     pdf.output(buf)
     return buf.getvalue()
+
+
+def generate_order_pdf(
+    store_name: str,
+    date_str: str,
+    suggestions: list,
+) -> bytes:
+    """PDF de pedido semanal: tabla de productos a pedir, cantidades y valor."""
+    _sname = store_name or _DEFAULT_STORE_NAME
+    pdf = _make_pdf(_sname)
+    pdf.add_page()
+
+    # Header
+    pdf.set_fill_color(*_GREEN_DARK)
+    pdf.rect(0, 0, 210, 28, style="F")
+    pdf.set_text_color(*_WHITE)
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.set_xy(0, 5)
+    pdf.cell(210, 10, "PEDIDO SEMANAL", align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_xy(0, 17)
+    pdf.cell(210, 8, f"{_safe(_sname)}  -  {date_str}  -  MermaOps", align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
+    pdf.set_text_color(*_TEXT_DARK)
+    total_value = sum(float(s.get("estimated_value", 0)) for s in suggestions)
+    pdf.set_xy(15, 35)
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.cell(180, 8, f"{len(suggestions)} productos a pedir  -  valor estimado: {total_value:.2f} EUR", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
+    if not suggestions:
+        pdf.set_xy(15, 50)
+        pdf.set_font("Helvetica", "", 10)
+        pdf.cell(180, 8, "Sin sugerencias de pedido esta semana.")
+    else:
+        pdf.set_xy(15, 48)
+        pdf.set_fill_color(243, 244, 246)
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.cell(65, 7, "Producto", border=1, fill=True)
+        pdf.cell(28, 7, "Categoria", border=1, fill=True)
+        pdf.cell(22, 7, "Stock alm.", border=1, fill=True)
+        pdf.cell(22, 7, "Pedir uds", border=1, fill=True)
+        pdf.cell(28, 7, "Merma/dia", border=1, fill=True)
+        pdf.cell(25, 7, "Valor EUR", border=1, fill=True, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
+        pdf.set_font("Helvetica", "", 8)
+        for i, s in enumerate(suggestions[:30]):
+            fill = i % 2 == 0
+            if fill:
+                pdf.set_fill_color(249, 250, 251)
+            else:
+                pdf.set_fill_color(255, 255, 255)
+            name  = _safe((s.get("product_name") or "Producto")[:32])
+            cat   = _safe((s.get("category") or "-")[:14])
+            stock = str(s.get("current_warehouse_stock", 0))
+            qty   = str(s.get("order_qty", 0))
+            merma = f'{float(s.get("avg_daily_loss", 0)):.1f}/d'
+            val   = f'{float(s.get("estimated_value", 0)):.2f}'
+            pdf.cell(65, 6, name,  border=1, fill=fill)
+            pdf.cell(28, 6, cat,   border=1, fill=fill)
+            pdf.cell(22, 6, stock, border=1, fill=fill, align="C")
+            pdf.cell(22, 6, qty,   border=1, fill=fill, align="C")
+            pdf.cell(28, 6, merma, border=1, fill=fill, align="C")
+            pdf.cell(25, 6, val,   border=1, fill=fill, align="R", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.set_fill_color(*_GREEN_DARK)
+        pdf.set_text_color(*_WHITE)
+        pdf.cell(165, 7, "TOTAL ESTIMADO", border=1, fill=True, align="R")
+        pdf.cell(25, 7, f"{total_value:.2f}", border=1, fill=True, align="R", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
+    y_sign = max(pdf.get_y() + 15, 240)
+    pdf.set_text_color(*_TEXT_DARK)
+    pdf.set_xy(15, y_sign)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.cell(90, 8, "Aprobado por: _____________________")
+    pdf.cell(90, 8, f"Fecha: {date_str}")
+    pdf.set_xy(15, y_sign + 15)
+    pdf.cell(90, 8, "Firma: _____________________________")
+
+    pdf.set_xy(0, 285)
+    pdf.set_fill_color(*_GREEN_DARK)
+    pdf.set_text_color(*_WHITE)
+    pdf.set_font("Helvetica", "B", 7)
+    pdf.cell(210, 8, "MermaOps  -  Reduccion inteligente de merma alimentaria", fill=True, align="C")
+
+    buf2 = io.BytesIO()
+    pdf.output(buf2)
+    return buf2.getvalue()

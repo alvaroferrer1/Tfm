@@ -701,14 +701,52 @@ def get_system_overview(_auth: dict = Depends(verify_token)):
 def get_risk_predictions(days: int = Query(default=7, ge=1, le=365), _auth: dict = Depends(verify_token)):
     """
     Predicciones de merma para los próximos N días.
-    Combina historial, clima (Open-Meteo) y patrones de día de semana.
+    Combina historial, clima (Open-Meteo), patrones de día de semana, estacionalidad y eventos.
+    Respuesta enriquecida: incluye forecast meteorológico, eventos próximos y demand_index por producto.
     """
     try:
-        from backend.agents.predictor import predict_merma_risk
+        from backend.agents.predictor import (
+            predict_merma_risk, get_weather_forecast,
+            _get_upcoming_events, get_historical_loss_rate,
+        )
         predictions = predict_merma_risk(STORE_ID, forecast_days=days)
-        return {"predictions": predictions, "forecast_days": days, "count": len(predictions)}
+        # Enriquecer con datos de contexto para el widget de la app
+        weather_forecast = []
+        upcoming_events = []
+        historical_loss = {}
+        try:
+            weather_forecast = get_weather_forecast(days=days)
+        except Exception:
+            pass
+        try:
+            upcoming_events = _get_upcoming_events(days=days + 7)
+        except Exception:
+            pass
+        try:
+            historical_loss = get_historical_loss_rate(STORE_ID)
+        except Exception:
+            pass
+        # Resumen meteorológico
+        hot_days = sum(1 for f in weather_forecast if f.get("is_hot"))
+        rain_days = sum(1 for f in weather_forecast if f.get("is_rainy"))
+        weather_summary = "Tiempo estable"
+        if hot_days >= 2:
+            weather_summary = f"Calor intenso {hot_days} días — riesgo frescos elevado"
+        elif rain_days >= 2:
+            weather_summary = f"Lluvia {rain_days} días — menos afluencia prevista"
+        return {
+            "predictions": predictions,
+            "forecast_days": days,
+            "count": len(predictions),
+            "weather_forecast": weather_forecast[:7],
+            "weather_summary": weather_summary,
+            "upcoming_events": upcoming_events,
+            "historical_loss_by_category": historical_loss,
+            "high_risk_count": sum(1 for p in predictions if p.get("risk_score", 0) >= 60),
+            "total_value_at_risk": round(sum(p.get("value_at_risk", 0) for p in predictions), 2),
+        }
     except Exception as e:
-        logger.error(f"Predict risk error: {e}")
+        logger.error(f"Predict risk error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Error interno del servidor. Inténtalo de nuevo.")
 
 
@@ -842,7 +880,21 @@ def get_brief_pdf(date: str = "", _auth: dict = Depends(verify_token)):
         high_actions = [a for a in pending if 65 <= (a.get("priority_score") or 0) < 85]
         value_at_risk = brief.get("value_at_risk", 0.0) or 0.0
         from backend.core.pdf_generator import generate_brief_pdf
+        from backend.agents.predictor import get_weather_forecast, predict_merma_risk, _get_upcoming_events
         store_info = database.get_store(STORE_ID) or {}
+        # Enriquecer con clima y predicciones
+        try:
+            weather_forecast = get_weather_forecast(days=7)
+        except Exception:
+            weather_forecast = None
+        try:
+            predictions = predict_merma_risk(STORE_ID, forecast_days=7)
+        except Exception:
+            predictions = None
+        try:
+            upcoming_events = _get_upcoming_events(days=14)
+        except Exception:
+            upcoming_events = None
         pdf_bytes = generate_brief_pdf(
             brief_text=summary_text,
             brief_date=brief.get("date", ""),
@@ -853,6 +905,9 @@ def get_brief_pdf(date: str = "", _auth: dict = Depends(verify_token)):
             critical_actions=critical_actions,
             high_actions=high_actions,
             store_name=store_info.get("name", ""),
+            weather_forecast=weather_forecast,
+            predictions=predictions,
+            upcoming_events=upcoming_events,
         )
         fecha = brief.get("date", "hoy")
         return Response(
@@ -1115,6 +1170,68 @@ def get_promo_onepager_pdf(_auth: dict = Depends(verify_token)):
     except Exception as e:
         logger.error(f"promo pdf error: {e}")
         raise HTTPException(status_code=500, detail="Error interno del servidor. Inténtalo de nuevo.")
+
+
+@router.get("/reports/daily_sheet/pdf")
+def get_daily_sheet_pdf(_auth: dict = Depends(verify_token)):
+    """PDF parte diario con acciones completadas hoy — firmable."""
+    from fastapi.responses import Response
+    from datetime import date as _d, datetime as _dt, timezone as _tz
+    try:
+        from backend.core.pdf_generator import generate_daily_sheet_pdf
+        today = str(_d.today())
+        result = database.get_db().table("actions") \
+            .select("*, batches(expiry_date, quantity, products(name, category, price, pasillo))") \
+            .eq("store_id", STORE_ID).eq("status", "completed") \
+            .gte("completed_at", f"{today}T00:00:00") \
+            .order("completed_at", desc=False).execute()
+        pdf_bytes = generate_daily_sheet_pdf(
+            store_name=os.getenv("STORE_NAME", "Super Martínez"),
+            date_str=today,
+            completed_actions=result.data or [],
+            encargado=(_auth.get("email") or "").split("@")[0],
+        )
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="parte_{today}.pdf"'},
+        )
+    except Exception as e:
+        logger.error(f"daily sheet pdf error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error generando parte diario.")
+
+
+@router.get("/reports/order/pdf")
+def get_order_pdf(_auth: dict = Depends(verify_token)):
+    """PDF del pedido semanal basado en merma histórica."""
+    from fastapi.responses import Response
+    from datetime import date as _d
+    try:
+        from backend.core.pdf_generator import generate_order_pdf
+        suggestions = database.get_order_suggestions(STORE_ID)
+        pdf_bytes = generate_order_pdf(
+            store_name=os.getenv("STORE_NAME", "Super Martínez"),
+            date_str=str(_d.today()),
+            suggestions=suggestions,
+        )
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="pedido_{_d.today()}.pdf"'},
+        )
+    except Exception as e:
+        logger.error(f"order pdf error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error generando PDF de pedido.")
+
+
+@router.get("/reports/order")
+def get_order_suggestions_json(_auth: dict = Depends(verify_token)):
+    """Sugerencias de pedido semanal en JSON."""
+    try:
+        return {"suggestions": database.get_order_suggestions(STORE_ID)}
+    except Exception as e:
+        logger.error(f"order suggestions error: {e}")
+        raise HTTPException(status_code=500, detail="Error calculando pedido.")
 
 
 @router.get("/stats/merma")
@@ -1714,3 +1831,417 @@ def export_batches_csv(_auth: dict = Depends(verify_token)):
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+# ── Almacén ───────────────────────────────────────────────────────────────────
+
+@router.get("/warehouse/stock")
+def get_warehouse_stock_full(_auth: dict = Depends(verify_token)):
+    """Inventario completo del almacén con productos y cantidades."""
+    try:
+        res = (
+            database.get_db()
+            .table("warehouse_stock")
+            .select("product_id, quantity, updated_at, products(id, name, category, price, barcode, pasillo)")
+            .eq("store_id", STORE_ID)
+            .order("quantity", desc=False)
+            .execute()
+        )
+        rows = res.data or []
+        items = []
+        total_units = 0
+        total_value = 0.0
+        by_category: dict[str, dict] = {}
+        for r in rows:
+            product = r.get("products") or {}
+            qty = int(r.get("quantity", 0))
+            price = float(product.get("price", 0))
+            value = qty * price
+            cat = product.get("category", "otros")
+            item = {
+                "product_id": r.get("product_id"),
+                "product_name": product.get("name", "Producto"),
+                "category": cat,
+                "price": price,
+                "unit": "uds",
+                "barcode": product.get("barcode", ""),
+                "pasillo": product.get("pasillo"),
+                "quantity": qty,
+                "value": round(value, 2),
+                "updated_at": r.get("updated_at", ""),
+                "status": "critical" if qty <= 2 else ("low" if qty <= 5 else "ok"),
+            }
+            items.append(item)
+            total_units += qty
+            total_value += value
+            if cat not in by_category:
+                by_category[cat] = {"category": cat, "items": 0, "units": 0, "value": 0.0}
+            by_category[cat]["items"] += 1
+            by_category[cat]["units"] += qty
+            by_category[cat]["value"] = round(by_category[cat]["value"] + value, 2)
+
+        return {
+            "items": items,
+            "total_products": len(items),
+            "total_units": total_units,
+            "total_value": round(total_value, 2),
+            "by_category": list(by_category.values()),
+            "critical_count": sum(1 for i in items if i["status"] == "critical"),
+            "low_count": sum(1 for i in items if i["status"] == "low"),
+        }
+    except Exception as e:
+        logger.error(f"warehouse stock error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error cargando inventario del almacén.")
+
+
+@router.put("/warehouse/stock/{product_id}")
+def update_warehouse_stock(product_id: str, body: dict, _auth: dict = Depends(verify_token)):
+    """Actualiza cantidad en almacén para un producto."""
+    try:
+        qty = int(body.get("quantity", 0))
+        database.get_db().table("warehouse_stock").upsert({
+            "store_id": STORE_ID,
+            "product_id": product_id,
+            "quantity": qty,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }).execute()
+        return {"ok": True, "product_id": product_id, "quantity": qty}
+    except Exception as e:
+        logger.error(f"update warehouse stock error: {e}")
+        raise HTTPException(status_code=500, detail="Error actualizando stock.")
+
+
+# ── Proveedores con productos ─────────────────────────────────────────────────
+
+@router.get("/suppliers/products")
+def get_suppliers_with_products(_auth: dict = Depends(verify_token)):
+    """
+    Proveedores con sus productos y alternativas entre proveedores para cada producto.
+    Devuelve estructura: [{ supplier, products: [{product, alternatives: [other_suppliers]}] }]
+    """
+    try:
+        # Carga todos los proveedores con sus relaciones de merma (que contiene product_id)
+        suppliers_res = (
+            database.get_db()
+            .table("suppliers")
+            .select("id, name, contact")
+            .eq("store_id", STORE_ID)
+            .execute()
+        )
+        suppliers = suppliers_res.data or []
+
+        # Carga relaciones supplier_merma que vincula proveedor <-> producto
+        sm_res = (
+            database.get_db()
+            .table("supplier_merma")
+            .select("supplier_id, product_id, merma_pct, period, products(id, name, category, price)")
+            .eq("store_id", STORE_ID)
+            .execute()
+        )
+        sm_rows = sm_res.data or []
+
+        # Construir mapa supplier_id -> list[product]
+        sup_map: dict[str, list] = {s["id"]: [] for s in suppliers}
+        # Mapa product_id -> list[{supplier_id, supplier_name, avg_merma_pct}]
+        prod_suppliers: dict[str, list] = {}
+        sup_name_map = {s["id"]: s["name"] for s in suppliers}
+
+        for row in sm_rows:
+            sid = row.get("supplier_id")
+            pid = row.get("product_id")
+            product = row.get("products") or {}
+            if not sid or not pid:
+                continue
+            entry = {
+                "product_id": pid,
+                "product_name": product.get("name", "Producto"),
+                "category": product.get("category", ""),
+                "price": float(product.get("price", 0)),
+                "unit": product.get("unit", "uds"),
+                "avg_merma_pct": float(row.get("merma_pct", 0)),
+                "last_delivery": row.get("period", ""),
+            }
+            if sid in sup_map:
+                sup_map[sid].append(entry)
+            if pid not in prod_suppliers:
+                prod_suppliers[pid] = []
+            prod_suppliers[pid].append({
+                "supplier_id": sid,
+                "supplier_name": sup_name_map.get(sid, ""),
+                "avg_merma_pct": float(row.get("avg_merma_pct", 0)),
+            })
+
+        result = []
+        for sup in suppliers:
+            sid = sup["id"]
+            products_with_alts = []
+            for prod in sup_map.get(sid, []):
+                alternatives = [
+                    a for a in prod_suppliers.get(prod["product_id"], [])
+                    if a["supplier_id"] != sid
+                ]
+                alternatives.sort(key=lambda x: x["avg_merma_pct"])
+                products_with_alts.append({**prod, "alternatives": alternatives})
+            products_with_alts.sort(key=lambda x: x["avg_merma_pct"], reverse=True)
+            result.append({
+                "id": sid,
+                "name": sup.get("name", ""),
+                "contact": sup.get("contact", ""),
+                "email": "",
+                "phone": "",
+                "lead_time_days": None,
+                "min_order_eur": None,
+                "payment_terms": "",
+                "products": products_with_alts,
+                "avg_merma_pct": round(
+                    sum(p["avg_merma_pct"] for p in products_with_alts) / len(products_with_alts), 2
+                ) if products_with_alts else 0.0,
+                "product_count": len(products_with_alts),
+            })
+
+        result.sort(key=lambda x: x["avg_merma_pct"], reverse=True)
+        return {"suppliers": result, "total": len(result)}
+    except Exception as e:
+        logger.error(f"suppliers/products error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error cargando proveedores con productos.")
+
+
+# ── Pedido confirmado ─────────────────────────────────────────────────────────
+
+class ConfirmOrderBody(BaseModel):
+    items: list[dict]  # [{product_id, product_name, category, order_qty, estimated_value}]
+    notes: str = ""
+
+
+@router.post("/orders/confirm")
+def confirm_order(body: ConfirmOrderBody, _auth: dict = Depends(verify_token)):
+    """Guarda un pedido confirmado en agent_memory para generar el PDF."""
+    try:
+        order_data = {
+            "store_id": STORE_ID,
+            "key": f"order_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}",
+            "value": {
+                "items": body.items,
+                "notes": body.notes,
+                "confirmed_at": datetime.now(timezone.utc).isoformat(),
+                "total_value": round(sum(float(i.get("estimated_value", 0)) for i in body.items), 2),
+                "total_units": sum(int(i.get("order_qty", 0)) for i in body.items),
+                "status": "confirmed",
+            },
+            "agent": "orders",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        database.get_db().table("agent_memory").insert(order_data).execute()
+        return {"ok": True, "message": f"Pedido confirmado: {len(body.items)} productos"}
+    except Exception as e:
+        logger.error(f"confirm order error: {e}")
+        raise HTTPException(status_code=500, detail="Error guardando pedido.")
+
+
+@router.get("/orders/last")
+def get_last_order(_auth: dict = Depends(verify_token)):
+    """Devuelve el último pedido confirmado."""
+    try:
+        res = (
+            database.get_db()
+            .table("agent_memory")
+            .select("key, value, created_at")
+            .eq("store_id", STORE_ID)
+            .eq("agent", "orders")
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if not res.data:
+            return {"order": None}
+        row = res.data[0]
+        return {"order": {**row["value"], "order_key": row["key"], "created_at": row["created_at"]}}
+    except Exception as e:
+        logger.error(f"get last order error: {e}")
+        return {"order": None}
+
+
+# ── Store profile (configuración de tienda) ────────────────────────────────────
+
+_PROFILE_FIELDS = [
+    "city", "lat", "lon", "store_size", "zone_type",
+    "num_employees", "opening_hours", "weekly_customers", "specialties",
+]
+
+@router.get("/store/profile")
+def get_store_profile(_auth: dict = Depends(verify_token)):
+    try:
+        res = database.get_db().table("stores").select("*").eq("id", STORE_ID).single().execute()
+        if not res.data:
+            raise HTTPException(status_code=404, detail="Store not found")
+        cfg = res.data.get("config") or {}
+        return {
+            "id": res.data["id"],
+            "name": res.data.get("name", ""),
+            "city": cfg.get("city", "Madrid"),
+            "lat": float(cfg.get("lat", 40.4168)),
+            "lon": float(cfg.get("lon", -3.7038)),
+            "store_size": cfg.get("store_size", "mediano"),
+            "zone_type": cfg.get("zone_type", "residencial"),
+            "num_employees": int(cfg.get("num_employees", 8)),
+            "opening_hours": cfg.get("opening_hours", "8:00-21:00"),
+            "weekly_customers": int(cfg.get("weekly_customers", 2000)),
+            "specialties": cfg.get("specialties", []),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"get_store_profile error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/store/profile")
+def update_store_profile(body: dict, _auth: dict = Depends(verify_token)):
+    try:
+        res = database.get_db().table("stores").select("config").eq("id", STORE_ID).single().execute()
+        cfg = (res.data.get("config") or {}) if res.data else {}
+        for key in _PROFILE_FIELDS:
+            if key in body:
+                cfg[key] = body[key]
+        database.get_db().table("stores").update({"config": cfg}).eq("id", STORE_ID).execute()
+        return {"ok": True}
+    except Exception as e:
+        logger.error(f"update_store_profile error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Weather (tiempo real por ubicación de la tienda) ───────────────────────────
+
+@router.get("/weather/current")
+def get_store_weather(_auth: dict = Depends(verify_token)):
+    try:
+        from backend.agents.predictor import get_weather_forecast
+        res = database.get_db().table("stores").select("config, name").eq("id", STORE_ID).single().execute()
+        cfg = (res.data.get("config") or {}) if res.data else {}
+        lat = float(cfg.get("lat", 40.4168))
+        lon = float(cfg.get("lon", -3.7038))
+        city = cfg.get("city", "Madrid")
+        forecast = get_weather_forecast(lat=lat, lon=lon, days=7)
+        if not forecast:
+            return {"city": city, "lat": lat, "lon": lon, "current": None, "forecast": []}
+        return {"city": city, "lat": lat, "lon": lon, "current": forecast[0], "forecast": forecast}
+    except Exception as e:
+        logger.error(f"get_store_weather error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Insights IA (recomendaciones para el supervisor) ───────────────────────────
+
+@router.post("/reports/insights")
+async def generate_insights(_auth: dict = Depends(verify_token)):
+    try:
+        import anthropic
+        from backend.agents.predictor import get_weather_forecast, predict_merma_risk
+
+        res = database.get_db().table("stores").select("*").eq("id", STORE_ID).single().execute()
+        cfg = (res.data.get("config") or {}) if res.data else {}
+        store_name = res.data.get("name", "la tienda") if res.data else "la tienda"
+
+        lat  = float(cfg.get("lat", 40.4168))
+        lon  = float(cfg.get("lon", -3.7038))
+        city = cfg.get("city", "Madrid")
+        size = cfg.get("store_size", "mediano")
+        zone = cfg.get("zone_type", "residencial")
+        employees = cfg.get("num_employees", 8)
+        schedule  = cfg.get("opening_hours", "8:00-21:00")
+        customers = cfg.get("weekly_customers", 2000)
+
+        forecast      = get_weather_forecast(lat=lat, lon=lon, days=7)
+        merma_hist    = database.get_merma_history(STORE_ID, days=30)
+        pending       = database.get_pending_actions(STORE_ID)
+        supplier_data = database.get_supplier_stats(STORE_ID)
+        donations     = database.get_donation_stats(STORE_ID, days=30)
+        risk_preds    = predict_merma_risk(STORE_ID, forecast_days=7)
+
+        # Weather summary
+        wx = ""
+        if forecast:
+            t0 = forecast[0]
+            wx = f"{t0.get('temp_max_c','?')}°C, {t0.get('description','')}"
+            hot   = sum(1 for f in forecast if f.get("is_hot", False))
+            rain  = sum(1 for f in forecast if (f.get("precipitation_mm") or 0) > 5)
+            if hot:  wx += f" — {hot} días calurosos"
+            if rain: wx += f" — {rain} días con lluvia"
+
+        # Merma by category
+        cat_map: dict = {}
+        for r in merma_hist:
+            cat = r.get("product_category", "otros")
+            cat_map[cat] = cat_map.get(cat, 0) + float(r.get("value_lost_eur", 0))
+        total_merma = sum(cat_map.values())
+        top_cats = sorted(cat_map.items(), key=lambda x: -x[1])[:5]
+
+        # Supplier summary
+        sup_count = len(supplier_data) if isinstance(supplier_data, list) else 0
+
+        prompt = f"""Eres el supervisor estratégico de MermaOps. Analiza los datos de {store_name} y genera un informe de insights accionables en español.
+
+PERFIL DE LA TIENDA:
+- Nombre: {store_name}
+- Ubicación: {city} (lat {lat:.4f}, lon {lon:.4f})
+- Tamaño: supermercado {size}
+- Zona: {zone}
+- Empleados: {employees}
+- Horario: {schedule}
+- Clientes/semana estimados: {customers}
+- Proveedores activos: {sup_count}
+
+TIEMPO ESTA SEMANA EN {city.upper()}:
+{wx if wx else 'Sin datos meteorológicos'}
+Previsión 7 días: {', '.join(f"{f.get('date','')}: {f.get('temp_max_c','?')}°C" for f in (forecast or [])[:5])}
+
+MERMA ÚLTIMOS 30 DÍAS:
+- Total: {total_merma:.2f}€
+- Por categoría: {', '.join(f'{c}: {v:.2f}€' for c,v in top_cats) if top_cats else 'Sin datos'}
+
+ACCIONES PENDIENTES SIN RESOLVER: {len(pending)}
+
+RIESGO PRÓXIMOS 7 DÍAS (top productos):
+{chr(10).join(f"  - {r.get('product_name','?')}: {r.get('risk_score',0)*100:.0f}% riesgo" for r in (risk_preds or [])[:6]) if risk_preds else '  Sin predicciones'}
+
+DONACIONES ÚLTIMO MES: {donations.get('total_donations', 0)} donaciones por {donations.get('total_value_eur', 0):.2f}€
+
+Genera un informe estratégico estructurado con EXACTAMENTE estas secciones:
+
+## DIAGNÓSTICO ACTUAL
+(2-3 frases sobre el estado actual de la tienda, qué va bien y qué preocupa)
+
+## TOP 5 INSIGHTS ACCIONABLES
+(Numerados, cada uno con: título bold, descripción, impacto económico estimado €/mes, acción concreta)
+
+## OPORTUNIDADES POR UBICACIÓN Y CLIMA
+(Específico para zona {zone} en {city} con el tiempo previsto esta semana. Qué productos ajustar, qué promociones lanzar)
+
+## PLAN DE ACCIÓN — ESTA SEMANA
+(3 acciones concretas y medibles para los próximos 7 días, con responsable y métrica de éxito)
+
+## KPIs OBJETIVO — PRÓXIMOS 30 DÍAS
+(4-5 métricas con valor actual estimado y objetivo alcanzable)
+
+Sé muy específico con datos reales. Usa el tiempo, la zona y el tamaño del super para personalizar las recomendaciones."""
+
+        client = anthropic.Anthropic()
+        resp = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=2000,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = resp.content[0].text if resp.content else "Sin respuesta"
+
+        return {
+            "store_name": store_name,
+            "city": city,
+            "weather_summary": wx,
+            "total_merma_30d": round(total_merma, 2),
+            "pending_actions": len(pending),
+            "insights": text,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"generate_insights error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

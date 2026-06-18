@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math' show pi;
 
@@ -31,7 +32,24 @@ class _SafeGradient extends LinearGradient {
 // ── Providers ─────────────────────────────────────────────────────────────────
 
 final _comparisonProvider = FutureProvider<List<Map<String, dynamic>>>((ref) async {
+  // Auto-refresh every 15 minutes
+  final t = Timer(const Duration(minutes: 15), ref.invalidateSelf);
+  ref.onDispose(t.cancel);
   return api.getStoresComparison();
+});
+
+final _weatherProvider = FutureProvider<Map<String, dynamic>>((ref) async {
+  // Auto-refresh every 30 minutes — datos meteorológicos en tiempo real
+  final t = Timer(const Duration(minutes: 30), ref.invalidateSelf);
+  ref.onDispose(t.cancel);
+  return ApiService().getWeather();
+});
+
+final _predictionsProvider = FutureProvider<Map<String, dynamic>>((ref) async {
+  // Auto-refresh every 30 minutes (weather + predictor data)
+  final t = Timer(const Duration(minutes: 30), ref.invalidateSelf);
+  ref.onDispose(t.cancel);
+  return ApiService().getRiskPredictions(days: 7);
 });
 
 // Escucha cambios en acciones en tiempo real (Supabase Realtime)
@@ -66,6 +84,9 @@ Future<Map<String, dynamic>?> _loadDashCache() async {
 }
 
 final dashboardProvider = FutureProvider<Map<String, dynamic>>((ref) async {
+  // Auto-refresh every 5 minutes to keep KPIs current
+  final t = Timer(const Duration(minutes: 5), ref.invalidateSelf);
+  ref.onDispose(t.cancel);
   final pending = await supabase
       .from('actions')
       .select('priority_score, action_type, batch_id')
@@ -278,7 +299,11 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
           IconButton(
             icon: const Icon(Icons.refresh_outlined, color: Colors.white),
             tooltip: 'Actualizar',
-            onPressed: () => ref.invalidate(dashboardProvider),
+            onPressed: () {
+              ref.invalidate(dashboardProvider);
+              ref.invalidate(_predictionsProvider);
+              ref.invalidate(_comparisonProvider);
+            },
           ),
           IconButton(
             icon: const Icon(Icons.person_outline, color: Colors.white),
@@ -292,6 +317,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         data: (data) => RefreshIndicator(
           onRefresh: () async {
             ref.invalidate(dashboardProvider);
+            ref.invalidate(_predictionsProvider);
+            ref.invalidate(_comparisonProvider);
             await Future.delayed(const Duration(milliseconds: 800));
           },
           child: _DashboardBody(data: data, userEmail: user?.email, ref: ref),
@@ -536,6 +563,10 @@ class _DashboardBodyState extends State<_DashboardBody>
                       ),
                     ],
                   ),
+                  const SizedBox(height: 16),
+
+                  // Weather card — tiempo real por ubicación del super
+                  _WeatherCard(ref: widget.ref),
                   const SizedBox(height: 20),
 
                   // Urgency donut + legend
@@ -643,6 +674,19 @@ class _DashboardBodyState extends State<_DashboardBody>
                     _BriefCard(brief: brief, context: context)
                   else
                     _NoBriefCard(),
+                  const SizedBox(height: 16),
+
+                  // Daily progress bar
+                  _DailyProgressBar(
+                    completed: widget.data['completed_today'] as int? ?? 0,
+                    pending: widget.data['pending_count'] as int? ?? 0,
+                  ),
+
+                  // Predictive radar
+                  const _PredictionsCard(),
+
+                  // ESG mini-card
+                  _EsgMiniCard(dash: widget.data),
           ],
         );
   }
@@ -2218,6 +2262,419 @@ class _NoBriefCard extends StatelessWidget {
                 fontSize: 13, color: Color(0xFF92400E), height: 1.4),
           ),
         ),
+      ]),
+    );
+  }
+}
+
+// ── Predictions Card ──────────────────────────────────────────────────────────
+
+class _PredictionsCard extends ConsumerWidget {
+  const _PredictionsCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(_predictionsProvider);
+    return async.when(
+      loading: () => const SizedBox.shrink(),
+      error: (_, __) => const SizedBox.shrink(),
+      data: (data) {
+        final preds = (data['predictions'] as List? ?? [])
+            .cast<Map<String, dynamic>>()
+            .where((p) => (p['risk_score'] as num? ?? 0) >= 40)
+            .take(3)
+            .toList();
+        if (preds.isEmpty) return const SizedBox.shrink();
+        final forecast = (data['weather_forecast'] as List? ?? []).cast<Map<String, dynamic>>();
+        final events = (data['upcoming_events'] as List? ?? []).cast<String>();
+        return Container(
+          margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF1E3A5F), Color(0xFF1E40AF)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(18),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                const Icon(Icons.radar_rounded, color: Colors.white, size: 22),
+                const SizedBox(width: 8),
+                const Expanded(child: Text('Radar Predictivo',
+                    style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800))),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8)),
+                  child: const Text('7 días', style: TextStyle(color: Colors.white70, fontSize: 10)),
+                ),
+              ]),
+              if (events.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(children: events.take(3).map((e) => Container(
+                    margin: const EdgeInsets.only(right: 6),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(color: const Color(0xFFFBBF24).withValues(alpha: 0.25), borderRadius: BorderRadius.circular(6)),
+                    child: Text(e, style: const TextStyle(color: Color(0xFFFBBF24), fontSize: 10, fontWeight: FontWeight.w600)),
+                  )).toList()),
+                ),
+              ],
+              if (forecast.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(children: forecast.take(5).map((f) {
+                    final isHot = f['is_hot'] as bool? ?? false;
+                    final isRainy = f['is_rainy'] as bool? ?? false;
+                    final temp = (f['temp_max'] as num?)?.toDouble();
+                    final rawDate = f['date'] as String? ?? '';
+                    final date = rawDate.length >= 7 ? rawDate.substring(5) : rawDate;
+                    return Container(
+                      margin: const EdgeInsets.only(right: 6),
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: isHot ? const Color(0xFFEF4444).withValues(alpha: 0.2)
+                            : isRainy ? const Color(0xFF3B82F6).withValues(alpha: 0.2)
+                            : Colors.white.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Column(children: [
+                        Text(date, style: const TextStyle(color: Colors.white60, fontSize: 9)),
+                        const SizedBox(height: 2),
+                        Icon(isHot ? Icons.wb_sunny_rounded : isRainy ? Icons.water_drop_rounded : Icons.cloud_outlined,
+                            color: isHot ? const Color(0xFFFBBF24) : isRainy ? const Color(0xFF93C5FD) : Colors.white60,
+                            size: 16),
+                        const SizedBox(height: 2),
+                        Text(temp != null ? '${temp.toStringAsFixed(0)}°' : '?',
+                            style: TextStyle(
+                              color: isHot ? const Color(0xFFFBBF24) : Colors.white,
+                              fontSize: 11, fontWeight: FontWeight.w700)),
+                      ]),
+                    );
+                  }).toList()),
+                ),
+              ],
+              const SizedBox(height: 12),
+              ...preds.asMap().entries.map((entry) {
+                final pred = entry.value;
+                final name = pred['product_name'] as String? ?? '';
+                final days = pred['days_until_expiry'] as int? ?? 0;
+                final score = (pred['risk_score'] as num?)?.toInt() ?? 0;
+                final action = pred['recommended_preemptive_action'] as String? ?? '';
+                final scoreColor = score >= 70 ? const Color(0xFFEF4444)
+                    : score >= 50 ? const Color(0xFFFBBF24)
+                    : const Color(0xFF34D399);
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border(left: BorderSide(color: scoreColor, width: 3)),
+                  ),
+                  child: Row(children: [
+                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(name, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 2),
+                      Text(action.length > 55 ? '${action.substring(0, 55)}…' : action,
+                          style: const TextStyle(color: Colors.white60, fontSize: 10)),
+                    ])),
+                    const SizedBox(width: 8),
+                    Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                        decoration: BoxDecoration(color: scoreColor, borderRadius: BorderRadius.circular(6)),
+                        child: Text('$score/100', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w800)),
+                      ),
+                      const SizedBox(height: 3),
+                      Text('en $days días', style: const TextStyle(color: Colors.white54, fontSize: 9)),
+                    ]),
+                  ]),
+                );
+              }),
+            ]),
+          ),
+        );
+      },
+    );
+  }
+}
+
+// ── ESG Mini Card ─────────────────────────────────────────────────────────────
+
+class _EsgMiniCard extends StatelessWidget {
+  final Map<String, dynamic> dash;
+  const _EsgMiniCard({required this.dash});
+
+  @override
+  Widget build(BuildContext context) {
+    final donationValue = (dash['donation_value'] as num?)?.toDouble() ?? 0;
+    final donationQty = (dash['donation_qty'] as num?)?.toInt() ?? 0;
+    final completedToday = (dash['completed_today'] as num?)?.toInt() ?? 0;
+    // Estimate CO2: ~2.5 kg CO2 per € food waste avoided
+    final co2Kg = (donationValue * 2.5).clamp(0.0, 9999.0);
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF0FDF4),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFBBF7D0), width: 1.5),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Row(children: [
+          Icon(Icons.eco_rounded, color: Color(0xFF059669), size: 20),
+          SizedBox(width: 8),
+          Text('Impacto ESG — últimos 30 días',
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: Color(0xFF065F46))),
+        ]),
+        const SizedBox(height: 12),
+        Row(children: [
+          _EsgStat('${co2Kg.toStringAsFixed(0)} kg', 'CO₂ evitado', Icons.cloud_off_rounded, const Color(0xFF059669)),
+          const SizedBox(width: 12),
+          _EsgStat('${donationValue.toStringAsFixed(0)} €', 'Donado', Icons.volunteer_activism_rounded, const Color(0xFF3B82F6)),
+          const SizedBox(width: 12),
+          _EsgStat('$donationQty uds', 'Productos salvados', Icons.save_rounded, const Color(0xFFF59E0B)),
+          const SizedBox(width: 12),
+          _EsgStat('$completedToday hoy', 'Acciones', Icons.check_circle_rounded, const Color(0xFF8B5CF6)),
+        ]),
+      ]),
+    );
+  }
+}
+
+class _EsgStat extends StatelessWidget {
+  final String value;
+  final String label;
+  final IconData icon;
+  final Color color;
+  const _EsgStat(this.value, this.label, this.icon, this.color);
+
+  @override
+  Widget build(BuildContext context) => Expanded(
+    child: Column(children: [
+      Icon(icon, color: color, size: 20),
+      const SizedBox(height: 4),
+      Text(value, style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12, color: color)),
+      Text(label, style: const TextStyle(fontSize: 9, color: Colors.grey), textAlign: TextAlign.center),
+    ]),
+  );
+}
+
+// ── Daily Progress Bar ────────────────────────────────────────────────────────
+
+class _DailyProgressBar extends StatelessWidget {
+  final int completed;
+  final int pending;
+  const _DailyProgressBar({required this.completed, required this.pending});
+
+  @override
+  Widget build(BuildContext context) {
+    final total = completed + pending;
+    final pct = total == 0 ? 0.0 : completed / total;
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(Icons.today_rounded, size: 16, color: Color(0xFF6B7280)),
+          const SizedBox(width: 6),
+          const Text('Progreso del día',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF374151))),
+          const Spacer(),
+          Text('$completed / $total acciones',
+              style: TextStyle(
+                fontSize: 12, fontWeight: FontWeight.w600,
+                color: pct >= 1.0 ? const Color(0xFF059669) : const Color(0xFF6B7280),
+              )),
+        ]),
+        const SizedBox(height: 8),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(6),
+          child: LinearProgressIndicator(
+            value: pct,
+            minHeight: 10,
+            backgroundColor: const Color(0xFFE5E7EB),
+            valueColor: AlwaysStoppedAnimation<Color>(
+              pct >= 1.0 ? const Color(0xFF059669) : pct >= 0.5 ? const Color(0xFF3B82F6) : const Color(0xFFF59E0B),
+            ),
+          ),
+        ),
+        if (pct >= 1.0) ...[
+          const SizedBox(height: 6),
+          const Row(children: [
+            Icon(Icons.check_circle_rounded, color: Color(0xFF059669), size: 14),
+            SizedBox(width: 4),
+            Text('¡Todo el trabajo de hoy completado!',
+                style: TextStyle(fontSize: 11, color: Color(0xFF059669), fontWeight: FontWeight.w600)),
+          ]),
+        ],
+      ]),
+    );
+  }
+}
+
+// ── Weather Card ──────────────────────────────────────────────────────────────
+
+class _WeatherCard extends StatelessWidget {
+  final WidgetRef ref;
+  const _WeatherCard({required this.ref});
+
+  static const _wCodes = {
+    0: ('Despejado', Icons.wb_sunny_rounded),
+    1: ('Casi despejado', Icons.wb_sunny_outlined),
+    2: ('Parcialmente nublado', Icons.cloud_rounded),
+    3: ('Nublado', Icons.cloud_rounded),
+    45: ('Niebla', Icons.foggy),
+    48: ('Niebla helada', Icons.foggy),
+    51: ('Llovizna', Icons.grain_rounded),
+    61: ('Lluvia leve', Icons.water_drop_outlined),
+    63: ('Lluvia moderada', Icons.water_drop_rounded),
+    65: ('Lluvia intensa', Icons.thunderstorm_outlined),
+    71: ('Nevada leve', Icons.ac_unit_rounded),
+    80: ('Chubascos', Icons.water_drop_outlined),
+    95: ('Tormenta', Icons.thunderstorm_rounded),
+  };
+
+  (String, IconData) _wxInfo(int code) {
+    if (_wCodes.containsKey(code)) return _wCodes[code]!;
+    if (code <= 3) return ('Despejado', Icons.wb_sunny_rounded);
+    if (code <= 48) return ('Nublado', Icons.cloud_rounded);
+    if (code <= 67) return ('Lluvia', Icons.water_drop_rounded);
+    if (code <= 77) return ('Nieve', Icons.ac_unit_rounded);
+    return ('Tormenta', Icons.thunderstorm_rounded);
+  }
+
+  Color _wxColor(int code) {
+    if (code <= 1) return const Color(0xFFF59E0B);
+    if (code <= 3) return const Color(0xFF64748B);
+    if (code <= 48) return const Color(0xFF94A3B8);
+    if (code <= 77) return const Color(0xFF3B82F6);
+    return const Color(0xFF7C3AED);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final wx = ref.watch(_weatherProvider);
+    return wx.when(
+      loading: () => const SizedBox.shrink(),
+      error: (_, __) => const SizedBox.shrink(),
+      data: (data) {
+        final city = data['city'] as String? ?? '';
+        final current = data['current'] as Map<String, dynamic>?;
+        final forecast = (data['forecast'] as List? ?? []).cast<Map<String, dynamic>>();
+        if (current == null) return const SizedBox.shrink();
+
+        final temp = (current['temp_max'] as num?)?.round() ?? 0;
+        final code = (current['weather_code'] as num?)?.toInt() ?? 0;
+        final precip = (current['precipitation_mm'] as num?)?.toDouble() ?? 0;
+        final humidity = (current['relative_humidity_2m_max'] as num?)?.toInt();
+        final (label, icon) = _wxInfo(code);
+        final color = _wxColor(code);
+
+        return Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [color.withValues(alpha: 0.12), color.withValues(alpha: 0.05)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: color.withValues(alpha: 0.25)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                Icon(Icons.location_on_rounded, size: 13, color: color.withValues(alpha: 0.7)),
+                const SizedBox(width: 3),
+                Text(city, style: TextStyle(fontSize: 11, color: color.withValues(alpha: 0.8), fontWeight: FontWeight.w600)),
+                const Spacer(),
+                Text('Actualizado ahora', style: TextStyle(fontSize: 9, color: Colors.grey[500])),
+              ]),
+              const SizedBox(height: 8),
+              Row(children: [
+                Icon(icon, color: color, size: 36),
+                const SizedBox(width: 12),
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('$temp°C', style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: color, height: 1.0)),
+                  Text(label, style: TextStyle(fontSize: 12, color: color.withValues(alpha: 0.8), fontWeight: FontWeight.w500)),
+                ]),
+                const Spacer(),
+                if (humidity != null) _WxPill(Icons.water_outlined, '$humidity%', color),
+                const SizedBox(width: 6),
+                if (precip > 0) _WxPill(Icons.umbrella_outlined, '${precip.toStringAsFixed(1)}mm', const Color(0xFF3B82F6)),
+              ]),
+              if (forecast.length > 1) ...[
+                const SizedBox(height: 10),
+                const Divider(height: 1),
+                const SizedBox(height: 8),
+                // 5-day mini forecast
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: forecast.skip(1).take(5).map((f) {
+                    final d = f['date'] as String? ?? '';
+                    final t2 = (f['temp_max'] as num?)?.round() ?? 0;
+                    final c2 = (f['weather_code'] as num?)?.toInt() ?? 0;
+                    final (_, ic2) = _wxInfo(c2);
+                    final dayLabel = _dayLabel(d);
+                    return Column(mainAxisSize: MainAxisSize.min, children: [
+                      Text(dayLabel, style: const TextStyle(fontSize: 9, color: Colors.grey, fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 3),
+                      Icon(ic2, size: 16, color: _wxColor(c2)),
+                      const SizedBox(height: 2),
+                      Text('$t2°', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF374151))),
+                    ]);
+                  }).toList(),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  String _dayLabel(String isoDate) {
+    try {
+      final d = DateTime.parse(isoDate);
+      const days = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+      return days[d.weekday % 7];
+    } catch (_) {
+      return '';
+    }
+  }
+}
+
+class _WxPill extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color color;
+  const _WxPill(this.icon, this.label, this.color);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(icon, size: 11, color: color),
+        const SizedBox(width: 3),
+        Text(label, style: TextStyle(fontSize: 10, color: color, fontWeight: FontWeight.w600)),
       ]),
     );
   }

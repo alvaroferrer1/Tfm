@@ -96,7 +96,7 @@ class _ReportsScreenState extends ConsumerState<_ReportsContent>
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 10, vsync: this);
+    _tabs = TabController(length: 11, vsync: this);
   }
 
   @override
@@ -154,6 +154,7 @@ class _ReportsScreenState extends ConsumerState<_ReportsContent>
             Tab(text: 'Benchmark 📊'),
             Tab(text: 'Predicciones 🔮'),
             Tab(text: 'Analizar PDF 🤖'),
+            Tab(text: 'Insights IA ✨'),
           ],
         ),
       ),
@@ -170,6 +171,7 @@ class _ReportsScreenState extends ConsumerState<_ReportsContent>
           const _BenchmarkTab(),
           const _PredictionsTab(),
           const _AnalyzePdfTab(),
+          const _InsightsTab(),
         ],
       ),
     );
@@ -2996,5 +2998,261 @@ class _AnalyzePdfTabState extends State<_AnalyzePdfTab> {
         ],
       ],
     );
+  }
+}
+
+// ── Insights IA Tab ────────────────────────────────────────────────────────────
+
+class _InsightsTab extends StatefulWidget {
+  const _InsightsTab();
+  @override
+  State<_InsightsTab> createState() => _InsightsTabState();
+}
+
+class _InsightsTabState extends State<_InsightsTab> {
+  bool _loading = false;
+  Map<String, dynamic>? _result;
+  String? _error;
+
+  Future<void> _generate() async {
+    setState(() { _loading = true; _error = null; });
+    try {
+      final data = await ApiService().generateInsights();
+      setState(() { _result = data; _loading = false; });
+    } catch (e) {
+      setState(() { _error = e.toString(); _loading = false; });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header card
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFF7C3AED), Color(0xFF4F46E5)],
+                begin: Alignment.topLeft, end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Row(children: [
+                Icon(Icons.auto_awesome, color: Colors.white, size: 20),
+                SizedBox(width: 8),
+                Text('Insights IA', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800)),
+              ]),
+              const SizedBox(height: 6),
+              const Text(
+                'Análisis estratégico basado en tiempo real, ubicación, historial de merma y perfil de tienda.',
+                style: TextStyle(color: Colors.white70, fontSize: 12, height: 1.4),
+              ),
+              const SizedBox(height: 14),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    foregroundColor: const Color(0xFF7C3AED),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  onPressed: _loading ? null : _generate,
+                  icon: _loading
+                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF7C3AED)))
+                    : const Icon(Icons.psychology_rounded, size: 18),
+                  label: Text(_loading ? 'Analizando datos...' : 'Generar Insights', style: const TextStyle(fontWeight: FontWeight.w700)),
+                ),
+              ),
+            ]),
+          ),
+
+          if (_error != null) ...[
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFEF2F2),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFFCA5A5)),
+              ),
+              child: Row(children: [
+                const Icon(Icons.error_outline, color: Color(0xFFDC2626), size: 18),
+                const SizedBox(width: 8),
+                Expanded(child: Text(_error!, style: const TextStyle(fontSize: 12, color: Color(0xFFDC2626)))),
+              ]),
+            ),
+          ],
+
+          if (_result != null) ...[
+            const SizedBox(height: 16),
+            // Meta info row
+            Row(children: [
+              _InsightPill(Icons.location_city_rounded, _result!['city'] as String? ?? '', const Color(0xFF0891B2)),
+              const SizedBox(width: 8),
+              _InsightPill(Icons.thermostat_rounded, _result!['weather_summary'] as String? ?? '', const Color(0xFFF59E0B)),
+              const Spacer(),
+              Text(
+                _result!['generated_at'] != null
+                  ? _fmtTime(_result!['generated_at'] as String)
+                  : '',
+                style: const TextStyle(fontSize: 10, color: Colors.grey),
+              ),
+            ]),
+            const SizedBox(height: 4),
+            Row(children: [
+              _InsightPill(Icons.warning_amber_rounded,
+                '${_result!['pending_actions'] ?? 0} acciones pendientes', const Color(0xFFDC2626)),
+              const SizedBox(width: 8),
+              _InsightPill(Icons.euro_rounded,
+                '${(_result!['total_merma_30d'] as num?)?.toStringAsFixed(0) ?? 0}€ merma/mes', const Color(0xFF059669)),
+            ]),
+            const SizedBox(height: 16),
+            // Insights text rendered as sections
+            _InsightsRenderer(text: _result!['insights'] as String? ?? ''),
+          ],
+
+          if (_result == null && !_loading && _error == null) ...[
+            const SizedBox(height: 40),
+            Center(
+              child: Column(children: [
+                const Icon(Icons.auto_awesome, size: 56, color: Color(0xFFDDD6FE)),
+                const SizedBox(height: 12),
+                const Text('Genera tu primer análisis IA', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Color(0xFF6D28D9))),
+                const SizedBox(height: 6),
+                const Text(
+                  'Pulsa el botón para obtener recomendaciones\npersonalizadas para tu tienda.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.grey, fontSize: 13, height: 1.4),
+                ),
+              ]),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  String _fmtTime(String iso) {
+    try {
+      final d = DateTime.parse(iso).toLocal();
+      return '${d.hour.toString().padLeft(2,'0')}:${d.minute.toString().padLeft(2,'0')}';
+    } catch (_) { return ''; }
+  }
+}
+
+class _InsightPill extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color color;
+  const _InsightPill(this.icon, this.label, this.color);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.25)),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(icon, size: 12, color: color),
+        const SizedBox(width: 4),
+        Text(label, style: TextStyle(fontSize: 10, color: color, fontWeight: FontWeight.w600)),
+      ]),
+    );
+  }
+}
+
+class _InsightsRenderer extends StatelessWidget {
+  final String text;
+  const _InsightsRenderer({required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    final lines = text.split('\n');
+    final widgets = <Widget>[];
+    for (final line in lines) {
+      if (line.trim().isEmpty) {
+        widgets.add(const SizedBox(height: 6));
+      } else if (line.startsWith('## ')) {
+        widgets.add(Padding(
+          padding: const EdgeInsets.only(top: 16, bottom: 6),
+          child: Text(
+            line.replaceFirst('## ', ''),
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Color(0xFF4F46E5)),
+          ),
+        ));
+        widgets.add(const Divider(height: 1, color: Color(0xFFDDD6FE)));
+        widgets.add(const SizedBox(height: 8));
+      } else if (line.startsWith('**') && line.endsWith('**')) {
+        widgets.add(Text(
+          line.replaceAll('**', ''),
+          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF1E293B)),
+        ));
+      } else if (line.trimLeft().startsWith('- ') || line.trimLeft().startsWith('• ')) {
+        widgets.add(Padding(
+          padding: const EdgeInsets.only(left: 8, bottom: 4),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('•  ', style: TextStyle(fontSize: 13, color: Color(0xFF7C3AED), fontWeight: FontWeight.w700)),
+            Expanded(child: _RichLine(line.trimLeft().replaceFirst(RegExp(r'^[-•]\s*'), ''))),
+          ]),
+        ));
+      } else if (RegExp(r'^\d+\.').hasMatch(line.trimLeft())) {
+        final match = RegExp(r'^(\d+)\.\s*(.*)').firstMatch(line.trimLeft());
+        if (match != null) {
+          widgets.add(Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Container(
+                width: 22, height: 22,
+                margin: const EdgeInsets.only(right: 8, top: 1),
+                decoration: const BoxDecoration(color: Color(0xFF7C3AED), shape: BoxShape.circle),
+                child: Center(child: Text(match.group(1)!, style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w800))),
+              ),
+              Expanded(child: _RichLine(match.group(2) ?? '')),
+            ]),
+          ));
+        }
+      } else {
+        widgets.add(Padding(
+          padding: const EdgeInsets.only(bottom: 4),
+          child: _RichLine(line),
+        ));
+      }
+    }
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: widgets);
+  }
+}
+
+class _RichLine extends StatelessWidget {
+  final String text;
+  const _RichLine(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    // Simple bold rendering: **text**
+    final spans = <TextSpan>[];
+    final parts = text.split('**');
+    for (int i = 0; i < parts.length; i++) {
+      if (parts[i].isEmpty) continue;
+      spans.add(TextSpan(
+        text: parts[i],
+        style: TextStyle(
+          fontSize: 13,
+          fontWeight: i.isOdd ? FontWeight.w700 : FontWeight.w400,
+          color: const Color(0xFF374151),
+          height: 1.5,
+        ),
+      ));
+    }
+    return RichText(text: TextSpan(children: spans));
   }
 }

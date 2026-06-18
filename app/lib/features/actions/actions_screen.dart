@@ -141,14 +141,21 @@ class _ActionsScreenState extends ConsumerState<ActionsScreen>
           ],
         ),
       ),
-      body: TabBarView(
-        controller: _tabs,
+      body: Column(
         children: [
-          _PendingTab(
-            onComplete: _showCompleteDialog,
-            onDonate: _showDonateDialog,
+          _DailyProgressHeader(actionsAsync: actionsAsync),
+          Expanded(
+            child: TabBarView(
+              controller: _tabs,
+              children: [
+                _PendingTab(
+                  onComplete: _showCompleteDialog,
+                  onDonate: _showDonateDialog,
+                ),
+                const _HistorialTab(),
+              ],
+            ),
           ),
-          const _HistorialTab(),
         ],
       ),
     );
@@ -158,31 +165,31 @@ class _ActionsScreenState extends ConsumerState<ActionsScreen>
     final api = ApiService();
     try {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Generando CSV…'), duration: Duration(seconds: 2)),
+        const SnackBar(content: Text('Generando parte diario PDF…'), duration: Duration(seconds: 2)),
       );
-      final csv = await api.exportActionsCsv();
+      final bytes = await api.downloadDailySheetPdf();
       final now = DateTime.now();
-      final name = 'mermaops_acciones_'
-          '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}.csv';
+      final name = 'parte_diario_'
+          '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}.pdf';
 
       if (kIsWeb) {
-        downloadCsv(name, csv);
+        downloadPdf(name, bytes);
       } else {
         final dir = await getTemporaryDirectory();
         final file = File('${dir.path}/$name');
-        await file.writeAsString(csv);
-        await Share.shareXFiles([XFile(file.path)], text: 'Acciones completadas — MermaOps');
+        await file.writeAsBytes(bytes);
+        await Share.shareXFiles([XFile(file.path)], text: 'Parte diario — MermaOps');
       }
 
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('CSV descargado: $name'), backgroundColor: const Color(0xFF059669)),
+          SnackBar(content: Text('PDF descargado: $name'), backgroundColor: const Color(0xFF059669)),
         );
       }
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error exportando CSV'), backgroundColor: Colors.red),
+          SnackBar(content: Text('Error exportando PDF: $e'), backgroundColor: Colors.red),
         );
       }
     }
@@ -1011,22 +1018,50 @@ class _ProposalCard extends StatelessWidget {
   }
 }
 
-class _HistorialTab extends ConsumerWidget {
+// ── Historial Tab (rediseño) ──────────────────────────────────────────────────
+
+const _typeColors = {
+  'rebajar': Color(0xFFF59E0B),
+  'donar': Color(0xFF7C3AED),
+  'revisar': Color(0xFF3B82F6),
+  'desechar': Color(0xFFEF4444),
+  'mover': Color(0xFF059669),
+};
+
+const _typeIcons = {
+  'rebajar': Icons.sell_outlined,
+  'donar': Icons.volunteer_activism,
+  'revisar': Icons.manage_search,
+  'desechar': Icons.delete_outline,
+  'mover': Icons.move_down,
+};
+
+Color _typeColor(String t) => _typeColors[t] ?? const Color(0xFF64748B);
+IconData _typeIcon(String t) => _typeIcons[t] ?? Icons.check_circle_outline;
+
+class _HistorialTab extends ConsumerStatefulWidget {
   const _HistorialTab();
+  @override
+  ConsumerState<_HistorialTab> createState() => _HistorialTabState();
+}
+
+class _HistorialTabState extends ConsumerState<_HistorialTab> {
+  String _filterType = 'Todos';
+  String _filterEmployee = 'Todos';
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final async = ref.watch(completedActionsProvider);
     return async.when(
       loading: () => const ShimmerList(count: 3, itemHeight: 72),
       error: (e, _) => AppErrorWidget(error: e, onRetry: () => ref.invalidate(completedActionsProvider)),
-      data: (actions) {
-        if (actions.isEmpty) {
+      data: (rawActions) {
+        if (rawActions.isEmpty) {
           return const Center(
             child: Padding(
               padding: EdgeInsets.all(24),
               child: Column(mainAxisSize: MainAxisSize.min, children: [
-                Icon(Icons.history, size: 48, color: Colors.grey),
+                Icon(Icons.history, size: 56, color: Colors.grey),
                 SizedBox(height: 12),
                 Text('Sin historial aún', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
                 SizedBox(height: 4),
@@ -1036,239 +1071,400 @@ class _HistorialTab extends ConsumerWidget {
           );
         }
 
-        // Stats
+        // ── Stats globales ────────────────────────────────────────────────────
         final Map<String, int> byType = {};
         double totalValue = 0;
-        int donations = 0;
-        for (final a in actions) {
+        final Set<String> employees = {};
+        final Map<String, double> valueByDay = {};
+
+        for (final a in rawActions) {
           final t = a['action_type'] as String? ?? 'revisar';
           byType[t] = (byType[t] ?? 0) + 1;
-          if (t == 'donar') donations++;
+          final emp = a['completed_by'] as String? ?? 'Desconocido';
+          employees.add(emp);
           final batch = a['batches'] as Map<String, dynamic>?;
           final product = batch?['products'] as Map<String, dynamic>?;
-          final qty = (batch?['quantity'] as int?) ?? 1;
+          final qty = (batch?['quantity'] as num?)?.toDouble() ?? 1;
           final price = (product?['price'] as num?)?.toDouble() ?? 0;
           totalValue += qty * price;
+          final completedAt = a['completed_at'] as String? ?? '';
+          if (completedAt.isNotEmpty) {
+            try {
+              final dt = DateTime.parse(completedAt).toLocal();
+              final dayKey = '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}';
+              valueByDay[dayKey] = (valueByDay[dayKey] ?? 0) + qty * price;
+            } catch (_) {}
+          }
         }
 
-        // Group by employee
-        final Map<String, List<Map<String, dynamic>>> byEmployee = {};
-        for (final a in actions) {
+        // ── Filtrar ───────────────────────────────────────────────────────────
+        final filtered = rawActions.where((a) {
+          final t = a['action_type'] as String? ?? 'revisar';
           final emp = a['completed_by'] as String? ?? 'Desconocido';
-          byEmployee.putIfAbsent(emp, () => []).add(a);
+          if (_filterType != 'Todos' && t != _filterType) return false;
+          if (_filterEmployee != 'Todos' && emp != _filterEmployee) return false;
+          return true;
+        }).toList();
+
+        // ── Agrupar por fecha ─────────────────────────────────────────────────
+        final Map<String, List<Map<String, dynamic>>> byDate = {};
+        for (final a in filtered) {
+          final completedAt = a['completed_at'] as String? ?? '';
+          String dateKey = 'Sin fecha';
+          if (completedAt.isNotEmpty) {
+            try {
+              final dt = DateTime.parse(completedAt).toLocal();
+              final now = DateTime.now();
+              final today = DateTime(now.year, now.month, now.day);
+              final day = DateTime(dt.year, dt.month, dt.day);
+              if (day == today) {
+                dateKey = 'Hoy';
+              } else if (day == today.subtract(const Duration(days: 1))) {
+                dateKey = 'Ayer';
+              } else {
+                dateKey = '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year}';
+              }
+            } catch (_) {}
+          }
+          byDate.putIfAbsent(dateKey, () => []).add(a);
         }
 
-        return ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            // Stats card
-            Container(
-              margin: const EdgeInsets.only(bottom: 16),
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: const Color(0xFFE5E7EB)),
-              ),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Text('Resumen — últimos 30 días',
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
-                const SizedBox(height: 12),
-                Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
-                  _StatPill(value: '${actions.length}', label: 'acciones', color: const Color(0xFF059669)),
-                  _StatPill(value: '${totalValue.toStringAsFixed(0)}€', label: 'valor recuperado', color: const Color(0xFFF59E0B)),
-                  _StatPill(value: '$donations', label: 'donaciones', color: const Color(0xFF7C3AED)),
-                ]),
-                const SizedBox(height: 12),
-                Wrap(spacing: 6, runSpacing: 6, children: byType.entries.map((e) => Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF3F4F6),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text('${e.key.toUpperCase()} · ${e.value}',
-                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF374151))),
-                )).toList()),
-              ]),
-            ),
+        final typeFilters = ['Todos', ...byType.keys];
+        final empFilters = ['Todos', ...employees];
 
-            Text('${actions.length} acciones (últimos 30 días)',
-                style: const TextStyle(fontSize: 13, color: Colors.grey)),
-            const SizedBox(height: 12),
-            ...byEmployee.entries.map((e) => _EmployeeSection(employee: e.key, actions: e.value)),
-          ],
+        return RefreshIndicator(
+          onRefresh: () async => ref.invalidate(completedActionsProvider),
+          child: ListView(
+            padding: const EdgeInsets.all(14),
+            children: [
+              // ── Header stats ─────────────────────────────────────────────
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF059669), Color(0xFF047857)],
+                    begin: Alignment.topLeft, end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  const Text('Historial — últimos 30 días',
+                      style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 14),
+                  Row(children: [
+                    _HistStat('${rawActions.length}', 'acciones', Icons.check_circle_outline),
+                    const SizedBox(width: 10),
+                    _HistStat('${totalValue.toStringAsFixed(0)} €', 'recuperado', Icons.euro),
+                    const SizedBox(width: 10),
+                    _HistStat('${byType['donar'] ?? 0}', 'donaciones', Icons.volunteer_activism),
+                    const SizedBox(width: 10),
+                    _HistStat('${employees.length}', 'empleados', Icons.people_outline),
+                  ]),
+                  const SizedBox(height: 14),
+                  // Mini barras por tipo
+                  Wrap(spacing: 6, runSpacing: 6, children: byType.entries.map((e) {
+                    final color = _typeColor(e.key);
+                    return Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: color.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: color.withValues(alpha: 0.4)),
+                      ),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Icon(_typeIcon(e.key), size: 12, color: Colors.white),
+                        const SizedBox(width: 4),
+                        Text('${e.key.toUpperCase()} · ${e.value}',
+                            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Colors.white)),
+                      ]),
+                    );
+                  }).toList()),
+                ]),
+              ),
+              const SizedBox(height: 12),
+
+              // ── Mini chart de valor por día ────────────────────────────────
+              if (valueByDay.isNotEmpty) _ValueBarChart(valueByDay: valueByDay),
+              const SizedBox(height: 12),
+
+              // ── Filtros ───────────────────────────────────────────────────
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(children: [
+                  const Text('Tipo:', style: TextStyle(fontSize: 12, color: Colors.grey, fontWeight: FontWeight.w600)),
+                  const SizedBox(width: 8),
+                  ...typeFilters.map((t) => _HistChip(
+                    label: t == 'Todos' ? 'Todos' : t,
+                    selected: _filterType == t,
+                    color: t == 'Todos' ? const Color(0xFF059669) : _typeColor(t),
+                    onTap: () => setState(() => _filterType = t),
+                  )),
+                  const SizedBox(width: 16),
+                  if (empFilters.length > 2) ...[
+                    const Text('Empleado:', style: TextStyle(fontSize: 12, color: Colors.grey, fontWeight: FontWeight.w600)),
+                    const SizedBox(width: 8),
+                    ...empFilters.take(4).map((e) {
+                      final display = e == 'Todos' ? 'Todos' : (e.contains('@') ? e.split('@').first : e);
+                      return _HistChip(
+                        label: display.length > 10 ? '${display.substring(0, 8)}…' : display,
+                        selected: _filterEmployee == e,
+                        color: const Color(0xFF6366F1),
+                        onTap: () => setState(() => _filterEmployee = e),
+                      );
+                    }),
+                  ],
+                ]),
+              ),
+              const SizedBox(height: 10),
+
+              Text('${filtered.length} de ${rawActions.length} acciones',
+                  style: const TextStyle(fontSize: 12, color: Colors.grey)),
+              const SizedBox(height: 10),
+
+              // ── Timeline por fecha ────────────────────────────────────────
+              ...byDate.entries.map((e) => _DateSection(date: e.key, actions: e.value)),
+              const SizedBox(height: 16),
+            ],
+          ),
         );
       },
     );
   }
 }
 
-class _StatPill extends StatelessWidget {
+class _HistStat extends StatelessWidget {
   final String value, label;
-  final Color color;
-  const _StatPill({required this.value, required this.label, required this.color});
+  final IconData icon;
+  const _HistStat(this.value, this.label, this.icon);
   @override
-  Widget build(BuildContext context) => Column(children: [
-    Text(value, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: color)),
-    Text(label, style: const TextStyle(fontSize: 10, color: Colors.grey)),
-  ]);
+  Widget build(BuildContext context) => Expanded(child: Container(
+    padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
+    decoration: BoxDecoration(
+      color: Colors.white.withValues(alpha: 0.15),
+      borderRadius: BorderRadius.circular(10),
+    ),
+    child: Column(children: [
+      Icon(icon, color: Colors.white, size: 16),
+      const SizedBox(height: 3),
+      Text(value, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w800)),
+      Text(label, style: const TextStyle(color: Colors.white70, fontSize: 9), textAlign: TextAlign.center),
+    ]),
+  ));
 }
 
-class _EmployeeSection extends StatelessWidget {
-  final String employee;
-  final List<Map<String, dynamic>> actions;
+class _HistChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final Color color;
+  final VoidCallback onTap;
+  const _HistChip({required this.label, required this.selected, required this.color, required this.onTap});
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+    onTap: onTap,
+    child: Container(
+      margin: const EdgeInsets.only(right: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: selected ? color : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: selected ? Colors.transparent : const Color(0xFFE5E7EB)),
+      ),
+      child: Text(label, style: TextStyle(
+          fontSize: 11, fontWeight: FontWeight.w600,
+          color: selected ? Colors.white : color)),
+    ),
+  );
+}
 
-  const _EmployeeSection({required this.employee, required this.actions});
+class _ValueBarChart extends StatelessWidget {
+  final Map<String, double> valueByDay;
+  const _ValueBarChart({required this.valueByDay});
 
   @override
   Widget build(BuildContext context) {
-    // If it looks like an email, show only the local part (before @)
-    final displayName = employee.contains('@')
-        ? employee.split('@').first
-        : (employee.length > 20 ? '${employee.substring(0, 8)}…' : employee);
+    final entries = valueByDay.entries.toList()..sort((a, b) => a.key.compareTo(b.key));
+    final last7 = entries.length > 7 ? entries.sublist(entries.length - 7) : entries;
+    final maxVal = last7.fold(0.0, (m, e) => e.value > m ? e.value : m);
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(bottom: 8),
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text('Valor recuperado por día', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF374151))),
+        const SizedBox(height: 12),
+        SizedBox(
+          height: 64,
           child: Row(
-            children: [
-              CircleAvatar(
-                radius: 14,
-                backgroundColor: const Color(0xFF059669).withValues(alpha: 0.15),
-                child: Text(
-                  displayName.isNotEmpty
-                      ? displayName[0].toUpperCase()
-                      : '?',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xFF059669),
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: last7.map((e) {
+              final frac = maxVal > 0 ? (e.value / maxVal).clamp(0.05, 1.0) : 0.05;
+              return Expanded(child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 3),
+                child: Column(mainAxisAlignment: MainAxisAlignment.end, children: [
+                  Text('${e.value.toStringAsFixed(0)}€',
+                      style: const TextStyle(fontSize: 7, color: Colors.grey)),
+                  const SizedBox(height: 2),
+                  Container(
+                    height: 50 * frac,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF059669),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
                   ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                displayName,
-                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(width: 6),
-              Text(
-                '${actions.length} acciones',
-                style: const TextStyle(fontSize: 12, color: Colors.grey),
-              ),
-            ],
+                  const SizedBox(height: 3),
+                  Text(e.key.substring(0, 5), style: const TextStyle(fontSize: 7, color: Colors.grey)),
+                ]),
+              ));
+            }).toList(),
           ),
         ),
-        ...actions.map((a) => _CompletedActionRow(action: a)),
-        const SizedBox(height: 16),
-      ],
+      ]),
     );
   }
 }
 
-class _CompletedActionRow extends StatelessWidget {
-  final Map<String, dynamic> action;
-
-  const _CompletedActionRow({required this.action});
+class _DateSection extends StatelessWidget {
+  final String date;
+  final List<Map<String, dynamic>> actions;
+  const _DateSection({required this.date, required this.actions});
 
   @override
   Widget build(BuildContext context) {
-    final actionType = action['action_type'] as String? ?? '';
+    double sectionValue = 0;
+    for (final a in actions) {
+      final batch = a['batches'] as Map<String, dynamic>?;
+      final product = batch?['products'] as Map<String, dynamic>?;
+      final qty = (batch?['quantity'] as num?)?.toDouble() ?? 1;
+      final price = (product?['price'] as num?)?.toDouble() ?? 0;
+      sectionValue += qty * price;
+    }
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Padding(
+        padding: const EdgeInsets.only(bottom: 8, top: 4),
+        child: Row(children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: const Color(0xFF059669),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(date, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
+          ),
+          const SizedBox(width: 8),
+          Text('${actions.length} acciones', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+          const Spacer(),
+          Text('${sectionValue.toStringAsFixed(2)} €',
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF059669))),
+        ]),
+      ),
+      ...actions.map((a) => _CompletedActionCard(action: a)),
+      const SizedBox(height: 10),
+    ]);
+  }
+}
+
+class _CompletedActionCard extends StatelessWidget {
+  final Map<String, dynamic> action;
+  const _CompletedActionCard({required this.action});
+
+  @override
+  Widget build(BuildContext context) {
+    final actionType = action['action_type'] as String? ?? 'revisar';
     final notes = action['notes'] as String? ?? '';
     final completedAt = action['completed_at'] as String? ?? '';
     final photoUrl = action['photo_url'] as String? ?? '';
     final batch = action['batches'] as Map<String, dynamic>?;
     final product = batch?['products'] as Map<String, dynamic>?;
     final productName = product?['name'] as String? ?? 'Producto';
+    final cat = product?['category'] as String? ?? '';
+    final qty = (batch?['quantity'] as num?)?.toInt() ?? 1;
+    final price = (product?['price'] as num?)?.toDouble() ?? 0;
+    final value = qty * price;
+    final emp = action['completed_by'] as String? ?? '';
+    final displayEmp = emp.contains('@') ? emp.split('@').first : emp;
 
     String timeLabel = '';
     if (completedAt.isNotEmpty) {
       try {
         final dt = DateTime.parse(completedAt).toLocal();
-        timeLabel =
-            '${dt.day}/${dt.month} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+        timeLabel = '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
       } catch (_) {}
     }
 
+    final typeColor = _typeColor(actionType);
+    final typeIcon = _typeIcon(actionType);
+
     return Container(
-      margin: const EdgeInsets.only(bottom: 8, left: 4),
-      padding: const EdgeInsets.all(10),
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
+        borderRadius: BorderRadius.circular(12),
+        border: Border(left: BorderSide(color: typeColor, width: 3)),
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 4, offset: const Offset(0, 2))],
       ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-            decoration: BoxDecoration(
-              color: const Color(0xFFD1FAE5),
-              borderRadius: BorderRadius.circular(5),
-            ),
-            child: Text(
-              actionType.toUpperCase(),
-              style: const TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.w700,
-                color: Color(0xFF059669),
-              ),
-            ),
+      child: Row(children: [
+        Container(
+          width: 36, height: 36,
+          decoration: BoxDecoration(
+            color: typeColor.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(9),
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  productName,
-                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-                ),
-                if (notes.isNotEmpty)
-                  Text(
-                    notes,
-                    style: const TextStyle(fontSize: 11, color: Colors.grey),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              if (photoUrl.isNotEmpty)
-                GestureDetector(
-                  onTap: () => _showPhoto(context, photoUrl),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(6),
-                    child: Image.network(
-                      photoUrl,
-                      width: 36,
-                      height: 36,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => const Icon(
-                        Icons.broken_image_outlined,
-                        size: 20,
-                        color: Colors.grey,
-                      ),
-                    ),
-                  ),
-                )
-              else
-                const Icon(Icons.check_circle, color: Color(0xFF059669), size: 20),
-              const SizedBox(height: 2),
-              Text(
-                timeLabel,
-                style: const TextStyle(fontSize: 10, color: Colors.grey),
+          child: Icon(typeIcon, color: typeColor, size: 18),
+        ),
+        const SizedBox(width: 10),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(productName, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+          Row(children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: typeColor.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(4),
               ),
+              child: Text(actionType.toUpperCase(),
+                  style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: typeColor)),
+            ),
+            if (cat.isNotEmpty) ...[
+              const SizedBox(width: 6),
+              Text(cat, style: const TextStyle(fontSize: 11, color: Colors.grey)),
             ],
-          ),
-        ],
-      ),
+            if (displayEmp.isNotEmpty) ...[
+              const SizedBox(width: 6),
+              Text('· $displayEmp', style: const TextStyle(fontSize: 10, color: Colors.grey)),
+            ],
+          ]),
+          if (notes.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 3),
+              child: Text(notes, style: const TextStyle(fontSize: 11, color: Colors.grey),
+                  maxLines: 1, overflow: TextOverflow.ellipsis),
+            ),
+        ])),
+        const SizedBox(width: 8),
+        Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+          if (value > 0)
+            Text('${value.toStringAsFixed(2)} €',
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Color(0xFF059669))),
+          Text(timeLabel, style: const TextStyle(fontSize: 10, color: Colors.grey)),
+          if (photoUrl.isNotEmpty)
+            GestureDetector(
+              onTap: () => _showPhoto(context, photoUrl),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(5),
+                child: Image.network(photoUrl, width: 32, height: 32, fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => const Icon(Icons.broken_image_outlined, size: 18, color: Colors.grey)),
+              ),
+            )
+          else
+            const Icon(Icons.check_circle, color: Color(0xFF059669), size: 18),
+        ]),
+      ]),
     );
   }
 
@@ -1276,23 +1472,14 @@ class _CompletedActionRow extends StatelessWidget {
     showDialog(
       context: context,
       builder: (_) => Dialog(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(12),
-              child: const Text(
-                'Foto evidencia',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-              ),
-            ),
-            Image.network(url, fit: BoxFit.contain),
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cerrar'),
-            ),
-          ],
-        ),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Padding(
+            padding: EdgeInsets.all(12),
+            child: Text('Foto evidencia', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+          ),
+          Image.network(url, fit: BoxFit.contain),
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar')),
+        ]),
       ),
     );
   }
@@ -2056,6 +2243,79 @@ class _DiscountLabelSheetState extends State<_DiscountLabelSheet> {
           ],
         ),
       ),
+    );
+  }
+}
+
+// ── Daily progress header ─────────────────────────────────────────────────────
+
+class _DailyProgressHeader extends ConsumerWidget {
+  final AsyncValue actionsAsync;
+  const _DailyProgressHeader({required this.actionsAsync});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final completedAsync = ref.watch(completedActionsProvider);
+
+    final pending = actionsAsync.when(
+      data: (a) => (a as List).length,
+      loading: () => 0,
+      error: (_, __) => 0,
+    );
+    final completed = completedAsync.when(
+      data: (a) => a.length,
+      loading: () => 0,
+      error: (_, __) => 0,
+    );
+    final total = pending + completed;
+    final pct = total == 0 ? 0.0 : completed / total;
+
+    final barColor = pct >= 1.0
+        ? const Color(0xFF059669)
+        : pct >= 0.5
+            ? const Color(0xFF3B82F6)
+            : const Color(0xFFF59E0B);
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(bottom: BorderSide(color: Color(0xFFE2E8F0))),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(Icons.today_rounded, size: 15, color: Colors.grey[500]),
+          const SizedBox(width: 6),
+          Text('Progreso del día',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Colors.grey[700])),
+          const Spacer(),
+          Text('$completed / $total acciones',
+              style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: pct >= 1.0 ? const Color(0xFF059669) : Colors.grey[600])),
+        ]),
+        const SizedBox(height: 6),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: LinearProgressIndicator(
+            value: pct,
+            minHeight: 7,
+            backgroundColor: const Color(0xFFE5E7EB),
+            valueColor: AlwaysStoppedAnimation<Color>(barColor),
+          ),
+        ),
+        if (pct >= 1.0)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Row(children: const [
+              Icon(Icons.check_circle_rounded, color: Color(0xFF059669), size: 12),
+              SizedBox(width: 4),
+              Text('¡Todo el trabajo de hoy completado!',
+                  style: TextStyle(fontSize: 10, color: Color(0xFF059669), fontWeight: FontWeight.w600)),
+            ]),
+          ),
+      ]),
     );
   }
 }

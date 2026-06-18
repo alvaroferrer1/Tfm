@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../core/api_service.dart';
@@ -28,6 +31,9 @@ final _liveActionsMapProvider = StreamProvider<List<Map<String, dynamic>>>((ref)
 
 final _expiringBatchesProvider = FutureProvider<List<Map<String, dynamic>>>((ref) async {
   final sid = ref.watch(resolvedStoreIdProvider);
+  // Auto-refresh every 10 minutes so urgency colors stay current
+  final t = Timer(const Duration(minutes: 10), ref.invalidateSelf);
+  ref.onDispose(t.cancel);
   final data = await supabase
       .from('batches')
       .select('*, products(*)')
@@ -166,7 +172,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 3, vsync: this);
+    _tabs = TabController(length: 4, vsync: this);
     _pendingPasillo = widget.initialPasillo;
   }
 
@@ -252,6 +258,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
             Tab(icon: Icon(Icons.map, size: 18), text: 'Plano'),
             Tab(icon: Icon(Icons.grid_view, size: 18), text: 'Pasillos'),
             Tab(icon: Icon(Icons.format_list_bulleted, size: 18), text: 'FEFO'),
+            Tab(icon: Icon(Icons.warehouse_outlined, size: 18), text: 'Almacén'),
           ],
         ),
       ),
@@ -313,6 +320,7 @@ class _MapScreenState extends ConsumerState<MapScreen>
                       },
                     ),
                     _FefoList(batches: batches),
+                    const _WarehouseQuickTab(),
                   ],
                 ),
               ),
@@ -519,7 +527,28 @@ class _KpiChip extends StatelessWidget {
 //  │          🚪 ENTRADA / SALIDA             │
 //  └──────────────────────────────────────────┘
 
-class _StorePlan extends StatelessWidget {
+// ── Floor plan helpers ─────────────────────────────────────────────────────────
+
+Map<String, Rect> _floorPlanRects(Size size) {
+  final w = size.width;
+  final h = size.height;
+  final mx = w * 0.04;
+  final iw = w - mx * 2;
+  final gap = iw * 0.025;
+  final aw = (iw - gap * 3) / 4;
+  return {
+    'almacen': Rect.fromLTWH(mx, h * 0.015, iw, h * 0.145),
+    '3': Rect.fromLTWH(mx,                      h * 0.18, aw, h * 0.33),
+    '4': Rect.fromLTWH(mx + (aw + gap),          h * 0.18, aw, h * 0.33),
+    '1': Rect.fromLTWH(mx + (aw + gap) * 2,      h * 0.18, aw, h * 0.33),
+    '2': Rect.fromLTWH(mx + (aw + gap) * 3,      h * 0.18, aw, h * 0.33),
+    '5': Rect.fromLTWH(mx, h * 0.535, iw, h * 0.10),
+  };
+}
+
+// ── Store floor plan (StatefulWidget with CustomPainter) ───────────────────────
+
+class _StorePlan extends StatefulWidget {
   final List<Map<String, dynamic>> batches;
   final List<String> pasillos;
   final String? selectedPasillo;
@@ -532,10 +561,16 @@ class _StorePlan extends StatelessWidget {
     required this.onSelectPasillo,
     this.mapImageUrl,
   });
+  @override
+  State<_StorePlan> createState() => _StorePlanState();
+}
 
-  Map<String, List<Map<String, dynamic>>> _groupByPasillo() {
+class _StorePlanState extends State<_StorePlan> {
+  Size _cvsSize = Size.zero;
+
+  Map<String, List<Map<String, dynamic>>> _grouped() {
     final map = <String, List<Map<String, dynamic>>>{};
-    for (final b in batches) {
+    for (final b in widget.batches) {
       final product = b['products'] as Map<String, dynamic>?;
       final p = (product?['pasillo'] as String?)?.isNotEmpty == true
           ? product!['pasillo'] as String
@@ -554,244 +589,132 @@ class _StorePlan extends StatelessWidget {
     return min;
   }
 
+  void _onTap(Offset pos) {
+    if (_cvsSize == Size.zero) return;
+    final rects = _floorPlanRects(_cvsSize);
+    for (final e in rects.entries) {
+      if (e.value.contains(pos)) {
+        if (e.key == 'almacen') { context.go('/warehouse'); return; }
+        widget.onSelectPasillo(e.key);
+        _showPasilloSheet(context, e.key, _grouped()[e.key] ?? []);
+        return;
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final grouped = _groupByPasillo();
-
-    const tileIcons = {
-      '1': Icons.breakfast_dining,
-      '2': Icons.local_drink_outlined,
-      '3': Icons.set_meal,
-      '4': Icons.set_meal_outlined,
-      '5': Icons.eco,
-    };
-
-    // Layout fijo de supermercado: fondo → frente
-    const planRows = [
-      ['3', '4'],  // Carnicería / Pescadería — zona fría al fondo
-      ['1', '2'],  // Panadería / Lácteos — zona central
-      ['5'],       // Frutas y Verduras — perimetral, junto a entrada
-    ];
-
-    Widget sectionTile(String pasillo) {
-      final items = grouped[pasillo] ?? [];
-      final minD = _minDays(items);
-      final color = items.isEmpty ? const Color(0xFFCBD5E1) : _urgencyColor(minD);
-      final isSelected = pasillo == selectedPasillo;
-
-      return Expanded(
-        child: GestureDetector(
-          onTap: () => onSelectPasillo(pasillo),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            margin: const EdgeInsets.all(3),
-            decoration: BoxDecoration(
-              color: isSelected ? color.withValues(alpha: 0.22) : color.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                color: color.withValues(alpha: isSelected ? 1.0 : 0.55),
-                width: isSelected ? 2.5 : 1.5,
-              ),
-              boxShadow: isSelected ? [BoxShadow(color: color.withValues(alpha: 0.3), blurRadius: 6, offset: const Offset(0, 2))] : null,
-            ),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(tileIcons[pasillo] ?? Icons.shopping_basket, color: color, size: 22),
-                  const SizedBox(height: 6),
-                  Text(
-                    _pasilloLabel(pasillo),
-                    textAlign: TextAlign.center,
-                    maxLines: 2,
-                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: color, height: 1.2),
-                  ),
-                  const SizedBox(height: 4),
-                  if (items.isEmpty)
-                    Text('Sin stock', style: TextStyle(fontSize: 9, color: Colors.grey[400]))
-                  else ...[
-                    Text('${items.length} prod.',
-                        style: const TextStyle(fontSize: 9, color: Colors.grey)),
-                    const SizedBox(height: 3),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(4)),
-                      child: Text(_urgencyLabel(minD),
-                          style: const TextStyle(fontSize: 9, color: Colors.white, fontWeight: FontWeight.w700)),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-
-    // Build rows using fixed layout order, skip rows with no pasillos available
-    List<Widget> buildPlanRows() {
-      final rows = <Widget>[];
-      for (final rowKeys in planRows) {
-        final visible = rowKeys.where((p) => pasillos.contains(p)).toList();
-        if (visible.isEmpty) continue;
-        rows.add(Row(children: visible.map(sectionTile).toList()));
-      }
-      // Extra pasillos not in the fixed layout
-      final extraPasillos = pasillos.where((p) => !['1','2','3','4','5'].contains(p)).toList();
-      for (int i = 0; i < extraPasillos.length; i += 2) {
-        if (i + 1 >= extraPasillos.length) {
-          rows.add(Row(children: [sectionTile(extraPasillos[i])]));
-        } else {
-          rows.add(Row(children: [sectionTile(extraPasillos[i]), sectionTile(extraPasillos[i + 1])]));
-        }
-      }
-      return rows;
-    }
-
+    final grouped = _grouped();
     return SingleChildScrollView(
       padding: const EdgeInsets.all(12),
       child: Column(
         children: [
+          // Floor plan card
           Container(
             decoration: BoxDecoration(
-              color: const Color(0xFFF8F9FA),
+              color: Colors.white,
               borderRadius: BorderRadius.circular(16),
               border: Border.all(color: const Color(0xFFD1D5DB), width: 1.5),
               boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.08), blurRadius: 14, offset: const Offset(0, 4))],
             ),
-            child: Column(
-              children: [
-                // Header — nombre tienda
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
-                  decoration: const BoxDecoration(
-                    color: Color(0xFF065F46),
-                    borderRadius: BorderRadius.vertical(top: Radius.circular(15)),
-                  ),
-                  child: Row(children: [
-                    const Icon(Icons.store_rounded, color: Colors.white, size: 16),
-                    const SizedBox(width: 8),
-                    Text(storeName.toUpperCase(),
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 13, letterSpacing: 1.2)),
-                    const Spacer(),
-                    const Text('Toca un pasillo', style: TextStyle(color: Colors.white54, fontSize: 10)),
-                  ]),
+            child: Column(children: [
+              // Header
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
+                decoration: const BoxDecoration(
+                  color: Color(0xFF065F46),
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(15)),
                 ),
-                // Almacén banner
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 16),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF374151),
-                    border: Border(bottom: BorderSide(color: Colors.black.withValues(alpha: 0.15), width: 1)),
-                  ),
-                  child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                    Icon(Icons.warehouse_outlined, color: Colors.white54, size: 13),
-                    SizedBox(width: 6),
-                    Text('ALMACÉN / RECEPCIÓN', style: TextStyle(fontSize: 10, color: Colors.white54, letterSpacing: 1.0, fontWeight: FontWeight.w600)),
-                  ]),
-                ),
-                // Plano subido por el encargado (si existe)
-                if (mapImageUrl != null)
-                  GestureDetector(
-                    onTap: () {
-                      showDialog(
-                        context: context,
-                        builder: (_) => Dialog(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              AppBar(
-                                title: const Text('Plano de la tienda'),
-                                automaticallyImplyLeading: false,
-                                actions: [IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(context))],
-                              ),
-                              Image.network(mapImageUrl!, fit: BoxFit.contain),
-                            ],
-                          ),
+                child: Row(children: [
+                  const Icon(Icons.store_rounded, color: Colors.white, size: 16),
+                  const SizedBox(width: 8),
+                  Text(storeName.toUpperCase(),
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 13, letterSpacing: 1.2)),
+                  const Spacer(),
+                  const Text('Plano interactivo', style: TextStyle(color: Colors.white54, fontSize: 10)),
+                ]),
+              ),
+              // Canvas
+              LayoutBuilder(builder: (ctx, cons) {
+                final cw = cons.maxWidth;
+                final ch = cw * 1.42;
+                return GestureDetector(
+                  onTapUp: (d) {
+                    _cvsSize = Size(cw, ch);
+                    _onTap(d.localPosition);
+                  },
+                  child: SizedBox(
+                    width: cw, height: ch,
+                    child: RepaintBoundary(
+                      child: CustomPaint(
+                        painter: _SupermarketPainter(
+                          batches: widget.batches,
+                          selectedPasillo: widget.selectedPasillo,
                         ),
-                      );
-                    },
-                    child: Container(
-                      width: double.infinity,
-                      margin: const EdgeInsets.fromLTRB(8, 4, 8, 0),
-                      height: 100,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: const Color(0xFFD1D5DB)),
-                        image: DecorationImage(image: NetworkImage(mapImageUrl!), fit: BoxFit.cover),
-                      ),
-                      child: Align(
-                        alignment: Alignment.bottomRight,
-                        child: Container(
-                          margin: const EdgeInsets.all(6),
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(6)),
-                          child: const Text('Ver plano completo', style: TextStyle(color: Colors.white, fontSize: 10)),
-                        ),
+                        size: Size(cw, ch),
                       ),
                     ),
                   ),
-                // Pasillos en layout fijo fondo→frente
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(6, 8, 6, 4),
-                  child: Column(children: buildPlanRows()),
-                ),
-                // Separador
-                Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 8),
-                  height: 1,
-                  color: const Color(0xFFE5E7EB),
-                ),
-                // Cajas
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: List.generate(4, (i) => Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(6),
-                          decoration: BoxDecoration(color: const Color(0xFFE2E8F0), borderRadius: BorderRadius.circular(6)),
-                          child: const Icon(Icons.shopping_cart_checkout, size: 16, color: Color(0xFF64748B)),
-                        ),
-                        const SizedBox(height: 2),
-                        Text('Caja ${i + 1}', style: const TextStyle(fontSize: 9, color: Color(0xFF94A3B8), fontWeight: FontWeight.w600)),
-                      ],
-                    )),
+                );
+              }),
+              // Optional uploaded plan
+              if (widget.mapImageUrl != null)
+                GestureDetector(
+                  onTap: () => showDialog(
+                    context: context,
+                    builder: (_) => Dialog(child: Column(mainAxisSize: MainAxisSize.min, children: [
+                      AppBar(title: const Text('Plano'), automaticallyImplyLeading: false,
+                        actions: [IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(context))]),
+                      Image.network(widget.mapImageUrl!, fit: BoxFit.contain),
+                    ])),
+                  ),
+                  child: Container(
+                    margin: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF0FDF4),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFF6EE7B7)),
+                    ),
+                    child: const Row(children: [
+                      Icon(Icons.image_outlined, size: 16, color: Color(0xFF065F46)),
+                      SizedBox(width: 8),
+                      Text('Ver plano personalizado', style: TextStyle(fontSize: 12, color: Color(0xFF065F46), fontWeight: FontWeight.w600)),
+                    ]),
                   ),
                 ),
-                // Entrada
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(vertical: 10),
-                  decoration: const BoxDecoration(
-                    color: Color(0xFF065F46),
-                    borderRadius: BorderRadius.vertical(bottom: Radius.circular(15)),
-                  ),
-                  child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                    Icon(Icons.sensor_door_outlined, color: Colors.white, size: 18),
-                    SizedBox(width: 8),
-                    Text('ENTRADA / SALIDA', style: TextStyle(color: Colors.white, fontSize: 12, letterSpacing: 1.2, fontWeight: FontWeight.w700)),
-                  ]),
-                ),
-              ],
+            ]),
+          ),
+          const SizedBox(height: 10),
+          // Almacén shortcut
+          GestureDetector(
+            onTap: () => context.go('/warehouse'),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(color: const Color(0xFF334155), borderRadius: BorderRadius.circular(10)),
+              child: const Row(children: [
+                Icon(Icons.warehouse_outlined, color: Colors.white70, size: 18),
+                SizedBox(width: 10),
+                Text('Almacen / Inventario', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
+                Spacer(),
+                Icon(Icons.chevron_right, color: Colors.white54, size: 18),
+              ]),
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           _Legend(),
           const SizedBox(height: 8),
-          // Resumen por pasillo — dinámico según la tienda
-          ...pasillos.map((p) {
+          ...widget.pasillos.map((p) {
             final items = grouped[p] ?? [];
             if (items.isEmpty) return const SizedBox.shrink();
             final minD = _minDays(items);
             final color = _urgencyColor(minD);
             return GestureDetector(
-              onTap: () => onSelectPasillo(p),
+              onTap: () {
+                widget.onSelectPasillo(p);
+                _showPasilloSheet(context, p, items);
+              },
               child: Container(
                 margin: const EdgeInsets.only(bottom: 6),
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -820,6 +743,396 @@ class _StorePlan extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  void _showPasilloSheet(BuildContext context, String pasillo, List<Map<String, dynamic>> items) {
+    final pasilloName = _pasilloLabel(pasillo);
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => DraggableScrollableSheet(
+        initialChildSize: 0.55,
+        minChildSize: 0.3,
+        maxChildSize: 0.85,
+        builder: (_, scrollCtrl) => Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          child: Column(children: [
+            Container(
+              margin: const EdgeInsets.symmetric(vertical: 10),
+              width: 40, height: 4,
+              decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(children: [
+                Container(
+                  width: 40, height: 40,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF065F46).withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.store_rounded, color: Color(0xFF065F46), size: 22),
+                ),
+                const SizedBox(width: 12),
+                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(pasilloName, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: Color(0xFF065F46))),
+                  Text('${items.length} producto${items.length != 1 ? 's' : ''} · Pasillo $pasillo',
+                      style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                ])),
+              ]),
+            ),
+            const Divider(height: 20),
+            if (items.isEmpty)
+              const Padding(
+                padding: EdgeInsets.all(32),
+                child: Column(children: [
+                  Icon(Icons.check_circle_outline, color: Color(0xFF22C55E), size: 48),
+                  SizedBox(height: 8),
+                  Text('Pasillo sin alertas', style: TextStyle(fontWeight: FontWeight.w600, color: Color(0xFF22C55E))),
+                  Text('Todo el stock esta en orden', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                ]),
+              )
+            else
+              Expanded(
+                child: ListView.builder(
+                  controller: scrollCtrl,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  itemCount: items.length,
+                  itemBuilder: (_, i) {
+                    final b = items[i];
+                    final product = b['products'] as Map<String, dynamic>?;
+                    final name = product?['name'] as String? ?? 'Producto';
+                    final category = product?['category'] as String? ?? '';
+                    final expiry = b['expiry_date'] as String? ?? '';
+                    final qty = b['quantity'] as int? ?? 0;
+                    final price = (product?['price'] as num?)?.toDouble() ?? 0.0;
+                    final days = _daysLeft(expiry);
+                    final color = _urgencyColor(days);
+                    final val = qty * price;
+                    String badgeText;
+                    if (days <= 0) { badgeText = 'HOY'; }
+                    else if (days == 1) { badgeText = '1 DIA'; }
+                    else { badgeText = '$days dias'; }
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: color.withValues(alpha: 0.06),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: color.withValues(alpha: 0.3)),
+                      ),
+                      child: Row(children: [
+                        Icon(_categoryIcon(category), color: color, size: 24),
+                        const SizedBox(width: 12),
+                        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Text(name, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                          Text('$qty uds · ${val.toStringAsFixed(2)} EUR',
+                              style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                        ])),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                          decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(8)),
+                          child: Text(badgeText,
+                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 11)),
+                        ),
+                      ]),
+                    );
+                  },
+                ),
+              ),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Supermarket floor plan CustomPainter ───────────────────────────────────────
+
+class _SupermarketPainter extends CustomPainter {
+  final List<Map<String, dynamic>> batches;
+  final String? selectedPasillo;
+
+  _SupermarketPainter({required this.batches, this.selectedPasillo});
+
+  @override
+  bool shouldRepaint(_SupermarketPainter old) =>
+      old.batches != batches || old.selectedPasillo != selectedPasillo;
+
+  Map<String, List<Map<String, dynamic>>> _grouped() {
+    final map = <String, List<Map<String, dynamic>>>{};
+    for (final b in batches) {
+      final product = b['products'] as Map<String, dynamic>?;
+      final p = (product?['pasillo'] as String?)?.isNotEmpty == true
+          ? product!['pasillo'] as String
+          : 'Sin ubicacion';
+      map.putIfAbsent(p, () => []).add(b);
+    }
+    return map;
+  }
+
+  int _minD(List<Map<String, dynamic>> items) {
+    int min = 999;
+    for (final b in items) { final d = _daysLeft(b['expiry_date'] ?? ''); if (d < min) min = d; }
+    return min;
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+    final grouped = _grouped();
+    final rects = _floorPlanRects(size);
+
+    // Background floor
+    canvas.drawRect(Rect.fromLTWH(0, 0, w, h), Paint()..color = const Color(0xFFF1F5F9));
+
+    // Subtle grid
+    final gp = Paint()..color = const Color(0xFFE2E8F0)..strokeWidth = 0.4;
+    for (double x = 0; x < w; x += w * 0.1) { canvas.drawLine(Offset(x, 0), Offset(x, h), gp); }
+    for (double y = 0; y < h; y += h * 0.05) { canvas.drawLine(Offset(0, y), Offset(w, y), gp); }
+
+    // Outer building walls
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(Rect.fromLTWH(w * 0.02, h * 0.008, w * 0.96, h * 0.84), const Radius.circular(4)),
+      Paint()..color = const Color(0xFF1E293B)..style = PaintingStyle.stroke..strokeWidth = 2.5,
+    );
+
+    // Almacen divider wall
+    canvas.drawLine(Offset(w * 0.02, h * 0.163), Offset(w * 0.98, h * 0.163),
+      Paint()..color = const Color(0xFF475569)..strokeWidth = 1.5);
+    // Door gap in divider wall
+    canvas.drawLine(Offset(w * 0.46, h * 0.163), Offset(w * 0.54, h * 0.163),
+      Paint()..color = const Color(0xFFF1F5F9)..strokeWidth = 5.0);
+    // Door arc symbol
+    final dp = Path()
+      ..moveTo(w * 0.462, h * 0.163)
+      ..arcToPoint(Offset(w * 0.538, h * 0.163),
+          radius: Radius.circular(w * 0.038), clockwise: false);
+    canvas.drawPath(dp, Paint()..color = const Color(0xFF94A3B8)..style = PaintingStyle.stroke..strokeWidth = 1.2);
+
+    // ALMACEN zone
+    _drawAlmacen(canvas, rects['almacen']!);
+
+    // 4 vertical aisles
+    for (final p in ['3', '4', '1', '2']) {
+      final rect = rects[p]!;
+      final items = grouped[p] ?? [];
+      final color = items.isEmpty ? const Color(0xFFCBD5E1) : _urgencyColor(_minD(items));
+      final urgency = items.isEmpty ? '' : _urgencyLabel(_minD(items));
+      _drawAisle(canvas, rect, p, color, urgency, items.length, p == selectedPasillo);
+    }
+
+    // P5 wide aisle (Frutas y Verduras)
+    {
+      final rect = rects['5']!;
+      final items = grouped['5'] ?? [];
+      final color = items.isEmpty ? const Color(0xFFCBD5E1) : _urgencyColor(_minD(items));
+      final urgency = items.isEmpty ? '' : _urgencyLabel(_minD(items));
+      _drawWideAisle(canvas, rect, color, urgency, items.length, '5' == selectedPasillo);
+    }
+
+    // Checkout counters
+    _drawCheckouts(canvas, size);
+
+    // Entrance/exit
+    _drawEntrance(canvas, size);
+  }
+
+  void _drawAlmacen(Canvas canvas, Rect rect) {
+    canvas.drawRRect(RRect.fromRectAndRadius(rect, const Radius.circular(3)),
+      Paint()..color = const Color(0xFF334155));
+
+    canvas.save();
+    canvas.clipRRect(RRect.fromRectAndRadius(rect, const Radius.circular(3)));
+
+    // Diagonal hatching
+    final hp = Paint()..color = const Color(0x18FFFFFF)..strokeWidth = 1.2;
+    for (double x = rect.left - rect.height; x < rect.right; x += 10) {
+      canvas.drawLine(Offset(x, rect.bottom), Offset(x + rect.height, rect.top), hp);
+    }
+
+    // Storage box rows
+    final boxF = Paint()..color = const Color(0x35FFFFFF);
+    final boxS = Paint()..color = const Color(0x55FFFFFF)..style = PaintingStyle.stroke..strokeWidth = 0.5;
+    const bw = 13.0; const bh = 9.0; const bg = 3.0;
+    final cols = ((rect.width - 20) / (bw + bg)).floor();
+    for (int row = 0; row < 2; row++) {
+      for (int col = 0; col < cols; col++) {
+        final br = Rect.fromLTWH(rect.left + 10 + col * (bw + bg), rect.bottom - 14 - row * (bh + 2), bw, bh);
+        canvas.drawRect(br, boxF);
+        canvas.drawRect(br, boxS);
+      }
+    }
+
+    _txt(canvas, 'ALMACEN', Offset(rect.center.dx, rect.center.dy - 6),
+      const TextStyle(color: Color(0xFFE2E8F0), fontSize: 11, fontWeight: FontWeight.w800,
+        letterSpacing: 2.5, decoration: TextDecoration.none), maxW: rect.width - 8);
+    _txt(canvas, 'Toca para ver inventario',
+      Offset(rect.center.dx, rect.center.dy + 9),
+      TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 7.5, decoration: TextDecoration.none),
+      maxW: rect.width - 8);
+
+    canvas.restore();
+  }
+
+  void _drawAisle(Canvas canvas, Rect rect, String p, Color color, String urgency, int count, bool sel) {
+    // Fill
+    canvas.drawRRect(RRect.fromRectAndRadius(rect, const Radius.circular(4)),
+      Paint()..color = sel ? color.withValues(alpha: 0.18) : color.withValues(alpha: 0.07));
+
+    // Left shelf unit
+    _drawShelf(canvas, Rect.fromLTWH(rect.left + 3, rect.top + 26, rect.width * 0.30, rect.height - 30), color);
+    // Right shelf unit
+    _drawShelf(canvas, Rect.fromLTWH(rect.right - 3 - rect.width * 0.30, rect.top + 26, rect.width * 0.30, rect.height - 30), color);
+
+    // Center walkway
+    canvas.drawRect(
+      Rect.fromLTWH(rect.left + rect.width * 0.33, rect.top + 26, rect.width * 0.34, rect.height - 30),
+      Paint()..color = const Color(0xFFF8FAFC).withValues(alpha: 0.7));
+
+    // Header strip
+    final hdr = Rect.fromLTWH(rect.left, rect.top, rect.width, 24);
+    canvas.drawRRect(RRect.fromRectAndRadius(hdr, const Radius.circular(4)),
+      Paint()..color = color.withValues(alpha: sel ? 0.85 : 0.65));
+    _txt(canvas, _aisleLabel(p), Offset(rect.center.dx, rect.top + 12),
+      const TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.w800,
+        letterSpacing: 0.3, decoration: TextDecoration.none), maxW: rect.width - 4);
+
+    if (count > 0) {
+      _txt(canvas, '$count prod.', Offset(rect.center.dx, rect.top + 32),
+        TextStyle(color: color, fontSize: 7, fontWeight: FontWeight.w600, decoration: TextDecoration.none),
+        maxW: rect.width - 4);
+
+      final bw = rect.width * 0.80;
+      final br = Rect.fromCenter(center: Offset(rect.center.dx, rect.bottom - 12), width: bw, height: 13);
+      canvas.drawRRect(RRect.fromRectAndRadius(br, const Radius.circular(3)), Paint()..color = color);
+      _txt(canvas, urgency, br.center,
+        const TextStyle(color: Colors.white, fontSize: 7, fontWeight: FontWeight.w800,
+          letterSpacing: 0.3, decoration: TextDecoration.none), maxW: bw - 2);
+    }
+
+    // Border
+    canvas.drawRRect(RRect.fromRectAndRadius(rect, const Radius.circular(4)),
+      Paint()..color = color.withValues(alpha: sel ? 1.0 : 0.45)
+        ..style = PaintingStyle.stroke..strokeWidth = sel ? 2.5 : 1.5);
+  }
+
+  void _drawShelf(Canvas canvas, Rect r, Color color) {
+    canvas.drawRect(r, Paint()..color = color.withValues(alpha: 0.07));
+    final sp = Paint()..color = color.withValues(alpha: 0.30)..strokeWidth = 1.5;
+    const ns = 5;
+    final gap = r.height / (ns + 1);
+    for (int i = 1; i <= ns; i++) {
+      final sy = r.top + gap * i;
+      canvas.drawLine(Offset(r.left + 1, sy), Offset(r.right - 1, sy), sp);
+      // Product boxes on shelf
+      const pw = 3.5; const phMax = 5.0; const pg = 1.5;
+      final nc = ((r.width - 2) / (pw + pg)).floor();
+      for (int j = 0; j < nc; j++) {
+        final px = r.left + 1 + j * (pw + pg);
+        final ph = phMax * (0.5 + (j % 3) * 0.25);
+        canvas.drawRect(Rect.fromLTWH(px, sy - ph, pw, ph),
+          Paint()..color = color.withValues(alpha: 0.22));
+      }
+    }
+  }
+
+  void _drawWideAisle(Canvas canvas, Rect rect, Color color, String urgency, int count, bool sel) {
+    canvas.drawRRect(RRect.fromRectAndRadius(rect, const Radius.circular(4)),
+      Paint()..color = sel ? color.withValues(alpha: 0.18) : color.withValues(alpha: 0.07));
+
+    // Display stand dividers
+    final dp = Paint()..color = color.withValues(alpha: 0.25)..strokeWidth = 1.5;
+    for (int i = 1; i < 8; i++) {
+      final x = rect.left + rect.width * i / 8;
+      canvas.drawLine(Offset(x, rect.top + 3), Offset(x, rect.bottom - 3), dp);
+    }
+
+    _txt(canvas, 'FRUTAS Y VERDURAS',
+      Offset(rect.left + rect.width * 0.35, rect.center.dy),
+      TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w800,
+        letterSpacing: 0.5, decoration: TextDecoration.none), maxW: rect.width * 0.55);
+
+    if (count > 0) {
+      _txt(canvas, '$count prod.',
+        Offset(rect.left + rect.width * 0.35, rect.center.dy + 13),
+        TextStyle(color: color.withValues(alpha: 0.8), fontSize: 7.5,
+          fontWeight: FontWeight.w500, decoration: TextDecoration.none));
+      final br = Rect.fromCenter(center: Offset(rect.right - 36, rect.center.dy), width: 56, height: 14);
+      canvas.drawRRect(RRect.fromRectAndRadius(br, const Radius.circular(3)), Paint()..color = color);
+      _txt(canvas, urgency, br.center,
+        const TextStyle(color: Colors.white, fontSize: 7.5, fontWeight: FontWeight.w800, decoration: TextDecoration.none));
+    }
+
+    canvas.drawRRect(RRect.fromRectAndRadius(rect, const Radius.circular(4)),
+      Paint()..color = color.withValues(alpha: sel ? 1.0 : 0.45)
+        ..style = PaintingStyle.stroke..strokeWidth = sel ? 2.5 : 1.5);
+  }
+
+  void _drawCheckouts(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+    final mx = w * 0.04;
+    final iw = w - mx * 2;
+    const n = 4; const gap = 6.0;
+    final cw = (iw - gap * (n - 1)) / n;
+    final ct = h * 0.660;
+    final ch = h * 0.072;
+
+    for (int i = 0; i < n; i++) {
+      final cx = mx + i * (cw + gap);
+      final cr = Rect.fromLTWH(cx, ct, cw, ch);
+      canvas.drawRRect(RRect.fromRectAndRadius(cr, const Radius.circular(3)),
+        Paint()..color = const Color(0xFFE2E8F0));
+      canvas.drawRRect(RRect.fromRectAndRadius(cr, const Radius.circular(3)),
+        Paint()..color = const Color(0xFF94A3B8)..style = PaintingStyle.stroke..strokeWidth = 0.8);
+      // Belt
+      canvas.drawRRect(RRect.fromRectAndRadius(
+          Rect.fromLTWH(cx + 3, ct + ch * 0.35, cw - 6, ch * 0.25), const Radius.circular(2)),
+        Paint()..color = const Color(0xFF64748B));
+      // Screen
+      canvas.drawRRect(RRect.fromRectAndRadius(
+          Rect.fromLTWH(cx + 2, ct + 2, cw * 0.35, ch * 0.30), const Radius.circular(2)),
+        Paint()..color = const Color(0xFF93C5FD));
+      _txt(canvas, 'CAJA ${i + 1}', Offset(cx + cw / 2, ct + ch * 0.82),
+        const TextStyle(color: Color(0xFF64748B), fontSize: 6.5, fontWeight: FontWeight.w700,
+          letterSpacing: 0.5, decoration: TextDecoration.none));
+    }
+  }
+
+  void _drawEntrance(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+    final er = Rect.fromLTWH(w * 0.02, h * 0.742, w * 0.96, h * 0.058);
+    canvas.drawRRect(RRect.fromRectAndRadius(er, const Radius.circular(4)),
+      Paint()..color = const Color(0xFF065F46));
+    // Sliding door gaps
+    canvas.drawRect(Rect.fromLTWH(w * 0.36, er.top + 1, w * 0.11, er.height - 2),
+      Paint()..color = const Color(0xFF047857));
+    canvas.drawRect(Rect.fromLTWH(w * 0.53, er.top + 1, w * 0.11, er.height - 2),
+      Paint()..color = const Color(0xFF047857));
+    _txt(canvas, 'ENTRADA / SALIDA', er.center,
+      const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w800,
+        letterSpacing: 2.0, decoration: TextDecoration.none));
+  }
+
+  void _txt(Canvas canvas, String text, Offset center, TextStyle style, {double maxW = 300}) {
+    final tp = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: TextDirection.ltr,
+      textAlign: TextAlign.center,
+    )..layout(maxWidth: maxW);
+    tp.paint(canvas, center - Offset(tp.width / 2, tp.height / 2));
+  }
+
+  String _aisleLabel(String p) {
+    const labels = {'1': 'PANADERIA', '2': 'LACTEOS', '3': 'CARNICERIA', '4': 'PESCADERIA', '5': 'FRUTAS'};
+    return labels[p] ?? 'P$p';
   }
 }
 
@@ -1231,153 +1544,223 @@ void showPasilloDetail(
   );
 }
 
-// ── FEFO list ─────────────────────────────────────────────────────────────────
+// ── FEFO list mejorado ────────────────────────────────────────────────────────
 
-class _FefoList extends StatelessWidget {
+class _FefoList extends StatefulWidget {
   final List<Map<String, dynamic>> batches;
   const _FefoList({required this.batches});
+  @override
+  State<_FefoList> createState() => _FefoListState();
+}
+
+class _FefoListState extends State<_FefoList> {
+  String _search = '';
+
+  List<Map<String, dynamic>> get _filtered {
+    if (_search.isEmpty) return widget.batches;
+    final q = _search.toLowerCase();
+    return widget.batches.where((b) {
+      final p = b['products'] as Map<String, dynamic>?;
+      final name = (p?['name'] as String? ?? '').toLowerCase();
+      final cat  = (p?['category'] as String? ?? '').toLowerCase();
+      return name.contains(q) || cat.contains(q);
+    }).toList();
+  }
 
   @override
   Widget build(BuildContext context) {
-    if (batches.isEmpty) {
+    final all = widget.batches;
+    final todayItems  = all.where((b) { final d = _daysLeft(b['expiry_date'] ?? ''); return d <= 0; }).length;
+    final critItems   = all.where((b) { final d = _daysLeft(b['expiry_date'] ?? ''); return d == 1; }).length;
+    final urgentItems = all.where((b) { final d = _daysLeft(b['expiry_date'] ?? ''); return d >= 2 && d <= 3; }).length;
+    final filtered    = _filtered;
+
+    if (all.isEmpty) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: const [
-            Icon(Icons.check_circle, size: 48, color: Color(0xFF22C55E)),
+            Icon(Icons.check_circle, size: 56, color: Color(0xFF22C55E)),
             SizedBox(height: 12),
             Text('Sin productos próximos a caducar',
-                style: TextStyle(color: Colors.grey)),
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.grey)),
+            SizedBox(height: 4),
+            Text('El inventario está bajo control', style: TextStyle(color: Colors.grey)),
           ],
         ),
       );
     }
-    return ListView.builder(
-      padding: const EdgeInsets.all(12),
-      itemCount: batches.length + 2,
-      itemBuilder: (context, index) {
-        if (index == 0) {
-          return Container(
-            margin: const EdgeInsets.only(bottom: 12),
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: const Color(0xFFEFF6FF),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: const Color(0xFFBFDBFE)),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Icon(Icons.info_outline, color: Color(0xFF3B82F6), size: 18),
-                const SizedBox(width: 8),
-                const Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('¿Qué es FEFO?',
-                          style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
-                              color: Color(0xFF1D4ED8))),
-                      SizedBox(height: 3),
-                      Text(
-                        'First Expired, First Out — primero en caducar, primero en salir. '
-                        'El sistema ordena los productos por fecha de caducidad para que el '
-                        'empleado sepa exactamente qué colocar al frente del lineal hoy.',
-                        style: TextStyle(fontSize: 12, color: Color(0xFF1E40AF), height: 1.4),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          );
-        }
-        if (index == 1) {
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: Text(
-              '${batches.length} productos · ordenados por fecha de caducidad',
-              style: const TextStyle(fontSize: 12, color: Colors.grey),
-            ),
-          );
-        }
-        final b = batches[index - 2];
-        final product = b['products'] as Map<String, dynamic>?;
-        final name = product?['name'] as String? ?? 'Producto';
-        final category = product?['category'] as String? ?? '';
-        final pasillo = (product?['pasillo'] as String?)?.isNotEmpty == true ? product!['pasillo'] as String : 'Sin ubicación';
-        final expiry = b['expiry_date'] as String? ?? '';
-        final qty = b['quantity'] as int? ?? 0;
-        final price = (product?['price'] as num?)?.toDouble() ?? 0.0;
-        final days = _daysLeft(expiry);
-        final color = _urgencyColor(days);
-        final val = qty * price;
 
-        return Container(
-          margin: const EdgeInsets.only(bottom: 8),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(10),
-            border: Border(left: BorderSide(color: color, width: 4)),
+    return Column(
+      children: [
+        // Stats header
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: const BoxDecoration(
+            color: Color(0xFFF8FAFC),
+            border: Border(bottom: BorderSide(color: Color(0xFFE2E8F0))),
           ),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            child: Row(
-              children: [
-                Icon(_categoryIcon(category),
-                    color: color.withValues(alpha: 0.7), size: 20),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(name,
-                          style: const TextStyle(
-                              fontWeight: FontWeight.w600, fontSize: 14)),
-                      Text(
-                        'P.$pasillo  ·  $qty uds  ·  ${val.toStringAsFixed(2)} €',
-                        style: const TextStyle(fontSize: 11, color: Colors.grey),
-                      ),
-                      if (category.isNotEmpty)
-                        Text(category,
-                            style: const TextStyle(
-                                fontSize: 10, color: Colors.grey)),
-                    ],
-                  ),
-                ),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(expiry,
-                        style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: color)),
-                    Container(
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: color.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(5),
-                      ),
-                      child: Text(
-                        _urgencyLabel(days),
-                        style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w800,
-                            color: color),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
+          child: Row(children: [
+            _FefoStatBadge('${all.length}', 'total', const Color(0xFF6B7280)),
+            const SizedBox(width: 8),
+            if (todayItems > 0) ...[
+              _FefoStatBadge('$todayItems', 'hoy', const Color(0xFFEF4444)),
+              const SizedBox(width: 8),
+            ],
+            if (critItems > 0) ...[
+              _FefoStatBadge('$critItems', '1 día', const Color(0xFFF97316)),
+              const SizedBox(width: 8),
+            ],
+            if (urgentItems > 0) ...[
+              _FefoStatBadge('$urgentItems', '2-3 días', const Color(0xFFF59E0B)),
+              const SizedBox(width: 8),
+            ],
+            const Spacer(),
+            Text('FEFO: First Expired, First Out',
+                style: const TextStyle(fontSize: 9, color: Colors.grey, fontStyle: FontStyle.italic)),
+          ]),
+        ),
+        // Search bar
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: TextField(
+            onChanged: (v) => setState(() => _search = v),
+            decoration: InputDecoration(
+              hintText: 'Buscar producto o categoría…',
+              hintStyle: const TextStyle(fontSize: 13),
+              prefixIcon: const Icon(Icons.search, size: 18),
+              suffixIcon: _search.isNotEmpty
+                  ? IconButton(icon: const Icon(Icons.clear, size: 16), onPressed: () => setState(() => _search = ''))
+                  : null,
+              filled: true,
+              fillColor: Colors.white,
+              contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
+              enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
             ),
           ),
-        );
-      },
+        ),
+        if (filtered.isEmpty)
+          Expanded(child: Center(child: Text('Sin resultados para "$_search"', style: const TextStyle(color: Colors.grey))))
+        else
+          Expanded(
+            child: ListView.builder(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+              itemCount: filtered.length,
+              itemBuilder: (context, index) {
+                final b = filtered[index];
+                final product = b['products'] as Map<String, dynamic>?;
+                final name     = product?['name'] as String? ?? 'Producto';
+                final category = product?['category'] as String? ?? '';
+                final pasillo  = (product?['pasillo'] as String?)?.isNotEmpty == true ? product!['pasillo'] as String : 'Sin ubicación';
+                final expiry   = b['expiry_date'] as String? ?? '';
+                final qty      = b['quantity'] as int? ?? 0;
+                final price    = (product?['price'] as num?)?.toDouble() ?? 0.0;
+                final days     = _daysLeft(expiry);
+                final color    = _urgencyColor(days);
+                final val      = qty * price;
+
+                // Badge de días
+                String badgeText;
+                Color badgeColor;
+                if (days <= 0) {
+                  badgeText = 'HOY';
+                  badgeColor = const Color(0xFFEF4444);
+                } else if (days == 1) {
+                  badgeText = '1 DÍA';
+                  badgeColor = const Color(0xFFF97316);
+                } else if (days <= 3) {
+                  badgeText = '$days DÍAS';
+                  badgeColor = const Color(0xFFF59E0B);
+                } else {
+                  badgeText = '$days d.';
+                  badgeColor = const Color(0xFF10B981);
+                }
+
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border(left: BorderSide(color: color, width: 5)),
+                    boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 6, offset: const Offset(0, 2))],
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    child: Row(children: [
+                      // Icono categoría
+                      Container(
+                        width: 40, height: 40,
+                        decoration: BoxDecoration(
+                          color: color.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Icon(_categoryIcon(category), color: color, size: 20),
+                      ),
+                      const SizedBox(width: 10),
+                      // Info
+                      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text(name, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                        const SizedBox(height: 3),
+                        Row(children: [
+                          Icon(Icons.map_outlined, size: 11, color: Colors.grey[500]),
+                          const SizedBox(width: 3),
+                          Text('P.$pasillo', style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+                          const SizedBox(width: 8),
+                          Icon(Icons.inventory_2_outlined, size: 11, color: Colors.grey[500]),
+                          const SizedBox(width: 3),
+                          Text('$qty uds', style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+                          const SizedBox(width: 8),
+                          Text('${val.toStringAsFixed(2)} €', style: const TextStyle(fontSize: 11, color: Color(0xFF059669), fontWeight: FontWeight.w600)),
+                        ]),
+                        if (category.isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(category, style: TextStyle(fontSize: 10, color: Colors.grey[400])),
+                        ],
+                      ])),
+                      // Badge días
+                      Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: badgeColor,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(badgeText, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 11)),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(expiry, style: TextStyle(fontSize: 10, color: Colors.grey[500])),
+                      ]),
+                    ]),
+                  ),
+                );
+              },
+            ),
+          ),
+      ],
     );
   }
+}
+
+class _FefoStatBadge extends StatelessWidget {
+  final String count;
+  final String label;
+  final Color color;
+  const _FefoStatBadge(this.count, this.label, this.color);
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: 0.12),
+      borderRadius: BorderRadius.circular(6),
+      border: Border.all(color: color.withValues(alpha: 0.3)),
+    ),
+    child: Row(mainAxisSize: MainAxisSize.min, children: [
+      Text(count, style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13, color: color)),
+      const SizedBox(width: 4),
+      Text(label, style: TextStyle(fontSize: 10, color: color)),
+    ]),
+  );
 }
 
 // ── Shared widgets ────────────────────────────────────────────────────────────
@@ -1402,4 +1785,166 @@ class _LegendItem extends StatelessWidget {
       ],
     );
   }
+}
+
+// ── Almacén Quick Tab ─────────────────────────────────────────────────────────
+
+class _WarehouseQuickTab extends ConsumerWidget {
+  const _WarehouseQuickTab();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final warehouseAsync = ref.watch(_warehouseQuickProvider);
+    return RefreshIndicator(
+      onRefresh: () async => ref.invalidate(_warehouseQuickProvider),
+      child: warehouseAsync.when(
+        loading: () => const ShimmerList(count: 6, itemHeight: 72),
+        error: (_, __) => Center(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Icon(Icons.warehouse_outlined, size: 48, color: Colors.grey),
+            const SizedBox(height: 12),
+            const Text('No se pudo cargar el almacén', style: TextStyle(color: Colors.grey)),
+            const SizedBox(height: 8),
+            ElevatedButton.icon(
+              onPressed: () => ref.invalidate(_warehouseQuickProvider),
+              icon: const Icon(Icons.refresh, size: 16),
+              label: const Text('Reintentar'),
+            ),
+          ]),
+        ),
+        data: (data) {
+          final items = List<Map<String, dynamic>>.from(data['items'] ?? []);
+          final totalValue = (data['total_value'] as num?)?.toDouble() ?? 0;
+          final criticalCount = data['critical_count'] as int? ?? 0;
+          final lowCount = data['low_count'] as int? ?? 0;
+
+          // Sort: critical first, then low, then ok
+          items.sort((a, b) {
+            const order = {'critical': 0, 'low': 1, 'ok': 2};
+            return (order[a['status']] ?? 2).compareTo(order[b['status']] ?? 2);
+          });
+
+          return ListView(
+            padding: const EdgeInsets.all(14),
+            children: [
+              // Header card
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF0F172A), Color(0xFF1E3A5F)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Row(children: [
+                    const Icon(Icons.warehouse_outlined, color: Colors.white, size: 20),
+                    const SizedBox(width: 8),
+                    const Expanded(child: Text('Almacén',
+                        style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800))),
+                    if (criticalCount > 0)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(color: const Color(0xFFEF4444), borderRadius: BorderRadius.circular(6)),
+                        child: Text('$criticalCount sin stock', style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
+                      ),
+                  ]),
+                  const SizedBox(height: 10),
+                  Row(children: [
+                    _WStatPill('${items.length}', 'productos'),
+                    const SizedBox(width: 8),
+                    _WStatPill('${totalValue.toStringAsFixed(0)} €', 'valor'),
+                    const SizedBox(width: 8),
+                    if (lowCount > 0) _WStatPill('$lowCount', 'bajo stock', warn: true),
+                  ]),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () => Navigator.of(context).pushNamed('/warehouse'),
+                      icon: const Icon(Icons.open_in_new, size: 16, color: Colors.white),
+                      label: const Text('Abrir almacén completo', style: TextStyle(color: Colors.white)),
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: Colors.white30),
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                      ),
+                    ),
+                  ),
+                ]),
+              ),
+              const SizedBox(height: 12),
+              if (criticalCount > 0 || lowCount > 0) ...[
+                const Text('⚠️ Requieren atención',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFFEF4444))),
+                const SizedBox(height: 8),
+              ],
+              ...items.take(15).map((item) {
+                final name = item['product_name'] as String? ?? 'Producto';
+                final cat = item['category'] as String? ?? '';
+                final qty = item['quantity'] as int? ?? 0;
+                final status = item['status'] as String? ?? 'ok';
+                final unit = item['unit'] as String? ?? 'uds';
+                final statusColor = status == 'critical'
+                    ? const Color(0xFFEF4444)
+                    : status == 'low' ? const Color(0xFFF59E0B) : const Color(0xFF059669);
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 6),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border(left: BorderSide(color: statusColor, width: 3)),
+                  ),
+                  child: Row(children: [
+                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(name, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                      Text(cat, style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                    ])),
+                    Text('$qty $unit', style: TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.w800, color: statusColor)),
+                  ]),
+                );
+              }),
+              if (items.length > 15)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: TextButton.icon(
+                    onPressed: () => Navigator.of(context).pushNamed('/warehouse'),
+                    icon: const Icon(Icons.arrow_forward, size: 16),
+                    label: Text('Ver los ${items.length - 15} productos restantes'),
+                  ),
+                ),
+              const SizedBox(height: 16),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+final _warehouseQuickProvider = FutureProvider.autoDispose<Map<String, dynamic>>((ref) async {
+  return ApiService().getWarehouseStock();
+});
+
+class _WStatPill extends StatelessWidget {
+  final String value, label;
+  final bool warn;
+  const _WStatPill(this.value, this.label, {this.warn = false});
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+    decoration: BoxDecoration(
+      color: warn ? const Color(0xFFEF4444).withValues(alpha: 0.2) : Colors.white.withValues(alpha: 0.12),
+      borderRadius: BorderRadius.circular(7),
+    ),
+    child: Column(children: [
+      Text(value, style: TextStyle(
+          color: warn ? const Color(0xFFFCA5A5) : Colors.white,
+          fontSize: 14, fontWeight: FontWeight.w800)),
+      Text(label, style: const TextStyle(color: Colors.white54, fontSize: 9)),
+    ]),
+  );
 }

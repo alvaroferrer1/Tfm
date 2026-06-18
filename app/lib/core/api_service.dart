@@ -301,11 +301,29 @@ class ApiService {
 
   Future<List<Map<String, dynamic>>> getOrderSuggestions() async {
     final resp = await http.get(
-      Uri.parse('$_baseUrl/stats/order-suggestions'),
+      Uri.parse('$_baseUrl/reports/order'),
       headers: _headers,
     ).timeout(const Duration(seconds: 15));
     final data = _parse(resp);
     return List<Map<String, dynamic>>.from(data['suggestions'] ?? []);
+  }
+
+  Future<List<int>> downloadOrderPdf() async {
+    final resp = await http.get(
+      Uri.parse('$_baseUrl/reports/order/pdf'),
+      headers: _headers,
+    ).timeout(const Duration(seconds: 20));
+    if (resp.statusCode != 200) throw Exception('Error ${resp.statusCode}');
+    return resp.bodyBytes.toList();
+  }
+
+  Future<List<int>> downloadDailySheetPdf() async {
+    final resp = await http.get(
+      Uri.parse('$_baseUrl/reports/daily_sheet/pdf'),
+      headers: _headers,
+    ).timeout(const Duration(seconds: 20));
+    if (resp.statusCode != 200) throw Exception('Error ${resp.statusCode}');
+    return resp.bodyBytes.toList();
   }
 
   Future<Map<String, dynamic>> getEsgStats({int days = 30}) async {
@@ -614,6 +632,102 @@ class ApiService {
     } finally {
       client.close();
     }
+  }
+
+  // ── Almacén ──────────────────────────────────────────────────────────────────
+
+  Future<Map<String, dynamic>> getWarehouseStock() async {
+    final resp = await http.get(
+      Uri.parse('$_baseUrl/warehouse/stock'),
+      headers: _headers,
+    ).timeout(const Duration(seconds: 15));
+    return _parse(resp);
+  }
+
+  Future<void> updateWarehouseStock(String productId, int quantity) async {
+    final resp = await http.put(
+      Uri.parse('$_baseUrl/warehouse/stock/$productId'),
+      headers: {..._headers, 'Content-Type': 'application/json'},
+      body: jsonEncode({'quantity': quantity}),
+    ).timeout(const Duration(seconds: 10));
+    if (resp.statusCode < 200 || resp.statusCode >= 300) {
+      throw Exception('Error ${resp.statusCode}');
+    }
+  }
+
+  // ── Proveedores con productos ─────────────────────────────────────────────
+
+  Future<Map<String, dynamic>> getSuppliersWithProducts() async {
+    final resp = await http.get(
+      Uri.parse('$_baseUrl/suppliers/products'),
+      headers: _headers,
+    ).timeout(const Duration(seconds: 15));
+    return _parse(resp);
+  }
+
+  // ── Pedido confirmado ─────────────────────────────────────────────────────
+
+  Future<void> confirmOrder(List<Map<String, dynamic>> items, {String notes = ''}) async {
+    final resp = await http.post(
+      Uri.parse('$_baseUrl/orders/confirm'),
+      headers: {..._headers, 'Content-Type': 'application/json'},
+      body: jsonEncode({'items': items, 'notes': notes}),
+    ).timeout(const Duration(seconds: 10));
+    if (resp.statusCode < 200 || resp.statusCode >= 300) {
+      throw Exception('Error ${resp.statusCode}: ${resp.body}');
+    }
+  }
+
+  Future<Map<String, dynamic>?> getLastOrder() async {
+    try {
+      final resp = await http.get(
+        Uri.parse('$_baseUrl/orders/last'),
+        headers: _headers,
+      ).timeout(const Duration(seconds: 10));
+      final data = _parse(resp);
+      return data['order'] as Map<String, dynamic>?;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // ── Store profile ─────────────────────────────────────────────────────────────
+
+  Future<Map<String, dynamic>> getStoreProfile() async {
+    final resp = await http.get(
+      Uri.parse('$_baseUrl/store/profile'),
+      headers: _headers,
+    ).timeout(const Duration(seconds: 10));
+    return _parse(resp);
+  }
+
+  Future<void> updateStoreProfile(Map<String, dynamic> data) async {
+    await http.put(
+      Uri.parse('$_baseUrl/store/profile'),
+      headers: {..._headers, 'Content-Type': 'application/json'},
+      body: jsonEncode(data),
+    ).timeout(const Duration(seconds: 10));
+  }
+
+  // ── Weather ───────────────────────────────────────────────────────────────────
+
+  Future<Map<String, dynamic>> getWeather() async {
+    final resp = await http.get(
+      Uri.parse('$_baseUrl/weather/current'),
+      headers: _headers,
+    ).timeout(const Duration(seconds: 15));
+    return _parse(resp);
+  }
+
+  // ── Insights IA ───────────────────────────────────────────────────────────────
+
+  Future<Map<String, dynamic>> generateInsights() async {
+    final resp = await http.post(
+      Uri.parse('$_baseUrl/reports/insights'),
+      headers: {..._headers, 'Content-Type': 'application/json'},
+      body: jsonEncode({}),
+    ).timeout(const Duration(seconds: 60));
+    return _parse(resp);
   }
 
   Map<String, dynamic> _parse(http.Response resp) {
