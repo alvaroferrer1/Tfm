@@ -73,6 +73,8 @@ eval_results.json
 !backend/static/chuwi_avatar.png
 !MermaOps_Hero.png
 !MermaOps_Presentacion_TFM.pdf
+!docs/MermaOps_Portada.png
+!docs/screenshots_now/*.png
 
 # ── Reference code del máster (no pertenece al TFM) ──────────────────────────
 _jeffry_extracted/
