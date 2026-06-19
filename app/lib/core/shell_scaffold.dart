@@ -145,7 +145,16 @@ class _ShellScaffoldState extends ConsumerState<ShellScaffold> {
     }
 
     return Scaffold(
-      body: widget.child,
+      body: LayoutBuilder(builder: (ctx, constraints) {
+        if (constraints.maxWidth <= 640) return widget.child;
+        return Align(
+          alignment: Alignment.topCenter,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 900),
+            child: widget.child,
+          ),
+        );
+      }),
       bottomNavigationBar: BottomNavigationBar(
         type: BottomNavigationBarType.fixed,
         currentIndex: currentIndex,

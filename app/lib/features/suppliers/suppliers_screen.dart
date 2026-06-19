@@ -1,3 +1,4 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -550,6 +551,26 @@ class _OrderTab extends ConsumerStatefulWidget {
 class _OrderTabState extends ConsumerState<_OrderTab> {
   final Set<String> _selected = {};
   bool _confirming = false;
+  String? _uploadedPdfName;
+  bool _uploadingPdf = false;
+
+  Future<void> _pickAndUploadPdf() async {
+    setState(() { _uploadingPdf = true; _uploadedPdfName = null; });
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom, allowedExtensions: ['pdf'], withData: true,
+      );
+      if (result == null || result.files.isEmpty) { setState(() => _uploadingPdf = false); return; }
+      setState(() { _uploadedPdfName = result.files.single.name; _uploadingPdf = false; });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('PDF "${result.files.single.name}" cargado'), backgroundColor: const Color(0xFF059669)),
+        );
+      }
+    } catch (e) {
+      setState(() => _uploadingPdf = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -609,21 +630,36 @@ class _OrderTabState extends ConsumerState<_OrderTab> {
             Row(children: [
               Expanded(child: ElevatedButton.icon(
                 onPressed: widget.onDownloadPdf,
-                icon: const Icon(Icons.picture_as_pdf, size: 18),
-                label: const Text('PDF'),
+                icon: const Icon(Icons.download_rounded, size: 18),
+                label: const Text('Descargar PDF'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.white,
                   foregroundColor: const Color(0xFF1E3A5F),
                   padding: const EdgeInsets.symmetric(vertical: 10),
                 ),
               )),
-              const SizedBox(width: 10),
+              const SizedBox(width: 8),
+              Expanded(child: ElevatedButton.icon(
+                onPressed: _uploadingPdf ? null : _pickAndUploadPdf,
+                icon: _uploadingPdf
+                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : const Icon(Icons.upload_file_rounded, size: 18),
+                label: Text(_uploadedPdfName != null ? 'PDF cargado ✓' : 'Subir PDF'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _uploadedPdfName != null ? const Color(0xFF059669) : Colors.white.withValues(alpha: 0.2),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                ),
+              )),
+            ]),
+            const SizedBox(height: 8),
+            Row(children: [
               Expanded(child: ElevatedButton.icon(
                 onPressed: _selected.isEmpty || _confirming ? null : () => _confirmOrder(ctx, selectedItems),
                 icon: _confirming
                     ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                     : const Icon(Icons.check_circle_outline, size: 18),
-                label: Text(_selected.isEmpty ? 'Selecciona' : 'Confirmar (${_selected.length})'),
+                label: Text(_selected.isEmpty ? 'Selecciona productos' : 'Confirmar (${_selected.length})'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: _selected.isEmpty ? Colors.white30 : const Color(0xFF059669),
                   foregroundColor: Colors.white,

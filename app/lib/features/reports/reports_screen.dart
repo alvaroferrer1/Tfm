@@ -785,6 +785,12 @@ class _MermaTab extends ConsumerWidget {
             const SizedBox(height: 16),
             // Bar chart — last 14 days
             _MermaBarChart(logs: logs),
+            const SizedBox(height: 16),
+            // Category breakdown
+            _MermaCategoryBreakdown(logs: logs),
+            const SizedBox(height: 16),
+            // Trend summary
+            _MermaTrendCard(logs: logs),
             const SizedBox(height: 20),
             const Text(
               'Historial de registros',
@@ -1324,6 +1330,150 @@ class _MermaBarChart extends StatelessWidget {
   }
 }
 
+// ── Merma category breakdown ──────────────────────────────────────────────────
+
+class _MermaCategoryBreakdown extends StatelessWidget {
+  final List<Map<String, dynamic>> logs;
+  const _MermaCategoryBreakdown({required this.logs});
+
+  @override
+  Widget build(BuildContext context) {
+    // Group by reason/category
+    final Map<String, double> byCategory = {};
+    for (final log in logs) {
+      final reason = (log['reason'] as String? ?? 'Otros');
+      final cat = reason.isEmpty ? 'Sin categoría' : _extractCategory(reason);
+      byCategory[cat] = (byCategory[cat] ?? 0) + ((log['value_lost'] as num?)?.toDouble() ?? 0);
+    }
+    if (byCategory.isEmpty) return const SizedBox.shrink();
+
+    final sorted = byCategory.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+    final total = sorted.fold<double>(0, (s, e) => s + e.value);
+    final colors = [
+      const Color(0xFFEF4444), const Color(0xFFF97316), const Color(0xFFF59E0B),
+      const Color(0xFF10B981), const Color(0xFF3B82F6), const Color(0xFF8B5CF6),
+    ];
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text('Desglose por categoría', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 12),
+        // Stacked bar
+        ClipRRect(
+          borderRadius: BorderRadius.circular(6),
+          child: SizedBox(
+            height: 10,
+            child: Row(
+              children: sorted.asMap().entries.map((e) {
+                final ratio = total > 0 ? e.value.value / total : 0.0;
+                return Expanded(
+                  flex: (ratio * 1000).round().clamp(1, 1000),
+                  child: Container(color: colors[e.key % colors.length]),
+                );
+              }).toList(),
+            ),
+          ),
+        ),
+        const SizedBox(height: 14),
+        ...sorted.asMap().entries.map((e) {
+          final color = colors[e.key % colors.length];
+          final pct = total > 0 ? (e.value.value / total * 100) : 0.0;
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Row(children: [
+              Container(width: 10, height: 10, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+              const SizedBox(width: 8),
+              Expanded(child: Text(e.value.key, style: const TextStyle(fontSize: 12, color: Color(0xFF374151)))),
+              Text('${e.value.value.toStringAsFixed(2)} €', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: color)),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 38,
+                child: Text('${pct.toStringAsFixed(0)}%', textAlign: TextAlign.right, style: const TextStyle(fontSize: 11, color: Color(0xFF9CA3AF))),
+              ),
+            ]),
+          );
+        }),
+      ]),
+    );
+  }
+
+  String _extractCategory(String reason) {
+    final lower = reason.toLowerCase();
+    if (lower.contains('pan') || lower.contains('bollería')) return 'Panadería';
+    if (lower.contains('lácteo') || lower.contains('leche') || lower.contains('yogur')) return 'Lácteos';
+    if (lower.contains('carne') || lower.contains('filete') || lower.contains('pollo')) return 'Carnicería';
+    if (lower.contains('fruta') || lower.contains('verdura') || lower.contains('ensalada')) return 'Frutas/Verduras';
+    if (lower.contains('pescado') || lower.contains('marisco')) return 'Pescadería';
+    if (lower.contains('congelado')) return 'Congelados';
+    if (lower.contains('bebida')) return 'Bebidas';
+    // Truncate long strings
+    return reason.length > 20 ? '${reason.substring(0, 20)}…' : reason;
+  }
+}
+
+class _MermaTrendCard extends StatelessWidget {
+  final List<Map<String, dynamic>> logs;
+  const _MermaTrendCard({required this.logs});
+
+  @override
+  Widget build(BuildContext context) {
+    if (logs.length < 7) return const SizedBox.shrink();
+
+    // Split last 15 vs previous 15
+    final sorted = List<Map<String, dynamic>>.from(logs)
+      ..sort((a, b) => (a['date'] as String? ?? '').compareTo(b['date'] as String? ?? ''));
+    final half = sorted.length ~/ 2;
+    final firstHalf = sorted.take(half);
+    final secondHalf = sorted.skip(half);
+
+    final avgFirst = firstHalf.isEmpty ? 0.0 :
+        firstHalf.fold<double>(0, (s, l) => s + ((l['value_lost'] as num?)?.toDouble() ?? 0)) / firstHalf.length;
+    final avgSecond = secondHalf.isEmpty ? 0.0 :
+        secondHalf.fold<double>(0, (s, l) => s + ((l['value_lost'] as num?)?.toDouble() ?? 0)) / secondHalf.length;
+
+    final improving = avgSecond < avgFirst;
+    final pct = avgFirst > 0 ? ((avgFirst - avgSecond).abs() / avgFirst * 100) : 0.0;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: improving ? const Color(0xFFECFDF5) : const Color(0xFFFFF7ED),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: improving ? const Color(0xFFBBF7D0) : const Color(0xFFFED7AA)),
+      ),
+      child: Row(children: [
+        Icon(
+          improving ? Icons.trending_down_rounded : Icons.trending_up_rounded,
+          color: improving ? const Color(0xFF059669) : const Color(0xFFF97316),
+          size: 28,
+        ),
+        const SizedBox(width: 12),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(
+            improving ? 'Tendencia positiva 📉' : 'Merma en aumento ⚠️',
+            style: TextStyle(
+              fontSize: 13, fontWeight: FontWeight.w700,
+              color: improving ? const Color(0xFF065F46) : const Color(0xFF92400E),
+            ),
+          ),
+          Text(
+            improving
+                ? 'La merma ha bajado un ${pct.toStringAsFixed(0)}% en la segunda mitad del período'
+                : 'La merma ha subido un ${pct.toStringAsFixed(0)}% — revisar caducidades pendientes',
+            style: TextStyle(fontSize: 11, color: improving ? const Color(0xFF059669) : const Color(0xFFF97316), height: 1.4),
+          ),
+        ])),
+      ]),
+    );
+  }
+}
+
 class _OrderSuggestionsTab extends ConsumerWidget {
   const _OrderSuggestionsTab();
 
@@ -1492,6 +1642,10 @@ class _OrderSuggestionsTab extends ConsumerWidget {
             const SizedBox(height: 10),
             ...suggestions.map((s) => _OrderSuggestionRow(suggestion: s)),
 
+            // PDF import/download section
+            const SizedBox(height: 16),
+            const _OrderPdfSection(),
+
             // Totals footer
             const SizedBox(height: 8),
             Container(
@@ -1625,6 +1779,155 @@ class _OrderSuggestionRow extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+// ── Order PDF Section ─────────────────────────────────────────────────────────
+
+class _OrderPdfSection extends StatefulWidget {
+  const _OrderPdfSection();
+  @override
+  State<_OrderPdfSection> createState() => _OrderPdfSectionState();
+}
+
+class _OrderPdfSectionState extends State<_OrderPdfSection> {
+  bool _downloading = false;
+  String? _uploadedFileName;
+  String? _uploadedAnalysis;
+  bool _analyzing = false;
+
+  Future<void> _downloadPdf() async {
+    setState(() => _downloading = true);
+    try {
+      final bytes = await api.downloadOrderPdf();
+      final uint8List = Uint8List.fromList(bytes);
+      final now = DateTime.now();
+      final filename = 'pedido_${now.year}${now.month.toString().padLeft(2,'0')}${now.day.toString().padLeft(2,'0')}.pdf';
+      await Share.shareXFiles(
+        [XFile.fromData(uint8List, mimeType: 'application/pdf', name: filename)],
+        subject: 'Pedido recomendado MermaOps',
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _downloading = false);
+    }
+  }
+
+  Future<void> _uploadPdf() async {
+    setState(() { _analyzing = true; _uploadedFileName = null; _uploadedAnalysis = null; });
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom, allowedExtensions: ['pdf'], withData: true,
+      );
+      if (result == null || result.files.isEmpty) { setState(() => _analyzing = false); return; }
+      final file = result.files.single;
+      final bytes = file.bytes;
+      if (bytes == null) { setState(() => _analyzing = false); return; }
+      setState(() => _uploadedFileName = file.name);
+      final data = await api.analyzePdfReport(bytes, file.name);
+      setState(() { _uploadedAnalysis = data['analysis'] as String? ?? ''; _analyzing = false; });
+    } catch (e) {
+      setState(() { _uploadedAnalysis = friendlyError(e); _analyzing = false; });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const Text('Documentos de pedido', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+      const SizedBox(height: 10),
+      Row(children: [
+        Expanded(
+          child: Material(
+            color: const Color(0xFFEFF6FF),
+            borderRadius: BorderRadius.circular(12),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: _downloading ? null : _downloadPdf,
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(children: [
+                  _downloading
+                    ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF2563EB)))
+                    : const Icon(Icons.download_rounded, color: Color(0xFF2563EB), size: 28),
+                  const SizedBox(height: 8),
+                  const Text('Descargar PDF pedido', textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF1D4ED8))),
+                  const Text('Generado por Kuine', textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 10, color: Color(0xFF60A5FA))),
+                ]),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Material(
+            color: const Color(0xFFF5F3FF),
+            borderRadius: BorderRadius.circular(12),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: _analyzing ? null : _uploadPdf,
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(children: [
+                  _analyzing
+                    ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF7C3AED)))
+                    : const Icon(Icons.upload_file_rounded, color: Color(0xFF7C3AED), size: 28),
+                  const SizedBox(height: 8),
+                  const Text('Subir PDF propio', textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF5B21B6))),
+                  const Text('Analizar con IA', textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 10, color: Color(0xFFA78BFA))),
+                ]),
+              ),
+            ),
+          ),
+        ),
+      ]),
+      if (_uploadedFileName != null) ...[
+        const SizedBox(height: 10),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF5F3FF),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: const Color(0xFFDDD6FE)),
+          ),
+          child: Row(children: [
+            const Icon(Icons.picture_as_pdf_rounded, color: Color(0xFF7C3AED), size: 18),
+            const SizedBox(width: 8),
+            Expanded(child: Text(_uploadedFileName!, style: const TextStyle(fontSize: 12, color: Color(0xFF5B21B6), fontWeight: FontWeight.w600))),
+            if (_analyzing) const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF7C3AED))),
+          ]),
+        ),
+      ],
+      if (_uploadedAnalysis != null && _uploadedAnalysis!.isNotEmpty) ...[
+        const SizedBox(height: 10),
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: const Color(0xFFDDD6FE)),
+          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Row(children: [
+              Icon(Icons.auto_awesome, size: 14, color: Color(0xFF7C3AED)),
+              SizedBox(width: 6),
+              Text('Análisis del PDF', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF5B21B6))),
+            ]),
+            const SizedBox(height: 8),
+            SelectableText(_uploadedAnalysis!, style: const TextStyle(fontSize: 12, color: Color(0xFF374151), height: 1.5)),
+          ]),
+        ),
+      ],
+    ]);
   }
 }
 
@@ -1868,8 +2171,13 @@ class _EsgTabState extends State<_EsgTab> {
               ),
             ),
 
+            // SDG goals progress
+            const SizedBox(height: 16),
+            _EsgSdgGoals(co2: co2, donated: donated, actions: actions),
+            const SizedBox(height: 16),
+
             if (_reportText != null) ...[
-              const SizedBox(height: 16),
+              const SizedBox(height: 0),
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
@@ -1931,6 +2239,92 @@ class _EsgTabState extends State<_EsgTab> {
       },
     );
   }
+}
+
+class _EsgSdgGoals extends StatelessWidget {
+  final double co2;
+  final double donated;
+  final int actions;
+  const _EsgSdgGoals({required this.co2, required this.donated, required this.actions});
+
+  @override
+  Widget build(BuildContext context) {
+    final goals = [
+      _SdgGoal(number: '2', title: 'Hambre Cero', icon: '🍎',
+          color: const Color(0xFFD4A017), progress: (donated / 100).clamp(0.0, 1.0),
+          value: '${donated.toStringAsFixed(0)} € donados'),
+      _SdgGoal(number: '12', title: 'Prod. Responsable', icon: '♻️',
+          color: const Color(0xFF059669), progress: (actions / 50).clamp(0.0, 1.0),
+          value: '$actions acciones'),
+      _SdgGoal(number: '13', title: 'Acción Climática', icon: '🌍',
+          color: const Color(0xFF065F46), progress: (co2 / 20).clamp(0.0, 1.0),
+          value: '${co2.toStringAsFixed(1)} kg CO₂'),
+    ];
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Row(children: [
+          Text('🌐', style: TextStyle(fontSize: 18)),
+          SizedBox(width: 8),
+          Text('Objetivos de Desarrollo Sostenible',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF111827))),
+        ]),
+        const SizedBox(height: 4),
+        const Text('Contribución de tu tienda a los ODS de la ONU',
+            style: TextStyle(fontSize: 11, color: Color(0xFF6B7280))),
+        const SizedBox(height: 14),
+        ...goals.map((g) => Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: Row(children: [
+            Container(
+              width: 36, height: 36,
+              decoration: BoxDecoration(color: g.color, borderRadius: BorderRadius.circular(8)),
+              child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                Text(g.icon, style: const TextStyle(fontSize: 14)),
+              ]),
+            ),
+            const SizedBox(width: 10),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                  decoration: BoxDecoration(color: g.color, borderRadius: BorderRadius.circular(4)),
+                  child: Text('ODS ${g.number}', style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w800)),
+                ),
+                const SizedBox(width: 6),
+                Text(g.title, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF374151))),
+                const Spacer(),
+                Text(g.value, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: g.color)),
+              ]),
+              const SizedBox(height: 4),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: g.progress,
+                  backgroundColor: g.color.withValues(alpha: 0.12),
+                  valueColor: AlwaysStoppedAnimation<Color>(g.color),
+                  minHeight: 6,
+                ),
+              ),
+            ])),
+          ]),
+        )),
+      ]),
+    );
+  }
+}
+
+class _SdgGoal {
+  final String number, title, icon, value;
+  final Color color;
+  final double progress;
+  const _SdgGoal({required this.number, required this.title, required this.icon, required this.color, required this.progress, required this.value});
 }
 
 class _EsgMetricCard extends StatelessWidget {
@@ -2079,23 +2473,51 @@ class _PdfDownloadButtonState extends State<_PdfDownloadButton> {
 
   @override
   Widget build(BuildContext context) {
-    return OutlinedButton.icon(
-      onPressed: _loading ? null : _handleTap,
-      icon: _loading
-          ? const SizedBox(
-              width: 14,
-              height: 14,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : const Icon(Icons.picture_as_pdf_outlined, size: 16),
-      label: Text(_loading ? 'Generando...' : widget.label,
-          style: const TextStyle(fontSize: 12)),
-      style: OutlinedButton.styleFrom(
-        foregroundColor: const Color(0xFF059669),
-        side: const BorderSide(color: Color(0xFF059669)),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        minimumSize: Size.zero,
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    return Material(
+      color: _loading ? const Color(0xFFD1FAE5) : const Color(0xFFECFDF5),
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: _loading ? null : _handleTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: _loading ? const Color(0xFF6EE7B7) : const Color(0xFF059669),
+              width: 1.5,
+            ),
+          ),
+          child: Row(children: [
+            Container(
+              width: 36, height: 36,
+              decoration: BoxDecoration(
+                color: const Color(0xFF059669),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: _loading
+                  ? const Center(child: SizedBox(width: 16, height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)))
+                  : const Icon(Icons.picture_as_pdf_rounded, color: Colors.white, size: 18),
+            ),
+            const SizedBox(width: 12),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(
+                _loading ? 'Generando PDF...' : widget.label,
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF065F46)),
+              ),
+              Text(
+                _loading ? 'Por favor espera' : 'Toca para descargar',
+                style: const TextStyle(fontSize: 11, color: Color(0xFF059669)),
+              ),
+            ])),
+            Icon(
+              _loading ? Icons.hourglass_empty_rounded : Icons.download_rounded,
+              color: const Color(0xFF059669),
+              size: 20,
+            ),
+          ]),
+        ),
       ),
     );
   }
@@ -2212,6 +2634,54 @@ class _BenchmarkTab extends ConsumerWidget {
                   ...sources.map((s) => Text('• $s', style: const TextStyle(fontSize: 11, color: Color(0xFF6B7280)))),
                 ],
               ),
+            ),
+            const SizedBox(height: 16),
+
+            // Improvement actions
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: score >= 70 ? const Color(0xFFECFDF5) : const Color(0xFFFEF9C3),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: score >= 70 ? const Color(0xFFBBF7D0) : const Color(0xFFFDE68A),
+                ),
+              ),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(children: [
+                  Icon(
+                    score >= 70 ? Icons.emoji_events_rounded : Icons.tips_and_updates_outlined,
+                    color: score >= 70 ? const Color(0xFF059669) : const Color(0xFFD97706),
+                    size: 18,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    score >= 70 ? 'Estás por encima de la media del sector 🏆' : 'Acciones para mejorar tu posición',
+                    style: TextStyle(
+                      fontSize: 13, fontWeight: FontWeight.w700,
+                      color: score >= 70 ? const Color(0xFF065F46) : const Color(0xFF92400E),
+                    ),
+                  ),
+                ]),
+                const SizedBox(height: 10),
+                ...(score >= 70 ? [
+                  '✅ Mantener protocolo FEFO activo en todos los pasillos',
+                  '✅ Continuar con las donaciones para consolidar el ODS 2',
+                  '✅ Compartir buenas prácticas con otras tiendas del grupo',
+                ] : [
+                  '📋 Activar alertas de caducidad a 3 días vista (ajusta en configuración)',
+                  '📦 Revisar rotación de stock en pasillos con más merma',
+                  '❤️ Registrar donaciones en el sistema para mejorar el score ESG',
+                  '📊 Ejecutar el brief diario de Kuine cada mañana para anticiparse',
+                ]).map((tip) => Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Text(tip, style: TextStyle(
+                    fontSize: 12,
+                    color: score >= 70 ? const Color(0xFF065F46) : const Color(0xFF78350F),
+                    height: 1.4,
+                  )),
+                )),
+              ]),
             ),
           ],
         );
@@ -2490,6 +2960,12 @@ class _PredictionsTabState extends State<_PredictionsTab> {
 
             const SizedBox(height: 16),
 
+            // Risk timeline — next 5 days mini calendar
+            if (predictions.isNotEmpty) ...[
+              _PredRiskTimeline(predictions: predictions, forecastDays: forecastDays),
+              const SizedBox(height: 16),
+            ],
+
             if (predictions.isEmpty)
               Container(
                 padding: const EdgeInsets.all(20),
@@ -2536,6 +3012,117 @@ class _PredictionsTabState extends State<_PredictionsTab> {
       },
     );
   }
+}
+
+class _PredRiskTimeline extends StatelessWidget {
+  final List<Map<String, dynamic>> predictions;
+  final int forecastDays;
+  const _PredRiskTimeline({required this.predictions, required this.forecastDays});
+
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final days = List.generate(forecastDays, (i) => now.add(Duration(days: i)));
+    final weekdays = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+
+    // Count risky products per day (by days_until_expiry)
+    final countByDay = <int, int>{};
+    for (final p in predictions) {
+      final d = p['days_until_expiry'] as int? ?? 99;
+      if (d < forecastDays) countByDay[d] = (countByDay[d] ?? 0) + 1;
+    }
+
+    final maxCount = countByDay.values.fold(0, (m, v) => v > m ? v : m).clamp(1, 999);
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Row(children: [
+          Icon(Icons.calendar_today_rounded, size: 14, color: Color(0xFF6D28D9)),
+          SizedBox(width: 6),
+          Text('Riesgo por día', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF4F46E5))),
+        ]),
+        const SizedBox(height: 12),
+        Row(
+          children: days.asMap().entries.map((e) {
+            final i = e.key;
+            final day = e.value;
+            final count = countByDay[i] ?? 0;
+            final ratio = count / maxCount;
+            final color = count == 0
+                ? const Color(0xFFD1FAE5)
+                : count <= 2 ? const Color(0xFFFDE68A)
+                : const Color(0xFFFECACA);
+            final textColor = count == 0
+                ? const Color(0xFF059669)
+                : count <= 2 ? const Color(0xFFD97706)
+                : const Color(0xFFDC2626);
+
+            return Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 3),
+                child: Column(children: [
+                  Text(weekdays[day.weekday - 1],
+                      style: const TextStyle(fontSize: 9, color: Color(0xFF9CA3AF))),
+                  const SizedBox(height: 4),
+                  Text('${day.day}', style: const TextStyle(fontSize: 10, color: Color(0xFF374151))),
+                  const SizedBox(height: 4),
+                  Container(
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF3F4F6),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    alignment: Alignment.bottomCenter,
+                    clipBehavior: Clip.hardEdge,
+                    child: FractionallySizedBox(
+                      heightFactor: count == 0 ? 0.08 : ratio.clamp(0.15, 1.0),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: color,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    count == 0 ? '✓' : '$count',
+                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: textColor),
+                  ),
+                ]),
+              ),
+            );
+          }).toList(),
+        ),
+        const SizedBox(height: 8),
+        Row(children: [
+          _PredLegendDot(color: const Color(0xFFD1FAE5), label: 'Sin riesgo'),
+          const SizedBox(width: 12),
+          _PredLegendDot(color: const Color(0xFFFDE68A), label: '1-2 productos'),
+          const SizedBox(width: 12),
+          _PredLegendDot(color: const Color(0xFFFECACA), label: '3+ productos'),
+        ]),
+      ]),
+    );
+  }
+}
+
+class _PredLegendDot extends StatelessWidget {
+  final Color color;
+  final String label;
+  const _PredLegendDot({required this.color, required this.label});
+  @override
+  Widget build(BuildContext context) => Row(mainAxisSize: MainAxisSize.min, children: [
+    Container(width: 10, height: 10, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(2))),
+    const SizedBox(width: 4),
+    Text(label, style: const TextStyle(fontSize: 10, color: Color(0xFF6B7280))),
+  ]);
 }
 
 class _PredictionCard extends StatelessWidget {

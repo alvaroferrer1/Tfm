@@ -1843,7 +1843,9 @@ class _FefoListState extends State<_FefoList> {
                   badgeColor = const Color(0xFF10B981);
                 }
 
-                return Container(
+                return GestureDetector(
+                  onTap: () => showPasilloDetail(context, pasillo, [b]),
+                  child: Container(
                   margin: const EdgeInsets.only(bottom: 8),
                   decoration: BoxDecoration(
                     color: Colors.white,
@@ -1904,6 +1906,7 @@ class _FefoListState extends State<_FefoList> {
                         Text(expiry, style: TextStyle(fontSize: 10, color: Colors.grey[500])),
                       ]),
                     ]),
+                  ),
                   ),
                 );
               },
@@ -2035,7 +2038,7 @@ class _WarehouseQuickTab extends ConsumerWidget {
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton.icon(
-                      onPressed: () => context.go('/warehouse'),
+                      onPressed: () => context.push('/warehouse'),
                       icon: const Icon(Icons.open_in_new, size: 16, color: Colors.white),
                       label: const Text('Abrir almacén completo', style: TextStyle(color: Colors.white)),
                       style: OutlinedButton.styleFrom(
@@ -2083,7 +2086,7 @@ class _WarehouseQuickTab extends ConsumerWidget {
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
                   child: TextButton.icon(
-                    onPressed: () => context.go('/warehouse'),
+                    onPressed: () => context.push('/warehouse'),
                     icon: const Icon(Icons.arrow_forward, size: 16),
                     label: Text('Ver los ${items.length - 15} productos restantes'),
                   ),

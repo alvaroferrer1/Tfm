@@ -137,6 +137,7 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
         'product_name': response['product_name'] ?? barcode,
         'action_type': response['final_action'] ?? response['action_type'] ?? '',
         'priority_score': response['priority_score'] ?? 0,
+        'price_rec': response['price_rec'] ?? '',
         'ts': DateTime.now().toIso8601String(),
       });
 
@@ -231,6 +232,7 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
         'product_name': response['product_name'] ?? barcode,
         'action_type': response['final_action'] ?? response['action_type'] ?? '',
         'priority_score': response['priority_score'] ?? 0,
+        'price_rec': response['price_rec'] ?? '',
         'ts': DateTime.now().toIso8601String(),
       });
     } catch (e) {
@@ -836,9 +838,140 @@ class _WebBarcodeEntryState extends State<_WebBarcodeEntry> {
               result: widget.result!,
               onScanAgain: () { _ctrl.clear(); widget.onReset(); },
             )
-          else
+          else ...[
             const SizedBox(height: 320, child: _ScanHistoryWidget()),
+            const SizedBox(height: 24),
+            // How it works guide
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF0FDF4),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFBBF7D0)),
+              ),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Row(children: [
+                  Icon(Icons.lightbulb_outline, size: 16, color: Color(0xFF059669)),
+                  SizedBox(width: 8),
+                  Text('Cómo funciona', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF065F46))),
+                ]),
+                const SizedBox(height: 12),
+                _ScanGuideRow(step: '1', icon: Icons.qr_code_2, text: 'Introduce el código EAN o escanea con cámara'),
+                _ScanGuideRow(step: '2', icon: Icons.psychology_rounded, text: 'Kuine consulta el inventario y evalúa la urgencia'),
+                _ScanGuideRow(step: '3', icon: Icons.flag_outlined, text: 'Recibes la acción recomendada (rebajar, donar, retirar…)'),
+                _ScanGuideRow(step: '4', icon: Icons.check_circle_outline, text: 'Ejecuta la acción y se registra en el informe diario'),
+              ]),
+            ),
+            const SizedBox(height: 16),
+            // Tips
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFEF9C3),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFFDE68A)),
+              ),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Row(children: [
+                  Icon(Icons.tips_and_updates_outlined, size: 16, color: Color(0xFFD97706)),
+                  SizedBox(width: 8),
+                  Text('Consejos de escaneo', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF92400E))),
+                ]),
+                const SizedBox(height: 10),
+                ...[
+                  '📷 Usa "Detectar con IA" para productos sin código visible',
+                  '📋 El modo batch permite escanear varios productos seguidos',
+                  '🔦 Activa la linterna en la cámara si hay poca luz',
+                  '📊 Los escaneos se guardan en historial y se sincronizan con Telegram',
+                ].map((tip) => Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Text(tip, style: const TextStyle(fontSize: 12, color: Color(0xFF78350F), height: 1.4)),
+                )),
+              ]),
+            ),
+            const SizedBox(height: 16),
+            // Shortcut actions
+            Row(children: [
+              Expanded(
+                child: _ShortcutCard(
+                  icon: Icons.layers_rounded,
+                  title: 'Modo batch',
+                  subtitle: 'Varios productos',
+                  color: const Color(0xFF7C3AED),
+                  onTap: null,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _ShortcutCard(
+                  icon: Icons.view_list_outlined,
+                  title: 'Pasillo completo',
+                  subtitle: 'Una sola foto',
+                  color: const Color(0xFF0284C7),
+                  onTap: widget.onAnalyzeShelf,
+                ),
+              ),
+            ]),
+          ],
         ],
+      ),
+    );
+  }
+}
+
+class _ScanGuideRow extends StatelessWidget {
+  final String step;
+  final IconData icon;
+  final String text;
+  const _ScanGuideRow({required this.step, required this.icon, required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(children: [
+        Container(
+          width: 22, height: 22,
+          decoration: BoxDecoration(
+            color: const Color(0xFF059669),
+            borderRadius: BorderRadius.circular(11),
+          ),
+          child: Center(child: Text(step, style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w800))),
+        ),
+        const SizedBox(width: 10),
+        Icon(icon, size: 16, color: const Color(0xFF059669)),
+        const SizedBox(width: 8),
+        Expanded(child: Text(text, style: const TextStyle(fontSize: 12, color: Color(0xFF065F46), height: 1.3))),
+      ]),
+    );
+  }
+}
+
+class _ShortcutCard extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Color color;
+  final VoidCallback? onTap;
+  const _ShortcutCard({required this.icon, required this.title, required this.subtitle, required this.color, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: color.withValues(alpha: 0.08),
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Icon(icon, color: color, size: 22),
+            const SizedBox(height: 6),
+            Text(title, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: color)),
+            Text(subtitle, style: TextStyle(fontSize: 11, color: color.withValues(alpha: 0.7))),
+          ]),
+        ),
       ),
     );
   }
@@ -946,6 +1079,7 @@ class _ScanHistoryWidget extends ConsumerWidget {
             final score = item['priority_score'] as int? ?? 0;
             final ts = item['ts'] as String? ?? '';
             final time = ts.isNotEmpty ? ts.substring(11, 16) : '';
+            final priceRec = item['price_rec'] as String? ?? '';
 
             Color scoreColor = const Color(0xFF059669);
             if (score >= 85) {
@@ -971,9 +1105,12 @@ class _ScanHistoryWidget extends ConsumerWidget {
                   style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
                   maxLines: 1, overflow: TextOverflow.ellipsis),
               subtitle: action.isNotEmpty
-                  ? Text(action,
+                  ? Text(
+                      priceRec.isNotEmpty ? '$action · $priceRec' : action,
                       style: TextStyle(fontSize: 11, color: scoreColor))
-                  : null,
+                  : (priceRec.isNotEmpty
+                      ? Text(priceRec, style: const TextStyle(fontSize: 11, color: Color(0xFF059669)))
+                      : null),
               trailing: Row(mainAxisSize: MainAxisSize.min, children: [
                 Text(time, style: const TextStyle(fontSize: 10, color: Color(0xFF9CA3AF))),
                 const SizedBox(width: 4),
@@ -995,6 +1132,7 @@ void _showScanHistoryDetail(BuildContext context, Map<String, dynamic> item) {
   final action = item['action_type'] as String? ?? '';
   final score = item['priority_score'] as int? ?? 0;
   final ts = item['ts'] as String? ?? '';
+  final priceRec = item['price_rec'] as String? ?? '';
 
   Color scoreColor;
   String scoreLabel;
@@ -1078,6 +1216,10 @@ void _showScanHistoryDetail(BuildContext context, Map<String, dynamic> item) {
           ],
           if (action.isNotEmpty) ...[
             _ScanDetailRow(icon: Icons.flag_outlined, label: 'Acción recomendada', value: action),
+            const SizedBox(height: 10),
+          ],
+          if (priceRec.isNotEmpty) ...[
+            _ScanDetailRow(icon: Icons.sell_outlined, label: 'Precio recomendado', value: priceRec),
             const SizedBox(height: 10),
           ],
           if (score > 0) ...[

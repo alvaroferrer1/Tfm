@@ -141,7 +141,13 @@ class _WarehouseScreenState extends ConsumerState<WarehouseScreen>
         backgroundColor: const Color(0xFF0F172A),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios_new, size: 18),
-          onPressed: () => context.go('/map'),
+          onPressed: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go('/map');
+            }
+          },
         ),
         actions: [
           IconButton(
