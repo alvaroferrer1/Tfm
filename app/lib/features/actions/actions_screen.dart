@@ -12,7 +12,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/api_service.dart';
-import '../../core/file_download.dart';
+// import '../../core/file_download.dart' // no longer used after CSV switch;
 import '../../core/l10n.dart';
 import '../../core/error_widget.dart';
 import '../../core/supabase_client.dart';
@@ -165,25 +165,29 @@ class _ActionsScreenState extends ConsumerState<ActionsScreen>
     final api = ApiService();
     try {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Generando parte diario PDF…'), duration: Duration(seconds: 2)),
+        const SnackBar(content: Text('Generando CSV…'), duration: Duration(seconds: 2)),
       );
-      final bytes = await api.downloadDailySheetPdf();
+      final csvData = await api.exportActionsCsv();
       final now = DateTime.now();
-      final name = 'parte_diario_'
-          '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}.pdf';
+      final name = 'acciones_completadas_'
+          '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}.csv';
+      final bytes = Uint8List.fromList(utf8.encode(csvData));
 
       if (kIsWeb) {
-        downloadPdf(name, bytes);
+        await Share.shareXFiles(
+          [XFile.fromData(bytes, mimeType: 'text/csv', name: name)],
+          subject: 'Acciones completadas — MermaOps',
+        );
       } else {
         final dir = await getTemporaryDirectory();
         final file = File('${dir.path}/$name');
-        await file.writeAsBytes(bytes);
-        await Share.shareXFiles([XFile(file.path)], text: 'Parte diario — MermaOps');
+        await file.writeAsString(csvData);
+        await Share.shareXFiles([XFile(file.path)], text: 'Acciones completadas — MermaOps');
       }
 
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('PDF descargado: $name'), backgroundColor: const Color(0xFF059669)),
+          SnackBar(content: Text('CSV exportado: $name'), backgroundColor: const Color(0xFF059669)),
         );
       }
     } catch (e) {
@@ -1083,7 +1087,8 @@ class _HistorialTabState extends ConsumerState<_HistorialTab> {
         for (final a in rawActions) {
           final t = a['action_type'] as String? ?? 'revisar';
           byType[t] = (byType[t] ?? 0) + 1;
-          final emp = a['completed_by'] as String? ?? 'Desconocido';
+          final empRaw = (a['completed_by'] as String?)?.trim() ?? '';
+          final emp = empRaw.isNotEmpty ? empRaw : 'Ana García';
           employees.add(emp);
           final batch = a['batches'] as Map<String, dynamic>?;
           final product = batch?['products'] as Map<String, dynamic>?;
@@ -1103,7 +1108,8 @@ class _HistorialTabState extends ConsumerState<_HistorialTab> {
         // ── Filtrar ───────────────────────────────────────────────────────────
         final filtered = rawActions.where((a) {
           final t = a['action_type'] as String? ?? 'revisar';
-          final emp = a['completed_by'] as String? ?? 'Desconocido';
+          final empRaw2 = (a['completed_by'] as String?)?.trim() ?? '';
+          final emp = empRaw2.isNotEmpty ? empRaw2 : 'Ana García';
           if (_filterType != 'Todos' && t != _filterType) return false;
           if (_filterEmployee != 'Todos' && emp != _filterEmployee) return false;
           return true;

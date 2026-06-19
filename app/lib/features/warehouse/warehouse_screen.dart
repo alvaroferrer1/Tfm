@@ -118,6 +118,7 @@ class _WarehouseScreenState extends ConsumerState<WarehouseScreen>
   String _search = '';
   String _filterCat = 'Todas';
   String _filterStatus = 'Todos';
+  bool _refreshing = false;
 
   @override
   void initState() {
@@ -151,8 +152,27 @@ class _WarehouseScreenState extends ConsumerState<WarehouseScreen>
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: () => ref.invalidate(_warehouseProvider),
+            icon: _refreshing
+                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                : const Icon(Icons.refresh),
+            onPressed: _refreshing ? null : () async {
+              setState(() => _refreshing = true);
+              final messenger = ScaffoldMessenger.of(context);
+              messenger.showSnackBar(
+                const SnackBar(content: Text('Actualizando inventario...'), duration: Duration(seconds: 2)),
+              );
+              ref.invalidate(_warehouseProvider);
+              await ref.read(_warehouseProvider.future).then((_) {
+                if (mounted) {
+                  setState(() => _refreshing = false);
+                  messenger.showSnackBar(
+                    const SnackBar(content: Text('Inventario actualizado'), backgroundColor: Color(0xFF059669), duration: Duration(seconds: 2)),
+                  );
+                }
+              }).catchError((_) {
+                if (mounted) setState(() => _refreshing = false);
+              });
+            },
           ),
         ],
         bottom: TabBar(
@@ -535,84 +555,296 @@ class _CategoryTab extends StatelessWidget {
     final items = List<Map<String, dynamic>>.from(data['items'] ?? []);
     byCategory.sort((a, b) => ((b['value'] as num?) ?? 0).compareTo((a['value'] as num?) ?? 0));
 
+    final totalValue = (data['total_value'] as num?)?.toDouble() ?? 1.0;
+    final highestCatValue = byCategory.isEmpty ? 1.0 :
+        byCategory.fold<double>(0, (m, c) => ((c['value'] as num?)?.toDouble() ?? 0) > m ? (c['value'] as num).toDouble() : m);
+
     return ListView(
       padding: const EdgeInsets.all(14),
       children: [
         const Text('Distribución por categoría',
             style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Color(0xFF374151))),
-        const SizedBox(height: 12),
-        ...byCategory.map((cat) {
-          final catName = cat['category'] as String? ?? '';
-          final catItems = int.tryParse('${cat['items']}') ?? 0;
-          final catUnits = int.tryParse('${cat['units']}') ?? 0;
-          final catValue = (cat['value'] as num?)?.toDouble() ?? 0;
-          final catColor = _catColor(catName);
-          final catIcon = _catIcon(catName);
-          final totalValue = (data['total_value'] as num?)?.toDouble() ?? 1;
-          final fraction = totalValue > 0 ? (catValue / totalValue).clamp(0.0, 1.0) : 0.0;
-
-          // Items críticos en esta categoría
-          final criticalInCat = items.where((i) =>
-              i['category'] == catName && i['status'] == 'critical').length;
-
-          return Container(
-            margin: const EdgeInsets.only(bottom: 10),
-            padding: const EdgeInsets.all(14),
+        const SizedBox(height: 8),
+        // Summary header — horizontal bar chart
+        if (byCategory.isNotEmpty) ...[
+          Container(
+            padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: criticalInCat > 0
-                  ? const Color(0xFFEF4444).withValues(alpha: 0.3)
-                  : const Color(0xFFE5E7EB)),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFE5E7EB)),
             ),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(children: [
-                Container(
-                  width: 38, height: 38,
-                  decoration: BoxDecoration(
-                    color: catColor.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Icon(catIcon, color: catColor, size: 20),
-                ),
-                const SizedBox(width: 12),
-                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(catName.isNotEmpty ? catName[0].toUpperCase() + catName.substring(1) : '',
-                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
-                  Text('$catItems productos · $catUnits uds',
-                      style: const TextStyle(fontSize: 11, color: Colors.grey)),
-                ])),
-                Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                  Text('${catValue.toStringAsFixed(2)} €',
-                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: catColor)),
-                  Text('${(fraction * 100).toStringAsFixed(0)}% del total',
-                      style: const TextStyle(fontSize: 10, color: Colors.grey)),
-                ]),
-              ]),
+              const Text('Valor por categoría', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF374151))),
               const SizedBox(height: 10),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: LinearProgressIndicator(
-                  value: fraction,
-                  minHeight: 6,
-                  backgroundColor: const Color(0xFFF3F4F6),
-                  valueColor: AlwaysStoppedAnimation<Color>(catColor),
-                ),
-              ),
-              if (criticalInCat > 0) ...[
-                const SizedBox(height: 8),
-                Row(children: [
-                  const Icon(Icons.warning_rounded, size: 14, color: Color(0xFFEF4444)),
-                  const SizedBox(width: 4),
-                  Text('$criticalInCat producto${criticalInCat > 1 ? 's' : ''} sin stock crítico',
-                      style: const TextStyle(fontSize: 11, color: Color(0xFFEF4444), fontWeight: FontWeight.w600)),
-                ]),
-              ],
+              ...byCategory.map((cat) {
+                final catName = cat['category'] as String? ?? '';
+                final catValue = (cat['value'] as num?)?.toDouble() ?? 0;
+                final catColor = _catColor(catName);
+                final ratio = highestCatValue > 0 ? (catValue / highestCatValue).clamp(0.0, 1.0) : 0.0;
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(children: [
+                    SizedBox(width: 80, child: Text(
+                      catName.isNotEmpty ? catName[0].toUpperCase() + catName.substring(1) : '',
+                      style: const TextStyle(fontSize: 10, color: Color(0xFF6B7280)),
+                      overflow: TextOverflow.ellipsis,
+                    )),
+                    Expanded(child: ClipRRect(
+                      borderRadius: BorderRadius.circular(3),
+                      child: LinearProgressIndicator(
+                        value: ratio,
+                        minHeight: 8,
+                        backgroundColor: const Color(0xFFF3F4F6),
+                        valueColor: AlwaysStoppedAnimation<Color>(catColor),
+                      ),
+                    )),
+                    const SizedBox(width: 8),
+                    SizedBox(width: 52, child: Text(
+                      '${catValue.toStringAsFixed(0)} €',
+                      style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: catColor),
+                      textAlign: TextAlign.right,
+                    )),
+                  ]),
+                );
+              }),
             ]),
-          );
-        }),
+          ),
+          const SizedBox(height: 12),
+        ],
+        ..._buildCategoryCards(context, byCategory, items, totalValue),
         const SizedBox(height: 16),
       ],
+    );
+  }
+
+  List<Widget> _buildCategoryCards(BuildContext context,
+      List<Map<String, dynamic>> byCategory,
+      List<Map<String, dynamic>> items,
+      double totalValue) {
+    return byCategory.map((cat) {
+      final catName = cat['category'] as String? ?? '';
+      final catItems = int.tryParse('${cat['items']}') ?? 0;
+      final catUnits = int.tryParse('${cat['units']}') ?? 0;
+      final catValue = (cat['value'] as num?)?.toDouble() ?? 0;
+      final catColor = _catColor(catName);
+      final catIcon = _catIcon(catName);
+      final fraction = totalValue > 0 ? (catValue / totalValue).clamp(0.0, 1.0) : 0.0;
+
+      final itemsInCat = items.where((i) => i['category'] == catName).toList();
+      final criticalInCat = itemsInCat.where((i) => i['status'] == 'critical').length;
+      final lowInCat = itemsInCat.where((i) => i['status'] == 'low').length;
+
+      final borderColor = criticalInCat > 0
+          ? const Color(0xFFEF4444)
+          : lowInCat > 0
+              ? const Color(0xFFF59E0B)
+              : const Color(0xFF059669);
+
+      // Top 3 items sorted by value desc
+      final top3 = List<Map<String, dynamic>>.from(itemsInCat)
+        ..sort((a, b) {
+          final va = (a['quantity'] as int? ?? 0) * (a['price'] as num? ?? 0).toDouble();
+          final vb = (b['quantity'] as int? ?? 0) * (b['price'] as num? ?? 0).toDouble();
+          return vb.compareTo(va);
+        });
+
+      return _CategoryCard(
+        catName: catName,
+        catIcon: catIcon,
+        catColor: catColor,
+        catItems: catItems,
+        catUnits: catUnits,
+        catValue: catValue,
+        fraction: fraction,
+        criticalInCat: criticalInCat,
+        lowInCat: lowInCat,
+        borderColor: borderColor,
+        top3: top3.take(3).toList(),
+        totalItems: itemsInCat.length,
+      );
+    }).toList();
+  }
+}
+
+class _CategoryCard extends StatefulWidget {
+  final String catName;
+  final IconData catIcon;
+  final Color catColor;
+  final int catItems, catUnits, criticalInCat, lowInCat, totalItems;
+  final double catValue, fraction;
+  final Color borderColor;
+  final List<Map<String, dynamic>> top3;
+
+  const _CategoryCard({
+    required this.catName,
+    required this.catIcon,
+    required this.catColor,
+    required this.catItems,
+    required this.catUnits,
+    required this.catValue,
+    required this.fraction,
+    required this.criticalInCat,
+    required this.lowInCat,
+    required this.borderColor,
+    required this.top3,
+    required this.totalItems,
+  });
+
+  @override
+  State<_CategoryCard> createState() => _CategoryCardState();
+}
+
+class _CategoryCardState extends State<_CategoryCard> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final displayName = widget.catName.isNotEmpty
+        ? widget.catName[0].toUpperCase() + widget.catName.substring(1)
+        : '';
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border(
+          left: BorderSide(color: widget.borderColor, width: 4),
+          right: BorderSide(color: const Color(0xFFE5E7EB)),
+          top: BorderSide(color: const Color(0xFFE5E7EB)),
+          bottom: BorderSide(color: const Color(0xFFE5E7EB)),
+        ),
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 4, offset: const Offset(0, 2))],
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Container(
+                width: 38, height: 38,
+                decoration: BoxDecoration(
+                  color: widget.catColor.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(widget.catIcon, color: widget.catColor, size: 20),
+              ),
+              const SizedBox(width: 12),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(displayName, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+                Text('${widget.catItems} productos · ${widget.catUnits} uds',
+                    style: const TextStyle(fontSize: 11, color: Colors.grey)),
+              ])),
+              Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                Text('${widget.catValue.toStringAsFixed(2)} €',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: widget.catColor)),
+                Text('${(widget.fraction * 100).toStringAsFixed(0)}% del total',
+                    style: const TextStyle(fontSize: 10, color: Colors.grey)),
+              ]),
+            ]),
+            const SizedBox(height: 10),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: widget.fraction,
+                minHeight: 6,
+                backgroundColor: const Color(0xFFF3F4F6),
+                valueColor: AlwaysStoppedAnimation<Color>(widget.catColor),
+              ),
+            ),
+            const SizedBox(height: 8),
+            // Status summary
+            Row(children: [
+              if (widget.criticalInCat > 0) ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(color: const Color(0xFFEF4444).withValues(alpha: 0.1), borderRadius: BorderRadius.circular(4)),
+                  child: Text('${widget.criticalInCat} crítico${widget.criticalInCat > 1 ? "s" : ""}',
+                      style: const TextStyle(fontSize: 10, color: Color(0xFFEF4444), fontWeight: FontWeight.w700)),
+                ),
+                const SizedBox(width: 6),
+              ],
+              if (widget.lowInCat > 0) ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(color: const Color(0xFFF59E0B).withValues(alpha: 0.1), borderRadius: BorderRadius.circular(4)),
+                  child: Text('${widget.lowInCat} bajo${widget.lowInCat > 1 ? "s" : ""}',
+                      style: const TextStyle(fontSize: 10, color: Color(0xFFF59E0B), fontWeight: FontWeight.w700)),
+                ),
+                const SizedBox(width: 6),
+              ],
+              if (widget.criticalInCat == 0 && widget.lowInCat == 0)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(color: const Color(0xFF059669).withValues(alpha: 0.1), borderRadius: BorderRadius.circular(4)),
+                  child: const Text('Todo OK', style: TextStyle(fontSize: 10, color: Color(0xFF059669), fontWeight: FontWeight.w700)),
+                ),
+              const Spacer(),
+              // Pedir reposición button
+              GestureDetector(
+                onTap: () => ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Pedido solicitado a proveedor — $displayName'), backgroundColor: const Color(0xFF059669)),
+                ),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: widget.catColor.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: widget.catColor.withValues(alpha: 0.3)),
+                  ),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(Icons.add_shopping_cart_outlined, size: 12, color: widget.catColor),
+                    const SizedBox(width: 4),
+                    Text('Pedir reposición', style: TextStyle(fontSize: 10, color: widget.catColor, fontWeight: FontWeight.w600)),
+                  ]),
+                ),
+              ),
+            ]),
+          ]),
+        ),
+        // Top 3 + expandable
+        if (widget.top3.isNotEmpty) ...[
+          const Divider(height: 1, color: Color(0xFFF3F4F6)),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 8, 14, 4),
+            child: Text('Top productos', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.grey[600])),
+          ),
+          ...(_expanded ? widget.top3 : widget.top3.take(3)).map((item) {
+            final name = item['product_name'] as String? ?? 'Producto';
+            final qty = item['quantity'] as int? ?? 0;
+            final status = item['status'] as String? ?? 'ok';
+            final unit = item['unit'] as String? ?? 'uds';
+            final statusColor = status == 'critical'
+                ? const Color(0xFFEF4444)
+                : status == 'low' ? const Color(0xFFF59E0B) : const Color(0xFF059669);
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(14, 2, 14, 2),
+              child: Row(children: [
+                Container(width: 6, height: 6, decoration: BoxDecoration(color: statusColor, shape: BoxShape.circle)),
+                const SizedBox(width: 8),
+                Expanded(child: Text(name, style: const TextStyle(fontSize: 12, color: Color(0xFF374151)), overflow: TextOverflow.ellipsis)),
+                Text('$qty $unit', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: statusColor)),
+              ]),
+            );
+          }),
+          if (widget.totalItems > 3)
+            TextButton.icon(
+              onPressed: () => setState(() => _expanded = !_expanded),
+              icon: Icon(_expanded ? Icons.expand_less : Icons.chevron_right, size: 14),
+              label: Text(_expanded ? 'Ver menos' : 'Ver todos (${widget.totalItems})',
+                  style: const TextStyle(fontSize: 11)),
+              style: TextButton.styleFrom(
+                foregroundColor: widget.catColor,
+                padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            )
+          else
+            const SizedBox(height: 8),
+        ],
+      ]),
     );
   }
 }

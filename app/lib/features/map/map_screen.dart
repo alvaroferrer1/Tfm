@@ -242,7 +242,11 @@ class _MapScreenState extends ConsumerState<MapScreen>
             icon: const Icon(Icons.refresh),
             tooltip: 'Actualizar',
             onPressed: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Actualizando...'), duration: Duration(seconds: 1)),
+              );
               ref.invalidate(_expiringBatchesProvider);
+              ref.invalidate(_warehouseQuickProvider);
               ref.invalidate(_allProductsCacheProvider);
               ref.invalidate(_storePassillosProvider);
               setState(() => _selectedPasillo = null);
@@ -548,7 +552,7 @@ Map<String, Rect> _floorPlanRects(Size size) {
 
 // ── Store floor plan (StatefulWidget with CustomPainter) ───────────────────────
 
-class _StorePlan extends StatefulWidget {
+class _StorePlan extends ConsumerStatefulWidget {
   final List<Map<String, dynamic>> batches;
   final List<String> pasillos;
   final String? selectedPasillo;
@@ -562,10 +566,10 @@ class _StorePlan extends StatefulWidget {
     this.mapImageUrl,
   });
   @override
-  State<_StorePlan> createState() => _StorePlanState();
+  ConsumerState<_StorePlan> createState() => _StorePlanState();
 }
 
-class _StorePlanState extends State<_StorePlan> {
+class _StorePlanState extends ConsumerState<_StorePlan> {
   Size _cvsSize = Size.zero;
 
   Map<String, List<Map<String, dynamic>>> _grouped() {
@@ -687,21 +691,8 @@ class _StorePlanState extends State<_StorePlan> {
             ]),
           ),
           const SizedBox(height: 10),
-          // Almacén shortcut
-          GestureDetector(
-            onTap: () => context.go('/warehouse'),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(color: const Color(0xFF334155), borderRadius: BorderRadius.circular(10)),
-              child: const Row(children: [
-                Icon(Icons.warehouse_outlined, color: Colors.white70, size: 18),
-                SizedBox(width: 10),
-                Text('Almacen / Inventario', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
-                Spacer(),
-                Icon(Icons.chevron_right, color: Colors.white54, size: 18),
-              ]),
-            ),
-          ),
+          // Almacén shortcut card — datos reales de warehouse
+          _InlineWarehouseCard(batches: widget.batches),
           const SizedBox(height: 10),
           _Legend(showMapAreas: true),
           const SizedBox(height: 8),
@@ -1475,7 +1466,7 @@ class _PasilloGridState extends State<_PasilloGrid> {
     final deepLink = 'mermaops://map?pasillo=$pasillo';
     showDialog(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dlgCtx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Text('QR — ${_pasilloLabel(pasillo)}',
             style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 18),
@@ -1512,7 +1503,7 @@ class _PasilloGridState extends State<_PasilloGrid> {
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar')),
+          TextButton(onPressed: () => Navigator.pop(dlgCtx), child: const Text('Cerrar')),
         ],
       ),
     );
@@ -2103,6 +2094,130 @@ class _WarehouseQuickTab extends ConsumerWidget {
 final _warehouseQuickProvider = FutureProvider.autoDispose<Map<String, dynamic>>((ref) async {
   return ApiService().getWarehouseStock();
 });
+
+class _InlineWarehouseCard extends ConsumerWidget {
+  final List<Map<String, dynamic>> batches;
+  const _InlineWarehouseCard({required this.batches});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final warehouseAsync = ref.watch(_warehouseQuickProvider);
+
+    // Calcula stats de caducidad de los lotes del plano
+    int batchCritical = 0, batchUrgent = 0;
+    for (final b in batches) {
+      final expiry = b['expiry_date'] as String? ?? '';
+      if (expiry.isEmpty) continue;
+      try {
+        final d = DateTime.parse(expiry).difference(DateTime.now()).inDays;
+        if (d <= 1) { batchCritical++; } else if (d <= 3) { batchUrgent++; }
+      } catch (_) {}
+    }
+
+    return GestureDetector(
+      onTap: () => GoRouter.of(context).go('/warehouse'),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFF1E293B), Color(0xFF0F3460)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.2), blurRadius: 10, offset: const Offset(0, 4))],
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          // Cabecera
+          Row(children: [
+            const Icon(Icons.warehouse_rounded, color: Colors.white, size: 20),
+            const SizedBox(width: 8),
+            const Expanded(
+              child: Text('Almacén & Inventario',
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14)),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(6)),
+              child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                Text('Ver todo', style: TextStyle(color: Colors.white70, fontSize: 10)),
+                SizedBox(width: 3),
+                Icon(Icons.arrow_forward, color: Colors.white54, size: 11),
+              ]),
+            ),
+          ]),
+          const SizedBox(height: 12),
+          // Stats del warehouse (datos reales)
+          warehouseAsync.when(
+            loading: () => const SizedBox(
+              height: 36,
+              child: Center(child: LinearProgressIndicator(backgroundColor: Colors.white12, color: Colors.white38)),
+            ),
+            error: (_, __) => Row(children: [
+              _WInlineStat('${batches.length}', 'lotes plano', const Color(0xFF60A5FA)),
+              const SizedBox(width: 12),
+              if (batchCritical > 0) _WInlineStat('$batchCritical', 'vencen hoy', const Color(0xFFF87171)),
+              if (batchUrgent > 0) _WInlineStat('$batchUrgent', 'en 3 días', const Color(0xFFFBBF24)),
+            ]),
+            data: (data) {
+              final items = List<Map<String, dynamic>>.from(data['items'] ?? []);
+              final totalValue = (data['total_value'] as num?)?.toDouble() ?? 0;
+              final criticalCount = data['critical_count'] as int? ?? 0;
+              final lowCount = data['low_count'] as int? ?? 0;
+              return Row(children: [
+                _WInlineStat('${items.length}', 'productos', const Color(0xFF60A5FA)),
+                const SizedBox(width: 12),
+                _WInlineStat('${totalValue.toStringAsFixed(0)} €', 'valor', const Color(0xFF34D399)),
+                const SizedBox(width: 12),
+                if (criticalCount > 0) _WInlineStat('$criticalCount', 'sin stock', const Color(0xFFF87171)),
+                if (criticalCount == 0 && lowCount > 0) _WInlineStat('$lowCount', 'bajo stock', const Color(0xFFFBBF24)),
+                if (criticalCount == 0 && lowCount == 0) _WInlineStat('OK', 'todo en orden', const Color(0xFF34D399)),
+              ]);
+            },
+          ),
+          // Alertas de caducidad si hay
+          if (batchCritical > 0 || batchUrgent > 0) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: batchCritical > 0 ? const Color(0xFFEF4444).withValues(alpha: 0.18) : const Color(0xFFF59E0B).withValues(alpha: 0.18),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(children: [
+                Icon(Icons.warning_amber_rounded, size: 13,
+                    color: batchCritical > 0 ? const Color(0xFFF87171) : const Color(0xFFFBBF24)),
+                const SizedBox(width: 6),
+                Expanded(child: Text(
+                  batchCritical > 0
+                      ? '$batchCritical lotes caducan hoy en tienda — acción urgente'
+                      : '$batchUrgent lotes caducan en menos de 3 días',
+                  style: TextStyle(
+                      fontSize: 11,
+                      color: batchCritical > 0 ? const Color(0xFFFCA5A5) : const Color(0xFFFDE68A),
+                      fontWeight: FontWeight.w600),
+                )),
+              ]),
+            ),
+          ],
+        ]),
+      ),
+    );
+  }
+}
+
+class _WInlineStat extends StatelessWidget {
+  final String value;
+  final String label;
+  final Color color;
+  const _WInlineStat(this.value, this.label, this.color);
+  @override
+  Widget build(BuildContext context) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    Text(value, style: TextStyle(color: color, fontSize: 16, fontWeight: FontWeight.w900)),
+    Text(label, style: const TextStyle(color: Colors.white54, fontSize: 9)),
+  ]);
+}
+
 
 class _WStatPill extends StatelessWidget {
   final String value, label;

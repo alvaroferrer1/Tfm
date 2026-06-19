@@ -173,11 +173,14 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
     String message;
     switch (error.errorCode) {
       case MobileScannerErrorCode.permissionDenied:
-        message = 'Permiso de cámara denegado.\n\n'
-            'Ve a Ajustes → MermaOps → Permisos → Cámara y actívala.';
+        message = kIsWeb
+            ? 'Permiso de cámara denegado por el navegador.\n\nHaz clic en el icono 🔒 de la barra de Chrome → Cámara → Permitir, y recarga.'
+            : 'Permiso de cámara denegado.\n\nVe a Ajustes → MermaOps → Permisos → Cámara y actívala.';
         break;
       case MobileScannerErrorCode.unsupported:
-        message = 'Este dispositivo no tiene cámara trasera compatible.';
+        message = kIsWeb
+            ? 'Tu navegador no soporta el escáner en tiempo real.\n\nUsa Chrome 83+ o Edge. En Firefox/Safari usa el campo de código manual de abajo.'
+            : 'Este dispositivo no tiene cámara compatible.';
         break;
       default:
         message = 'No se pudo inicializar la cámara. '
@@ -388,6 +391,7 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
     final cameraError = ref.watch(_cameraErrorProvider);
     final scanData = ref.watch(_scanDataProvider);
 
+    // En web: pantalla de opciones siempre, la cámara abre en diálogo al pulsar el botón
     if (kIsWeb) {
       return Scaffold(
         appBar: AppBar(
@@ -402,7 +406,7 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
         ),
         body: _WebBarcodeEntry(
           onAnalyze: _analyzeBarcode,
-          onAnalyzePhoto: () => _analyzePhoto(source: ImageSource.camera),
+          onAnalyzePhoto: () => _analyzePhoto(source: ImageSource.gallery),
           onAnalyzePhotoGallery: () => _analyzePhoto(source: ImageSource.gallery),
           onAnalyzeShelf: _analyzeShelf,
           result: result,
@@ -410,6 +414,16 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
           onReset: () {
             ref.read(_scanResultProvider.notifier).state = null;
             ref.read(_lastBarcodeProvider.notifier).state = null;
+          },
+          onOpenCameraScanner: () async {
+            final barcode = await showDialog<String>(
+              context: context,
+              barrierDismissible: false,
+              builder: (_) => const _CameraScanDialog(),
+            );
+            if (barcode != null && barcode.isNotEmpty) {
+              await _analyzeBarcode(barcode);
+            }
           },
         ),
       );
@@ -695,6 +709,161 @@ class _BatchScanBody extends StatelessWidget {
   }
 }
 
+// ── Diálogo cámara en directo (web + móvil) ──────────────────────────────────
+
+class _CameraScanDialog extends StatefulWidget {
+  const _CameraScanDialog();
+  @override
+  State<_CameraScanDialog> createState() => _CameraScanDialogState();
+}
+
+class _CameraScanDialogState extends State<_CameraScanDialog> {
+  late final MobileScannerController _ctrl;
+  bool _detected = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = MobileScannerController(
+      detectionSpeed: DetectionSpeed.noDuplicates,
+      facing: kIsWeb ? CameraFacing.front : CameraFacing.back,
+      torchEnabled: false,
+    );
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  void _onDetect(BarcodeCapture capture) {
+    if (_detected) return;
+    final code = capture.barcodes.firstOrNull?.rawValue;
+    if (code != null && code.isNotEmpty) {
+      _detected = true;
+      HapticFeedback.mediumImpact();
+      Navigator.of(context).pop(code);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog.fullscreen(
+      backgroundColor: Colors.black,
+      child: Stack(children: [
+        // Visor de cámara
+        MobileScanner(
+          controller: _ctrl,
+          onDetect: _onDetect,
+          errorBuilder: (ctx, error, child) => Container(
+            color: Colors.black,
+            child: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+              const Icon(Icons.no_photography_outlined, size: 64, color: Colors.white54),
+              const SizedBox(height: 16),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32),
+                child: Text(
+                  error.errorCode == MobileScannerErrorCode.permissionDenied
+                      ? 'Permiso de cámara denegado.\n\nEn Chrome: haz clic en el icono 🔒 en la barra de dirección → Cámara → Permitir → recarga.'
+                      : 'Este navegador no soporta el escáner.\n\nUsa Chrome 83+ o Edge. Firefox y Safari no son compatibles.',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.6),
+                ),
+              ),
+              const SizedBox(height: 24),
+              OutlinedButton.icon(
+                onPressed: () => Navigator.of(context).pop(null),
+                icon: const Icon(Icons.arrow_back, color: Colors.white),
+                label: const Text('Volver', style: TextStyle(color: Colors.white)),
+                style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.white54)),
+              ),
+            ])),
+          ),
+        ),
+        // Botón volver (arriba izquierda)
+        Positioned(
+          top: 0, left: 0,
+          child: SafeArea(
+            child: IconButton(
+              icon: const Icon(Icons.arrow_back_rounded, color: Colors.white, size: 28),
+              tooltip: 'Volver',
+              onPressed: () => Navigator.of(context).pop(null),
+              style: IconButton.styleFrom(
+                backgroundColor: Colors.black45,
+                padding: const EdgeInsets.all(10),
+              ),
+            ),
+          ),
+        ),
+        // Marco de escaneo centrado
+        Positioned.fill(child: IgnorePointer(child: CustomPaint(painter: _ScanFramePainter()))),
+        // Etiqueta inferior
+        Positioned(
+          bottom: 48, left: 0, right: 0,
+          child: const SafeArea(
+            child: Column(children: [
+              Icon(Icons.qr_code_2_rounded, color: Colors.white70, size: 32),
+              SizedBox(height: 8),
+              Text(
+                'Apunta al código de barras o QR\nSe detecta automáticamente',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  height: 1.5,
+                  shadows: [Shadow(color: Colors.black, blurRadius: 8)],
+                ),
+              ),
+            ]),
+          ),
+        ),
+      ]),
+    );
+  }
+}
+
+class _ScanFramePainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final cx = size.width / 2;
+    final cy = size.height / 2;
+    final half = size.width * 0.35;
+    final rect = Rect.fromCenter(center: Offset(cx, cy), width: half * 2, height: half * 2);
+
+    // Oscurece todo menos el cuadro
+    canvas.drawPath(
+      Path.combine(PathOperation.difference,
+        Path()..addRect(Offset.zero & size),
+        Path()..addRRect(RRect.fromRectAndRadius(rect, const Radius.circular(12))),
+      ),
+      Paint()..color = Colors.black54,
+    );
+
+    // Esquinas del marco
+    final corner = Paint()
+      ..color = const Color(0xFF34D399)
+      ..strokeWidth = 3
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+    const len = 24.0;
+    final l = rect.left; final t = rect.top; final r = rect.right; final b = rect.bottom;
+    for (final pts in [
+      [Offset(l, t + len), Offset(l, t), Offset(l + len, t)],
+      [Offset(r - len, t), Offset(r, t), Offset(r, t + len)],
+      [Offset(r, b - len), Offset(r, b), Offset(r - len, b)],
+      [Offset(l + len, b), Offset(l, b), Offset(l, b - len)],
+    ]) {
+      final path = Path()..moveTo(pts[0].dx, pts[0].dy)..lineTo(pts[1].dx, pts[1].dy)..lineTo(pts[2].dx, pts[2].dy);
+      canvas.drawPath(path, corner);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_) => false;
+}
+
 // ── Web manual barcode entry ──────────────────────────────────────────────────
 
 class _WebBarcodeEntry extends StatefulWidget {
@@ -702,6 +871,7 @@ class _WebBarcodeEntry extends StatefulWidget {
   final Future<void> Function()? onAnalyzePhoto;
   final Future<void> Function()? onAnalyzePhotoGallery;
   final Future<void> Function()? onAnalyzeShelf;
+  final Future<void> Function()? onOpenCameraScanner;
   final String? result;
   final bool loading;
   final VoidCallback onReset;
@@ -711,6 +881,7 @@ class _WebBarcodeEntry extends StatefulWidget {
     this.onAnalyzePhoto,
     this.onAnalyzePhotoGallery,
     this.onAnalyzeShelf,
+    this.onOpenCameraScanner,
     required this.result,
     required this.loading,
     required this.onReset,
@@ -743,12 +914,22 @@ class _WebBarcodeEntryState extends State<_WebBarcodeEntry> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Primary action: camera / food detection
+          // Botón principal: escáner de código de barras con cámara en directo
+          _ScanActionCard(
+            icon: Icons.qr_code_scanner_rounded,
+            title: 'Escanear código de barras',
+            subtitle: 'Abre la cámara y lee el código automáticamente',
+            color: const Color(0xFF059669),
+            loading: isLoading,
+            onTap: widget.onOpenCameraScanner,
+          ),
+          const SizedBox(height: 12),
+          // Analizar foto con IA
           _ScanActionCard(
             icon: Icons.camera_alt_rounded,
-            title: 'Detectar alimento con IA',
-            subtitle: 'Foto con cámara — analiza frescura, daño y caducidad',
-            color: const Color(0xFF059669),
+            title: 'Analizar foto con IA',
+            subtitle: 'Detecta frescura, daños y fecha de caducidad',
+            color: const Color(0xFF7C3AED),
             loading: isLoading,
             onTap: widget.onAnalyzePhoto,
           ),

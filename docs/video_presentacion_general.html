@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>MermaOps — Presentación General</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a1218;font-family:'SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;overflow:hidden;width:100vw;height:100vh;color:#fff}
+canvas{position:fixed;inset:0;pointer-events:none}
+#bar{position:fixed;top:0;left:0;height:3px;background:linear-gradient(90deg,#059669,#34d399);z-index:99;transition:width .25s linear}
+#hud{position:fixed;bottom:0;left:0;right:0;height:40px;display:flex;align-items:center;justify-content:space-between;padding:0 20px;background:rgba(0,0,0,.5);z-index:99}
+#hud-title{font-size:10px;letter-spacing:2px;color:#2d6a4f;text-transform:uppercase}
+#hud-time{font-size:10px;color:#2d6a4f;font-variant-numeric:tabular-nums}
+#hud-dots{display:flex;gap:5px}
+.hud-dot{width:6px;height:6px;border-radius:50%;background:#1a3a28;cursor:pointer;transition:.3s}
+.hud-dot.on{background:#059669}
+
+#stage{width:100%;height:calc(100% - 40px);position:relative}
+.scene{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity .8s}
+.scene.active{opacity:1;pointer-events:all}
+
+/* typography */
+.eyebrow{font-size:11px;letter-spacing:4px;color:#059669;text-transform:uppercase;margin-bottom:20px}
+.hero{font-size:66px;font-weight:900;line-height:1.05;letter-spacing:-2px}
+.hero span{color:#059669}
+.hero .accent{background:linear-gradient(135deg,#059669,#34d399);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.sub{font-size:17px;color:#6b9e85;line-height:1.7;max-width:600px;margin-top:18px}
+.content{max-width:1100px;width:100%;padding:0 48px}
+
+/* fade-up */
+.up{opacity:0;transform:translateY(24px);transition:opacity .7s ease,transform .7s ease}
+.up.go{opacity:1;transform:none}
+.d1{transition-delay:.1s}.d2{transition-delay:.25s}.d3{transition-delay:.4s}.d4{transition-delay:.55s}.d5{transition-delay:.7s}
+
+/* stat pill */
+.pills{display:flex;gap:16px;flex-wrap:wrap;margin-top:32px}
+.pill{padding:14px 28px;border:1px solid #1a3a28;border-radius:100px;display:flex;flex-direction:column;align-items:center;gap:2px;min-width:130px}
+.pill-n{font-size:32px;font-weight:800;color:#059669}
+.pill-l{font-size:10px;color:#6b9e85;letter-spacing:1px;text-transform:uppercase}
+
+/* two col */
+.cols{display:flex;gap:48px;width:100%;max-width:1100px;padding:0 48px;align-items:center}
+.col{flex:1}
+.col-narrow{flex:0 0 380px}
+
+/* list */
+.list{display:flex;flex-direction:column;gap:14px;margin-top:24px}
+.list-item{display:flex;gap:14px;align-items:flex-start}
+.list-num{width:28px;height:28px;background:#059669;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;flex-shrink:0}
+.list-text{font-size:14px;color:#c8e6c9;line-height:1.5}
+.list-text strong{color:#fff}
+
+/* card grid */
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;width:100%;max-width:1100px;padding:0 48px}
+.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;width:100%;max-width:1100px;padding:0 48px}
+.gcard{background:#111827;border:1px solid #1f3d2a;border-radius:16px;padding:20px;transition:.3s}
+.gcard:hover{border-color:#059669;transform:translateY(-2px)}
+.gcard-icon{font-size:28px;margin-bottom:10px}
+.gcard-title{font-size:13px;font-weight:700;margin-bottom:6px}
+.gcard-sub{font-size:11px;color:#4a7a5a;line-height:1.5}
+.gcard-model{font-size:9px;color:#2d6a4f;margin-top:8px;font-style:italic}
+.gcard.hl{border-color:#059669;background:linear-gradient(135deg,#052e16,#111827)}
+
+/* flow */
+.flow{display:flex;align-items:center;gap:0;width:100%;max-width:1000px}
+.flow-step{flex:1;text-align:center;padding:0 8px}
+.flow-circle{width:56px;height:56px;border-radius:50%;background:#059669;display:flex;align-items:center;justify-content:center;font-size:22px;margin:0 auto 10px}
+.flow-title{font-size:12px;font-weight:700;color:#fff;margin-bottom:4px}
+.flow-desc{font-size:9px;color:#4a7a5a;line-height:1.4}
+.flow-arrow{font-size:20px;color:#1a3a28;flex-shrink:0}
+
+/* timeline */
+.tl{display:flex;flex-direction:column;gap:0;width:100%;max-width:700px}
+.tl-item{display:flex;gap:20px;position:relative}
+.tl-item::before{content:'';position:absolute;left:19px;top:40px;width:2px;height:calc(100% - 10px);background:#1a3a28}
+.tl-item:last-child::before{display:none}
+.tl-dot{width:40px;height:40px;border-radius:50%;background:#059669;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;flex-shrink:0;z-index:1}
+.tl-content{padding:8px 0 28px}
+.tl-title{font-size:13px;font-weight:700;margin-bottom:4px}
+.tl-sub{font-size:11px;color:#4a7a5a}
+
+/* bg variants */
+.bg-dark{background:#0a1218}
+.bg-1{background:radial-gradient(ellipse at 30% 60%,#052e16 0%,#0a1218 55%)}
+.bg-2{background:radial-gradient(ellipse at 70% 40%,#1e3a5f 0%,#0a1218 55%)}
+.bg-3{background:radial-gradient(ellipse at 50% 80%,#2d1a4a 0%,#0a1218 55%)}
+.bg-4{background:radial-gradient(ellipse at 20% 20%,#052e16 0%,#0a1218 55%)}
+
+/* number reveal */
+.big-number{font-size:120px;font-weight:900;color:#059669;line-height:1;letter-spacing:-4px}
+.counter-anim{display:inline-block}
+
+/* quote */
+.quote{font-size:28px;font-style:italic;color:#4a7a5a;border-left:4px solid #059669;padding-left:20px;line-height:1.5}
+.quote-attr{font-size:12px;color:#2d6a4f;margin-top:12px;font-style:normal;letter-spacing:2px}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div id="bar"></div>
+
+<div id="stage">
+
+<!-- S0: PORTADA -->
+<div class="scene bg-1 active" id="s0">
+  <div class="content" style="text-align:center;display:flex;flex-direction:column;align-items:center">
+    <div class="eyebrow up">sistema multi-agente de ia · tFM 2026</div>
+    <div class="hero up d1">Merma<span class="accent">Ops</span></div>
+    <div class="sub up d2" style="text-align:center">IA que reduce merma en supermercados españoles.<br>Automática. Precisa. En tiempo real.</div>
+    <div class="pills up d3">
+      <div class="pill"><div class="pill-n">34%</div><div class="pill-l">menos merma</div></div>
+      <div class="pill"><div class="pill-n">8x</div><div class="pill-l">ROI 6 meses</div></div>
+      <div class="pill"><div class="pill-n">12</div><div class="pill-l">agentes IA</div></div>
+      <div class="pill"><div class="pill-n">774</div><div class="pill-l">tests · 0 fallos</div></div>
+    </div>
+    <div class="up d4" style="margin-top:36px;font-size:12px;color:#2d6a4f;letter-spacing:2px">Álvaro Ferrer Margalef · 2026</div>
+  </div>
+</div>
+
+<!-- S1: EL PROBLEMA -->
+<div class="scene bg-dark" id="s1">
+  <div class="cols">
+    <div class="col">
+      <div class="eyebrow up">el problema</div>
+      <div class="hero up d1" style="font-size:48px">88.000 M€<br>perdidos cada año<br>en <span>Europa</span></div>
+      <div class="sub up d2">por merma alimentaria. En España, los supermercados pierden el 1.6% de las ventas. Sin IA, sin datos, sin trazabilidad.</div>
+    </div>
+    <div class="col-narrow">
+      <div class="list up d2">
+        <div class="list-item">
+          <div class="list-num" style="background:#dc2626">!</div>
+          <div class="list-text"><strong>47%</strong> de decisiones de rebaja se toman sin datos reales</div>
+        </div>
+        <div class="list-item">
+          <div class="list-num" style="background:#d97706">?</div>
+          <div class="list-text"><strong>23 minutos</strong> tarda un empleado en decidir qué hacer con un producto</div>
+        </div>
+        <div class="list-item">
+          <div class="list-num" style="background:#dc2626">€</div>
+          <div class="list-text"><strong>30% de la merma</strong> es evitable con la información correcta en el momento correcto</div>
+        </div>
+        <div class="list-item">
+          <div class="list-num" style="background:#9333ea">∅</div>
+          <div class="list-text"><strong>0 sistemas IA</strong> accesibles para supermercados medianos en España</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- S2: LA SOLUCIÓN -->
+<div class="scene bg-1" id="s2">
+  <div class="content" style="display:flex;flex-direction:column;align-items:center">
+    <div class="eyebrow up">la solución</div>
+    <div class="hero up d1" style="text-align:center;font-size:48px">Decisión automática.<br><span>Acción inmediata.</span></div>
+    <div class="sub up d2" style="text-align:center">MermaOps analiza, decide y comunica la acción óptima para cada producto en menos de 2 segundos.</div>
+    <div class="flow up d3" style="margin-top:36px">
+      <div class="flow-step">
+        <div class="flow-circle">📡</div>
+        <div class="flow-title">Detecta</div>
+        <div class="flow-desc">monitoriza caducidades y stock 24/7</div>
+      </div>
+      <div class="flow-arrow">›</div>
+      <div class="flow-step">
+        <div class="flow-circle">🧠</div>
+        <div class="flow-title">Evalúa</div>
+        <div class="flow-desc">12 agentes IA calculan el riesgo</div>
+      </div>
+      <div class="flow-arrow">›</div>
+      <div class="flow-step">
+        <div class="flow-circle">⚡</div>
+        <div class="flow-title">Decide</div>
+        <div class="flow-desc">rebajar · donar · retirar · reponer</div>
+      </div>
+      <div class="flow-arrow">›</div>
+      <div class="flow-step">
+        <div class="flow-circle">📱</div>
+        <div class="flow-title">Notifica</div>
+        <div class="flow-desc">Telegram + app en tiempo real</div>
+      </div>
+      <div class="flow-arrow">›</div>
+      <div class="flow-step">
+        <div class="flow-circle">📈</div>
+        <div class="flow-title">Aprende</div>
+        <div class="flow-desc">mejora continua con cada acción</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- S3: LOS AGENTES -->
+<div class="scene bg-dark" id="s3">
+  <div class="content" style="display:flex;flex-direction:column;align-items:center">
+    <div class="eyebrow up">arquitectura multi-agente</div>
+    <div class="hero up d1" style="text-align:center;font-size:42px">12 agentes especializados.<br><span>1 sistema unificado.</span></div>
+    <div class="grid4 up d2" style="padding:0;margin-top:28px">
+      <div class="gcard hl"><div class="gcard-icon">🎯</div><div class="gcard-title">Kuine</div><div class="gcard-sub">Orquestador maestro. 16 tools, hasta 20 iteraciones</div><div class="gcard-model">claude-opus-4-8</div></div>
+      <div class="gcard"><div class="gcard-icon">💬</div><div class="gcard-title">Chuwi</div><div class="gcard-sub">Agente Telegram conversacional con memoria persistente</div><div class="gcard-model">claude-sonnet-4-6</div></div>
+      <div class="gcard"><div class="gcard-icon">⚖️</div><div class="gcard-title">ForkMerge</div><div class="gcard-sub">3 ramas paralelas · consensus shortcut si 2/3 acuerdan</div><div class="gcard-model">3x sonnet + opus</div></div>
+      <div class="gcard"><div class="gcard-icon">🔒</div><div class="gcard-title">Validador</div><div class="gcard-sub">23 ataques adversariales · timeout conservador 10s</div><div class="gcard-model">claude-sonnet-4-6</div></div>
+      <div class="gcard"><div class="gcard-icon">📊</div><div class="gcard-title">Evaluador</div><div class="gcard-sub">Score 0-100 · extended thinking si score ≥ 65</div><div class="gcard-model">claude-sonnet-4-6</div></div>
+      <div class="gcard"><div class="gcard-icon">🌡️</div><div class="gcard-title">Predictor</div><div class="gcard-sub">Open-Meteo + historial · ajuste por calor y temporada</div><div class="gcard-model">claude-haiku-4-5</div></div>
+      <div class="gcard"><div class="gcard-icon">📷</div><div class="gcard-title">Visión</div><div class="gcard-sub">Foto → análisis estado producto · cache SHA256 30min</div><div class="gcard-model">claude-haiku-4-5</div></div>
+      <div class="gcard"><div class="gcard-icon">💰</div><div class="gcard-title">Precio</div><div class="gcard-sub">Intraday pricing · FEFO · margen mínimo · redondeo €</div><div class="gcard-model">heurístico</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- S4: TELEGRAM + APP -->
+<div class="scene bg-2" id="s4">
+  <div class="cols">
+    <div class="col">
+      <div class="eyebrow up">dos canales · una experiencia</div>
+      <div class="hero up d1" style="font-size:42px">Telegram<br>+ App Flutter.<br><span>Sin fricción.</span></div>
+      <div class="list up d2" style="margin-top:20px">
+        <div class="list-item">
+          <div class="list-num">📱</div>
+          <div class="list-text"><strong>Telegram @ChuwiMermaOpsBot</strong> — el encargado habla en lenguaje natural, Chuwi responde con datos reales en streaming</div>
+        </div>
+        <div class="list-item">
+          <div class="list-num">🌐</div>
+          <div class="list-text"><strong>App Flutter</strong> — iOS, Android y Web. Dashboard, acciones, mapa de tienda, informes PDF, 12 agentes en vivo</div>
+        </div>
+        <div class="list-item">
+          <div class="list-num">🔗</div>
+          <div class="list-text"><strong>Vinculación by email</strong> — una cuenta, dos canales sincronizados en tiempo real vía Supabase Realtime</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-narrow up d2" style="display:flex;flex-direction:column;gap:12px">
+      <div style="background:#111827;border-radius:16px;padding:20px;border:1px solid #1f3d2a">
+        <div style="font-size:11px;color:#059669;letter-spacing:2px;margin-bottom:12px">TELEGRAM</div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div style="background:#1a3a28;border-radius:10px;padding:9px 12px;font-size:11px;color:#c8e6c9">¿Qué hay urgente hoy Carlos?</div>
+          <div style="background:#059669;border-radius:10px;padding:9px 12px;font-size:11px;color:#fff;align-self:flex-end">3 lotes críticos · Yogur -19%, Merluza -30%, Fresas -20%</div>
+          <div style="background:#1a3a28;border-radius:10px;padding:9px 12px;font-size:11px;color:#c8e6c9">¿Las gestiono?</div>
+          <div style="background:#059669;border-radius:10px;padding:9px 12px;font-size:11px;color:#fff;align-self:flex-end">Sí, créalas</div>
+          <div style="background:#1a3a28;border-radius:10px;padding:9px 12px;font-size:11px;color:#c8e6c9">✅ 3 acciones · 47€ ahorrados</div>
+        </div>
+      </div>
+      <div style="background:#111827;border-radius:16px;padding:16px;border:1px solid #1f3d2a;display:flex;flex-wrap:wrap;gap:8px">
+        <div style="background:#1a3a28;border-radius:8px;padding:6px 10px;font-size:10px;color:#6b9e85">📊 Dashboard</div>
+        <div style="background:#1a3a28;border-radius:8px;padding:6px 10px;font-size:10px;color:#6b9e85">⚡ Acciones</div>
+        <div style="background:#1a3a28;border-radius:8px;padding:6px 10px;font-size:10px;color:#6b9e85">📄 Informes PDF</div>
+        <div style="background:#1a3a28;border-radius:8px;padding:6px 10px;font-size:10px;color:#6b9e85">🗺️ Mapa tienda</div>
+        <div style="background:#059669;border-radius:8px;padding:6px 10px;font-size:10px;color:#fff">🤖 12 Agentes</div>
+        <div style="background:#1a3a28;border-radius:8px;padding:6px 10px;font-size:10px;color:#6b9e85">📸 Escáner</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- S5: TECNOLOGÍA -->
+<div class="scene bg-3" id="s5">
+  <div class="content" style="display:flex;flex-direction:column;align-items:center">
+    <div class="eyebrow up">stack tecnológico</div>
+    <div class="hero up d1" style="text-align:center;font-size:40px">Moderno. <span>Escalable.</span><br>Cloud-native desde el día 1.</div>
+    <div class="grid3 up d2" style="padding:0;margin-top:28px">
+      <div class="gcard"><div class="gcard-icon">⚙️</div><div class="gcard-title">Backend</div><div class="gcard-sub">FastAPI + Python 3.14 · Puerto 8001 · APScheduler · 50+ endpoints REST</div></div>
+      <div class="gcard hl"><div class="gcard-icon">🧠</div><div class="gcard-title">IA</div><div class="gcard-sub">Anthropic Claude API · Opus / Sonnet / Haiku · circuit breaker + retry · < 0.02€ / decisión</div></div>
+      <div class="gcard"><div class="gcard-icon">📱</div><div class="gcard-title">Frontend</div><div class="gcard-sub">Flutter 3.x · iOS + Android + Web · Riverpod · Material Motion</div></div>
+      <div class="gcard"><div class="gcard-icon">🗄️</div><div class="gcard-title">Base de datos</div><div class="gcard-sub">Supabase PostgreSQL + Realtime · RLS por tienda · Vector 1536 RAG</div></div>
+      <div class="gcard"><div class="gcard-icon">🔒</div><div class="gcard-title">Seguridad</div><div class="gcard-sub">JWT Auth · Row Level Security · GDPR compliant · sin vendor lock-in</div></div>
+      <div class="gcard"><div class="gcard-icon">🧪</div><div class="gcard-title">Calidad</div><div class="gcard-sub">774 tests · 0 fallos · Langfuse observabilidad · CI/CD Railway ready</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- S6: RESULTADOS -->
+<div class="scene bg-1" id="s6">
+  <div class="cols">
+    <div class="col" style="text-align:left">
+      <div class="eyebrow up">resultados</div>
+      <div class="big-number up d1" id="pct-counter">0%</div>
+      <div class="hero up d2" style="font-size:32px;margin-top:8px">de reducción<br>de merma</div>
+      <div class="sub up d3">Medido en entorno demo con datos reales de Supabase. 402 EUR/mes evitados en una sola tienda.</div>
+    </div>
+    <div class="col-narrow up d2">
+      <div class="tl">
+        <div class="tl-item">
+          <div class="tl-dot">M1</div>
+          <div class="tl-content">
+            <div class="tl-title">Primeros patrones</div>
+            <div class="tl-sub">El sistema aprende el ritmo de ventas</div>
+          </div>
+        </div>
+        <div class="tl-item">
+          <div class="tl-dot">M3</div>
+          <div class="tl-content">
+            <div class="tl-title">34% reducción alcanzada</div>
+            <div class="tl-sub">Ajuste por categoría y proveedor</div>
+          </div>
+        </div>
+        <div class="tl-item">
+          <div class="tl-dot">M6</div>
+          <div class="tl-content">
+            <div class="tl-title">ROI 8x confirmado</div>
+            <div class="tl-sub">Ahorro neto: 8.980 EUR/año vs 7.188 EUR coste</div>
+          </div>
+        </div>
+        <div class="tl-item">
+          <div class="tl-dot">∞</div>
+          <div class="tl-content">
+            <div class="tl-title">Mejora continua</div>
+            <div class="tl-sub">Cada acción entrena al sistema para el siguiente ciclo</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- S7: NEGOCIO -->
+<div class="scene bg-dark" id="s7">
+  <div class="content" style="display:flex;flex-direction:column;align-items:center">
+    <div class="eyebrow up">modelo de negocio · SaaS</div>
+    <div class="hero up d1" style="text-align:center;font-size:42px">Simple. Escalable.<br><span>Rentable desde el mes 1.</span></div>
+    <div class="grid3 up d2" style="padding:0;margin-top:28px">
+      <div class="gcard" style="text-align:center">
+        <div style="font-size:11px;letter-spacing:2px;color:#059669;margin-bottom:8px">STARTER</div>
+        <div style="font-size:32px;font-weight:800;margin-bottom:12px">299€<span style="font-size:14px;color:#4a7a5a">/mes</span></div>
+        <div style="display:flex;flex-direction:column;gap:6px;text-align:left">
+          <div style="font-size:11px;color:#6b9e85">✓ 1 tienda</div>
+          <div style="font-size:11px;color:#6b9e85">✓ Telegram + App</div>
+          <div style="font-size:11px;color:#6b9e85">✓ 8 agentes básicos</div>
+          <div style="font-size:11px;color:#6b9e85">✓ Brief diario PDF</div>
+        </div>
+      </div>
+      <div class="gcard hl" style="text-align:center;transform:scale(1.04)">
+        <div style="font-size:11px;letter-spacing:2px;color:#fbbf24;margin-bottom:8px">PRO · MÁS POPULAR</div>
+        <div style="font-size:32px;font-weight:800;margin-bottom:12px">599€<span style="font-size:14px;color:#6b9e85">/mes</span></div>
+        <div style="display:flex;flex-direction:column;gap:6px;text-align:left">
+          <div style="font-size:11px;color:#c8e6c9">✓ Hasta 5 tiendas</div>
+          <div style="font-size:11px;color:#c8e6c9">✓ 12 agentes completos</div>
+          <div style="font-size:11px;color:#c8e6c9">✓ Visión + ForkMerge</div>
+          <div style="font-size:11px;color:#c8e6c9">✓ ROI: 8x en 6 meses</div>
+        </div>
+      </div>
+      <div class="gcard" style="text-align:center">
+        <div style="font-size:11px;letter-spacing:2px;color:#7c3aed;margin-bottom:8px">ENTERPRISE</div>
+        <div style="font-size:32px;font-weight:800;margin-bottom:12px">Custom</div>
+        <div style="display:flex;flex-direction:column;gap:6px;text-align:left">
+          <div style="font-size:11px;color:#6b9e85">✓ Tiendas ilimitadas</div>
+          <div style="font-size:11px;color:#6b9e85">✓ Kuine Opus dedicado</div>
+          <div style="font-size:11px;color:#6b9e85">✓ SLA 99.9%</div>
+          <div style="font-size:11px;color:#6b9e85">✓ Integración ERP</div>
+        </div>
+      </div>
+    </div>
+    <div class="up d3" style="margin-top:20px;font-size:12px;color:#2d6a4f">TAM 18.200M EUR · SAM 2.100M EUR · SOM objetivo año 3: 42M EUR</div>
+  </div>
+</div>
+
+<!-- S8: CIERRE CTA -->
+<div class="scene bg-1" id="s8">
+  <div class="content" style="text-align:center;display:flex;flex-direction:column;align-items:center">
+    <div class="eyebrow up" style="font-size:13px;letter-spacing:5px">sistema en producción · demo disponible</div>
+    <div class="hero up d1" style="font-size:70px">Merma<span class="accent">Ops</span></div>
+    <div class="sub up d2" style="font-size:18px;text-align:center">El futuro de la gestión de merma<br>ya está funcionando.</div>
+    <div class="pills up d3" style="margin-top:28px;justify-content:center">
+      <div class="pill"><div class="pill-n">34%</div><div class="pill-l">merma reducida</div></div>
+      <div class="pill"><div class="pill-n">8x</div><div class="pill-l">ROI</div></div>
+      <div class="pill"><div class="pill-n">< 2s</div><div class="pill-l">por decisión</div></div>
+      <div class="pill"><div class="pill-n">24/7</div><div class="pill-l">automático</div></div>
+    </div>
+    <div class="up d4" style="margin-top:36px;padding:20px 40px;border:1px solid #1a3a28;border-radius:16px;display:flex;gap:40px">
+      <div style="text-align:center"><div style="font-size:12px;color:#059669;letter-spacing:2px">TELEGRAM</div><div style="font-size:15px;font-weight:700;margin-top:4px">@ChuwiMermaOpsBot</div></div>
+      <div style="width:1px;background:#1a3a28"></div>
+      <div style="text-align:center"><div style="font-size:12px;color:#059669;letter-spacing:2px">API</div><div style="font-size:15px;font-weight:700;margin-top:4px">localhost:8001/docs</div></div>
+      <div style="width:1px;background:#1a3a28"></div>
+      <div style="text-align:center"><div style="font-size:12px;color:#059669;letter-spacing:2px">EMAIL</div><div style="font-size:15px;font-weight:700;margin-top:4px">alvaroferrermarg@gmail.com</div></div>
+    </div>
+    <div class="up d5" style="margin-top:24px;font-size:11px;color:#2d6a4f">Álvaro Ferrer Margalef · TFM 2026 · Confidencial</div>
+  </div>
+</div>
+
+</div><!-- /stage -->
+
+<div id="hud">
+  <div id="hud-title">MermaOps — Presentación General</div>
+  <div id="hud-dots"></div>
+  <div id="hud-time">00:00 · ← → navegar · espacio pausa</div>
+</div>
+
+<script>
+// canvas particles
+const cv=document.getElementById('cv');
+const cx=cv.getContext('2d');
+cv.width=window.innerWidth;cv.height=window.innerHeight;
+const ps=Array.from({length:80},()=>({x:Math.random()*cv.width,y:Math.random()*cv.height,r:Math.random()*1.5+.3,vx:(Math.random()-.5)*.2,vy:(Math.random()-.5)*.2,o:Math.random()*.15+.05}));
+function drawP(){cx.clearRect(0,0,cv.width,cv.height);ps.forEach(p=>{p.x+=p.vx;p.y+=p.vy;if(p.x<0||p.x>cv.width)p.vx*=-1;if(p.y<0||p.y>cv.height)p.vy*=-1;cx.beginPath();cx.arc(p.x,p.y,p.r,0,Math.PI*2);cx.fillStyle=`rgba(5,150,105,${p.o})`;cx.fill()});requestAnimationFrame(drawP)}
+drawP();
+
+// scenes config [duration ms]
+const DUR=[8000,7000,7000,8000,8000,7000,8000,8000,8000];
+const N=DUR.length;
+const TOTAL=DUR.reduce((a,b)=>a+b,0);
+let cur=0,paused=false,elapsed=0,t0=Date.now();
+
+// dots
+const dotsEl=document.getElementById('hud-dots');
+for(let i=0;i<N;i++){
+  const d=document.createElement('div');
+  d.className='hud-dot';
+  d.onclick=()=>go(i);
+  dotsEl.appendChild(d);
+}
+
+function go(i){
+  document.querySelectorAll('.scene')[cur].classList.remove('active');
+  cur=((i%N)+N)%N;
+  const sc=document.querySelectorAll('.scene')[cur];
+  sc.classList.add('active');
+  sc.querySelectorAll('.up').forEach(el=>{el.classList.remove('go');setTimeout(()=>el.classList.add('go'),60)});
+  elapsed=DUR.slice(0,cur).reduce((a,b)=>a+b,0);
+  t0=Date.now();
+  document.querySelectorAll('.hud-dot').forEach((d,j)=>d.classList.toggle('on',j===cur));
+  if(cur===6)animCounter();
+}
+
+function animCounter(){
+  const el=document.getElementById('pct-counter');
+  if(!el)return;
+  let v=0;
+  const iv=setInterval(()=>{v+=2;el.textContent=v+'%';if(v>=34)clearInterval(iv)},40);
+}
+
+function tick(){
+  if(!paused){
+    const now=Date.now();
+    const se=now-t0;
+    const te=elapsed+se;
+    const pct=Math.min(te/TOTAL*100,100);
+    document.getElementById('bar').style.width=pct+'%';
+    const s=Math.floor(te/1000);
+    document.getElementById('hud-time').textContent=`${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')} · ← → navegar · espacio pausa`;
+    if(se>=DUR[cur]){
+      elapsed+=DUR[cur];
+      go(cur+1);
+    }
+  }
+  requestAnimationFrame(tick);
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.key==='ArrowRight'||e.key===' '){e.preventDefault();if(e.key===' ')paused=!paused;else go(cur+1)}
+  if(e.key==='ArrowLeft'){e.preventDefault();go(cur-1)}
+});
+
+go(0);
+tick();
+</script>
+</body>
+</html>

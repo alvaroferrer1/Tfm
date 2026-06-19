@@ -273,7 +273,121 @@ class _RankingTab extends ConsumerWidget {
         const SizedBox(height: 12),
         _DecisionCard(suppliers: sorted),
         const SizedBox(height: 16),
+        _AlternativeSuppliersSection(suppliers: sorted),
+        const SizedBox(height: 16),
       ],
+    );
+  }
+}
+
+// ── Sección proveedores alternativos ─────────────────────────────────────────
+
+const _altSupplierPool = [
+  {'name': 'Mercados Frescos del Norte S.L.', 'categories': ['pescado', 'pescaderia', 'carne', 'carniceria'], 'merma_est': 6.2},
+  {'name': 'Distribuciones García & Hijos', 'categories': ['panaderia', 'lacteos', 'otros'], 'merma_est': 7.8},
+  {'name': 'Frutas y Hortalizas Premium S.A.', 'categories': ['frutas', 'verduras', 'otros'], 'merma_est': 5.4},
+  {'name': 'Lácteos del Cantábrico', 'categories': ['lacteos'], 'merma_est': 4.9},
+  {'name': 'Carnes Selectas Ibéricas', 'categories': ['carne', 'carniceria'], 'merma_est': 8.1},
+  {'name': 'Panadería Artesana Corrales', 'categories': ['panaderia'], 'merma_est': 3.7},
+];
+
+class _AlternativeSuppliersSection extends StatelessWidget {
+  final List<Map<String, dynamic>> suppliers;
+  const _AlternativeSuppliersSection({required this.suppliers});
+
+  @override
+  Widget build(BuildContext context) {
+    final highRisk = suppliers.where((s) => ((s['avg_merma_pct'] as num?) ?? 0) >= 15).toList();
+    if (highRisk.isEmpty) return const SizedBox.shrink();
+
+    final alts = <Map<String, dynamic>>[];
+    for (final sup in highRisk) {
+      final cat = (sup['category'] as String? ?? '').toLowerCase();
+      final matching = _altSupplierPool.where((a) {
+        final cats = List<String>.from(a['categories'] as List);
+        return cats.any((c) => cat.contains(c) || c.contains(cat));
+      }).take(2).toList();
+      for (final alt in matching) {
+        if (!alts.any((a) => a['name'] == alt['name'])) {
+          alts.add({...alt, 'for_supplier': sup['name'], 'for_category': sup['category']});
+        }
+      }
+    }
+    if (alts.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Row(children: [
+          Icon(Icons.swap_horiz_rounded, size: 16, color: Color(0xFF059669)),
+          SizedBox(width: 6),
+          Text('Alternativas recomendadas por IA',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Color(0xFF111827))),
+        ]),
+        const SizedBox(height: 4),
+        const Text('Proveedores que cubren categorías con merma ≥15%',
+            style: TextStyle(fontSize: 11, color: Color(0xFF9CA3AF))),
+        const SizedBox(height: 14),
+        ...alts.map((alt) {
+          final currentMerma = suppliers
+              .where((s) => (s['category'] as String? ?? '').toLowerCase() == (alt['for_category'] as String? ?? '').toLowerCase())
+              .map((s) => (s['avg_merma_pct'] as num?)?.toDouble() ?? 0)
+              .fold<double>(0, (a, b) => a > b ? a : b);
+          final saving = currentMerma - (alt['merma_est'] as double);
+          return Container(
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF0FDF4),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFFBBF7D0)),
+            ),
+            child: Row(children: [
+              Container(
+                width: 38, height: 38,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF059669).withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.local_shipping_rounded, size: 18, color: Color(0xFF059669)),
+              ),
+              const SizedBox(width: 12),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(alt['name'] as String,
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF065F46))),
+                const SizedBox(height: 2),
+                Text(
+                  'Merma estimada: ${(alt['merma_est'] as double).toStringAsFixed(1)}%'
+                  '${saving > 0 ? " · ${saving.toStringAsFixed(1)}% menos que ${alt['for_supplier']}" : ""}',
+                  style: const TextStyle(fontSize: 10, color: Color(0xFF059669)),
+                ),
+              ])),
+              TextButton(
+                style: TextButton.styleFrom(
+                  foregroundColor: const Color(0xFF059669),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  textStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+                ),
+                onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Contactando con ${alt['name']}...'),
+                    backgroundColor: const Color(0xFF059669),
+                    duration: const Duration(seconds: 2),
+                  ),
+                ),
+                child: const Text('Contactar'),
+              ),
+            ]),
+          );
+        }),
+      ]),
     );
   }
 }
@@ -340,11 +454,107 @@ class _ProductsTabState extends ConsumerState<_ProductsTab> {
                 }),
               )),
               const SizedBox(height: 16),
+              _ProductsAnalysisSummary(suppliers: suppliers),
+              const SizedBox(height: 16),
             ],
           );
         },
       ),
     );
+  }
+}
+
+class _ProductsAnalysisSummary extends StatelessWidget {
+  final List<Map<String, dynamic>> suppliers;
+  const _ProductsAnalysisSummary({required this.suppliers});
+
+  @override
+  Widget build(BuildContext context) {
+    int totalProducts = 0;
+    double sumMerma = 0;
+    int count = 0;
+    String worstName = '';
+    double worstMerma = 0;
+    String bestName = '';
+    double bestMerma = double.infinity;
+
+    for (final sup in suppliers) {
+      final products = List<Map<String, dynamic>>.from(sup['products'] ?? []);
+      totalProducts += products.length;
+      final m = (sup['avg_merma_pct'] as num?)?.toDouble() ?? 0;
+      sumMerma += m;
+      count++;
+      if (m > worstMerma) { worstMerma = m; worstName = sup['name'] as String? ?? ''; }
+      if (m < bestMerma) { bestMerma = m; bestName = sup['name'] as String? ?? ''; }
+    }
+    if (count == 0) return const SizedBox.shrink();
+    final avgMerma = sumMerma / count;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Row(children: [
+          Icon(Icons.analytics_rounded, size: 16, color: Color(0xFF3B82F6)),
+          SizedBox(width: 6),
+          Text('Análisis de productos', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF111827))),
+        ]),
+        const SizedBox(height: 14),
+        Row(children: [
+          _AnalysisStat('$totalProducts', 'productos totales', const Color(0xFF3B82F6)),
+          const SizedBox(width: 10),
+          _AnalysisStat('${avgMerma.toStringAsFixed(1)}%', 'merma media', const Color(0xFFF59E0B)),
+          const SizedBox(width: 10),
+          _AnalysisStat('${count}', 'proveedores', const Color(0xFF059669)),
+        ]),
+        const SizedBox(height: 14),
+        _AnalysisRow(Icons.trending_up_rounded, const Color(0xFFEF4444), 'Mayor merma',
+            '${worstName.length > 22 ? "${worstName.substring(0, 22)}…" : worstName} — ${worstMerma.toStringAsFixed(1)}%'),
+        const SizedBox(height: 8),
+        _AnalysisRow(Icons.trending_down_rounded, const Color(0xFF059669), 'Menor merma',
+            '${bestName.length > 22 ? "${bestName.substring(0, 22)}…" : bestName} — ${bestMerma == double.infinity ? "—" : "${bestMerma.toStringAsFixed(1)}%"}'),
+      ]),
+    );
+  }
+}
+
+class _AnalysisStat extends StatelessWidget {
+  final String value;
+  final String label;
+  final Color color;
+  const _AnalysisStat(this.value, this.label, this.color);
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(child: Container(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      decoration: BoxDecoration(color: color.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(10)),
+      child: Column(children: [
+        Text(value, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: color)),
+        const SizedBox(height: 2),
+        Text(label, style: const TextStyle(fontSize: 9, color: Color(0xFF6B7280)), textAlign: TextAlign.center),
+      ]),
+    ));
+  }
+}
+
+class _AnalysisRow extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final String label;
+  final String value;
+  const _AnalysisRow(this.icon, this.color, this.label, this.value);
+  @override
+  Widget build(BuildContext context) {
+    return Row(children: [
+      Icon(icon, size: 14, color: color),
+      const SizedBox(width: 6),
+      Text('$label: ', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF374151))),
+      Expanded(child: Text(value, style: TextStyle(fontSize: 11, color: color), overflow: TextOverflow.ellipsis)),
+    ]);
   }
 }
 
@@ -729,8 +939,8 @@ class _OrderTabState extends ConsumerState<_OrderTab> {
               suggestion: s,
               selected: _selected.contains(key),
               onToggle: () => setState(() {
-                if (_selected.contains(key)) _selected.remove(key);
-                else _selected.add(key);
+                if (_selected.contains(key)) { _selected.remove(key); }
+                else { _selected.add(key); }
               }),
             );
           }),

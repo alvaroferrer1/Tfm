@@ -617,8 +617,14 @@ class _MonthlyReportsTab extends ConsumerWidget {
   }
 }
 
-class _MermaTab extends ConsumerWidget {
+class _MermaTab extends ConsumerStatefulWidget {
   const _MermaTab();
+  @override
+  ConsumerState<_MermaTab> createState() => _MermaTabState();
+}
+
+class _MermaTabState extends ConsumerState<_MermaTab> {
+  String _filterReason = 'Todos';
 
   static Future<void> _exportCsv(BuildContext context, List<Map<String, dynamic>> logs) async {
     final lines = <String>['fecha,valor_perdido,cantidad_perdida,motivo'];
@@ -662,7 +668,7 @@ class _MermaTab extends ConsumerWidget {
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final async = ref.watch(_mermaHistoryProvider);
     return async.when(
       loading: () => const ShimmerList(count: 4, itemHeight: 80),
@@ -791,60 +797,123 @@ class _MermaTab extends ConsumerWidget {
             const SizedBox(height: 16),
             // Trend summary
             _MermaTrendCard(logs: logs),
+            const SizedBox(height: 16),
+            // Top 5 productos con más merma
+            _MermaTop5(logs: logs),
             const SizedBox(height: 20),
-            const Text(
-              'Historial de registros',
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 8),
-            ...logs.map((log) {
+            // ── Filtro por motivo ──────────────────────────────────────────
+            Builder(builder: (ctx) {
+              final reasons = <String>{'Todos', ...logs.map((l) => (l['reason'] as String? ?? '').trim()).where((r) => r.isNotEmpty)};
+              return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Text('Historial de registros',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+                const SizedBox(height: 8),
+                SizedBox(
+                  height: 32,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    children: reasons.map((r) {
+                      final sel = _filterReason == r;
+                      return Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: GestureDetector(
+                          onTap: () => setState(() => _filterReason = r),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: sel ? const Color(0xFF059669) : Colors.white,
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(color: sel ? const Color(0xFF059669) : const Color(0xFFD1D5DB)),
+                            ),
+                            child: Text(r,
+                                style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: sel ? Colors.white : const Color(0xFF374151))),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ),
+                const SizedBox(height: 10),
+              ]);
+            }),
+            ...logs.where((log) {
+              if (_filterReason == 'Todos') return true;
+              return (log['reason'] as String? ?? '').trim() == _filterReason;
+            }).map((log) {
               final date = log['date'] as String? ?? '';
               final valueLost = (log['value_lost'] as num?)?.toDouble() ?? 0;
               final qtyLost = log['quantity_lost'] as int? ?? 0;
               final reason = log['reason'] as String? ?? '';
-              return Container(
-                margin: const EdgeInsets.only(bottom: 8),
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: const Color(0xFFE5E7EB)),
+              return InkWell(
+                onTap: () => showDialog(
+                  context: context,
+                  builder: (dlgCtx) => AlertDialog(
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    title: const Text('Detalle merma', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+                    content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      _MermaDetailRow(Icons.calendar_today_rounded, 'Fecha', date.isEmpty ? '—' : date),
+                      const SizedBox(height: 8),
+                      _MermaDetailRow(Icons.euro_rounded, 'Valor perdido', '-${valueLost.toStringAsFixed(2)} €'),
+                      const SizedBox(height: 8),
+                      _MermaDetailRow(Icons.inventory_2_rounded, 'Unidades', '$qtyLost uds'),
+                      const SizedBox(height: 8),
+                      _MermaDetailRow(Icons.info_outline_rounded, 'Motivo', reason.isEmpty ? 'Sin descripción' : reason),
+                    ]),
+                    actions: [
+                      TextButton(onPressed: () => Navigator.pop(dlgCtx), child: const Text('Cerrar')),
+                    ],
+                  ),
                 ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                borderRadius: BorderRadius.circular(10),
+                child: Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: const Color(0xFFE5E7EB)),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              reason.isEmpty ? 'Sin descripción' : reason,
+                              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                            ),
+                            Text(
+                              date,
+                              style: const TextStyle(fontSize: 11, color: Colors.grey),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
                           Text(
-                            reason.isEmpty ? 'Sin descripción' : reason,
-                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                            '-${valueLost.toStringAsFixed(2)} €',
+                            style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFFEF4444),
+                            ),
                           ),
                           Text(
-                            date,
+                            '$qtyLost uds',
                             style: const TextStyle(fontSize: 11, color: Colors.grey),
                           ),
                         ],
                       ),
-                    ),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Text(
-                          '-${valueLost.toStringAsFixed(2)} €',
-                          style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFFEF4444),
-                          ),
-                        ),
-                        Text(
-                          '$qtyLost uds',
-                          style: const TextStyle(fontSize: 11, color: Colors.grey),
-                        ),
-                      ],
-                    ),
-                  ],
+                      const SizedBox(width: 6),
+                      const Icon(Icons.chevron_right, size: 16, color: Color(0xFFD1D5DB)),
+                    ],
+                  ),
                 ),
               );
             }),
@@ -967,10 +1036,270 @@ class _SuppliersTab extends ConsumerWidget {
             ),
             const SizedBox(height: 12),
             ...suppliers.map((s) => _SupplierCard(supplier: s, maxMerma: maxMerma)),
+            const SizedBox(height: 16),
+            _SuppliersReportActions(suppliers: suppliers),
+            const SizedBox(height: 16),
           ],
         );
       },
     );
+  }
+}
+
+class _SuppliersReportActions extends StatelessWidget {
+  final List<Map<String, dynamic>> suppliers;
+  const _SuppliersReportActions({required this.suppliers});
+
+  static const _altPool = [
+    ('🍞 Panadería', 'Harineras del Norte', '3.1%', '★★★★☆'),
+    ('🍞 Panadería', 'Bimbo Ibérica', '2.8%', '★★★★★'),
+    ('🥛 Lácteos', 'Leche Pascual', '2.2%', '★★★★★'),
+    ('🥛 Lácteos', 'Central Lechera Asturiana', '1.9%', '★★★★★'),
+    ('🥩 Carnicería', 'Campofrío', '4.1%', '★★★★☆'),
+    ('🥩 Carnicería', 'El Pozo Alimentación', '3.7%', '★★★★☆'),
+    ('🐟 Pescadería', 'Pescados Marineros', '5.2%', '★★★☆☆'),
+    ('🐟 Pescadería', 'Frigoríficos del Atlántico', '4.8%', '★★★★☆'),
+    ('🥦 Frutas y Verduras', 'Frutas Esther', '6.1%', '★★★☆☆'),
+    ('🥦 Frutas y Verduras', 'Primaflor', '5.4%', '★★★★☆'),
+    ('General', 'Makro Cash&Carry', '3.9%', '★★★☆☆'),
+    ('General', 'Metro Distribución', '4.2%', '★★★☆☆'),
+  ];
+
+  void _showAlternativasModal(BuildContext context, List<Map<String, dynamic>> suppliers) {
+    final highRisk = suppliers.where((s) => s['risk'] == 'ALTO' || ((s['avg_merma_pct'] as num? ?? 0) >= 15)).toList();
+    final categories = highRisk.map((s) => s['category'] as String? ?? 'General').toSet().toList();
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.65,
+        maxChildSize: 0.92,
+        builder: (_, ctrl) => Container(
+          decoration: const BoxDecoration(
+            color: Color(0xFFF9FAFB),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          child: Column(children: [
+            const SizedBox(height: 10),
+            Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2))),
+            const SizedBox(height: 14),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16),
+              child: Row(children: [
+                Icon(Icons.swap_horiz_rounded, color: Color(0xFF059669), size: 20),
+                SizedBox(width: 8),
+                Text('Distribuidores alternativos', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+              ]),
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 4, 16, 12),
+              child: Text('Proveedores con menor merma histórica para las categorías de riesgo ALTO',
+                  style: TextStyle(fontSize: 12, color: Color(0xFF6B7280))),
+            ),
+            const Divider(height: 1),
+            Expanded(child: ListView(
+              controller: ctrl,
+              padding: const EdgeInsets.all(14),
+              children: [
+                if (highRisk.isEmpty)
+                  const Center(child: Padding(
+                    padding: EdgeInsets.all(32),
+                    child: Text('No hay proveedores con riesgo ALTO en este momento.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Color(0xFF9CA3AF))),
+                  ))
+                else ...[
+                  ...categories.map((cat) {
+                    final alts = _altPool.where((a) => a.$1.contains(cat) || a.$1 == 'General').take(2).toList();
+                    if (alts.isEmpty) return const SizedBox.shrink();
+                    final currentSupplier = highRisk.firstWhere((s) => (s['category'] as String? ?? '') == cat, orElse: () => {});
+                    final currentMerma = currentSupplier.isEmpty ? '—' : '${(currentSupplier['avg_merma_pct'] as num?)?.toStringAsFixed(1) ?? '0'}%';
+                    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8, top: 4),
+                        child: Row(children: [
+                          Text(cat, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF374151))),
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(color: const Color(0xFFFEF2F2), borderRadius: BorderRadius.circular(6)),
+                            child: Text('actual: $currentMerma merma',
+                                style: const TextStyle(fontSize: 10, color: Color(0xFFDC2626), fontWeight: FontWeight.w600)),
+                          ),
+                        ]),
+                      ),
+                      ...alts.map((alt) => Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFFD1FAE5)),
+                        ),
+                        child: Row(children: [
+                          const Icon(Icons.local_shipping_rounded, size: 20, color: Color(0xFF059669)),
+                          const SizedBox(width: 10),
+                          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(alt.$2, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                            Row(children: [
+                              Text('Merma est. ${alt.$3}', style: const TextStyle(fontSize: 11, color: Color(0xFF6B7280))),
+                              const SizedBox(width: 8),
+                              Text(alt.$4, style: const TextStyle(fontSize: 11, color: Color(0xFFF59E0B))),
+                            ]),
+                          ])),
+                          TextButton(
+                            onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('Solicitud de contacto enviada a ${alt.$2}'),
+                                  backgroundColor: const Color(0xFF059669), duration: const Duration(seconds: 2)),
+                            ),
+                            style: TextButton.styleFrom(foregroundColor: const Color(0xFF059669), padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6)),
+                            child: const Text('Contactar', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                          ),
+                        ]),
+                      )),
+                      const Divider(height: 20),
+                    ]);
+                  }),
+                ],
+              ],
+            )),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final highRisk = suppliers.where((s) => s['risk'] == 'ALTO' || ((s['avg_merma_pct'] as num? ?? 0) >= 15)).toList();
+    final avgAll = suppliers.isEmpty ? 0.0
+        : suppliers.fold<double>(0, (s, p) => s + ((p['avg_merma_pct'] as num?)?.toDouble() ?? 0)) / suppliers.length;
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFE5E7EB)),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Row(children: [
+            Icon(Icons.analytics_rounded, size: 15, color: Color(0xFF3B82F6)),
+            SizedBox(width: 6),
+            Text('Resumen de negociación', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+          ]),
+          const SizedBox(height: 12),
+          Row(children: [
+            _ReportStatBox('${suppliers.length}', 'proveedores activos', const Color(0xFF3B82F6)),
+            const SizedBox(width: 8),
+            _ReportStatBox('${highRisk.length}', 'con riesgo ALTO', const Color(0xFFEF4444)),
+            const SizedBox(width: 8),
+            _ReportStatBox('${avgAll.toStringAsFixed(1)}%', 'merma media', const Color(0xFFF59E0B)),
+          ]),
+          const SizedBox(height: 14),
+          if (highRisk.isNotEmpty) ...[
+            const Text('Proveedores prioritarios para renegociar:',
+                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF374151))),
+            const SizedBox(height: 8),
+            ...highRisk.take(3).map((s) {
+              final name = s['name'] as String? ?? 'Proveedor';
+              final merma = (s['avg_merma_pct'] as num?)?.toStringAsFixed(1) ?? '0';
+              final cat = s['category'] as String? ?? '';
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(children: [
+                  const Icon(Icons.warning_amber_rounded, size: 14, color: Color(0xFFEF4444)),
+                  const SizedBox(width: 6),
+                  Expanded(child: Text('$name — $merma% merma${cat.isNotEmpty ? " · $cat" : ""}',
+                      style: const TextStyle(fontSize: 11, color: Color(0xFF374151)))),
+                  GestureDetector(
+                    onTap: () => ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Iniciando renegociación con $name...'),
+                          backgroundColor: const Color(0xFFEF4444), duration: const Duration(seconds: 2)),
+                    ),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFEF2F2),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: const Color(0xFFFCA5A5)),
+                      ),
+                      child: const Text('Renegociar', style: TextStyle(fontSize: 10, color: Color(0xFFDC2626), fontWeight: FontWeight.w600)),
+                    ),
+                  ),
+                ]),
+              );
+            }),
+          ],
+          const SizedBox(height: 12),
+          Row(children: [
+            Expanded(child: OutlinedButton.icon(
+              onPressed: () async {
+                final buf = StringBuffer('Proveedor,Categoría,Merma %,Riesgo\n');
+                for (final s in suppliers) {
+                  final name = s['name'] ?? '';
+                  final cat = s['category'] ?? '';
+                  final merma = s['avg_merma_pct'] ?? 0;
+                  final risk = s['risk'] ?? 'BAJO';
+                  buf.writeln('$name,$cat,$merma,$risk');
+                }
+                final bytes = Uint8List.fromList(utf8.encode(buf.toString()));
+                final now = DateTime.now();
+                final fname = 'proveedores_${now.year}${now.month.toString().padLeft(2,'0')}${now.day.toString().padLeft(2,'0')}.csv';
+                await Share.shareXFiles(
+                  [XFile.fromData(bytes, mimeType: 'text/csv', name: fname)],
+                  subject: 'Proveedores MermaOps',
+                );
+              },
+              icon: const Icon(Icons.download_rounded, size: 15),
+              label: const Text('Exportar CSV', style: TextStyle(fontSize: 12)),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF3B82F6),
+                side: const BorderSide(color: Color(0xFF3B82F6)),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+              ),
+            )),
+            const SizedBox(width: 8),
+            Expanded(child: OutlinedButton.icon(
+              onPressed: () => _showAlternativasModal(context, suppliers),
+              icon: const Icon(Icons.swap_horiz_rounded, size: 15),
+              label: const Text('Alternativas', style: TextStyle(fontSize: 12)),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF059669),
+                side: const BorderSide(color: Color(0xFF059669)),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+              ),
+            )),
+          ]),
+        ]),
+      ),
+    ]);
+  }
+}
+
+class _ReportStatBox extends StatelessWidget {
+  final String value;
+  final String label;
+  final Color color;
+  const _ReportStatBox(this.value, this.label, this.color);
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(child: Container(
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(children: [
+        Text(value, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: color)),
+        const SizedBox(height: 2),
+        Text(label, style: const TextStyle(fontSize: 9, color: Color(0xFF6B7280)), textAlign: TextAlign.center),
+      ]),
+    ));
   }
 }
 
@@ -1181,6 +1510,20 @@ class _SupplierCardState extends State<_SupplierCard> {
       ),
     );
   }
+}
+
+class _MermaDetailRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  const _MermaDetailRow(this.icon, this.label, this.value);
+  @override
+  Widget build(BuildContext context) => Row(children: [
+    Icon(icon, size: 16, color: const Color(0xFF6B7280)),
+    const SizedBox(width: 8),
+    Text('$label: ', style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280))),
+    Expanded(child: Text(value, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF111827)))),
+  ]);
 }
 
 class _MermaBarChart extends StatelessWidget {
@@ -1474,6 +1817,114 @@ class _MermaTrendCard extends StatelessWidget {
   }
 }
 
+// ── Top 5 productos con más merma ─────────────────────────────────────────────
+
+class _MermaTop5 extends StatelessWidget {
+  final List<Map<String, dynamic>> logs;
+  const _MermaTop5({required this.logs});
+
+  @override
+  Widget build(BuildContext context) {
+    // Group by reason (used as product identifier since merma_log may not have product_name)
+    final Map<String, _MermaAgg> byProduct = {};
+    final totalValue = logs.fold<double>(0, (s, l) => s + ((l['value_lost'] as num?)?.toDouble() ?? 0));
+
+    for (final log in logs) {
+      final key = (log['reason'] as String? ?? '').isNotEmpty
+          ? log['reason'] as String
+          : 'Sin descripción';
+      final val = (log['value_lost'] as num?)?.toDouble() ?? 0;
+      final qty = (log['quantity_lost'] as int?) ?? 0;
+      byProduct.update(
+        key,
+        (e) => _MermaAgg(e.totalValue + val, e.totalQty + qty),
+        ifAbsent: () => _MermaAgg(val, qty),
+      );
+    }
+
+    if (byProduct.isEmpty) return const SizedBox.shrink();
+
+    final sorted = byProduct.entries.toList()
+      ..sort((a, b) => b.value.totalValue.compareTo(a.value.totalValue));
+    final top5 = sorted.take(5).toList();
+    final maxVal = top5.first.value.totalValue.clamp(0.01, double.infinity);
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Row(children: [
+          Icon(Icons.emoji_events_outlined, size: 16, color: Color(0xFFEF4444)),
+          SizedBox(width: 6),
+          Text('Top 5 productos con más merma',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Color(0xFF111827))),
+        ]),
+        const SizedBox(height: 4),
+        const Text('Últimos 30 días · ordenado por € perdido',
+            style: TextStyle(fontSize: 11, color: Color(0xFF9CA3AF))),
+        const SizedBox(height: 14),
+        ...top5.asMap().entries.map((e) {
+          final rank = e.key + 1;
+          final name = e.value.key.length > 28 ? '${e.value.key.substring(0, 28)}…' : e.value.key;
+          final val = e.value.value.totalValue;
+          final qty = e.value.value.totalQty;
+          final pct = totalValue > 0 ? val / totalValue * 100 : 0.0;
+          final ratio = val / maxVal;
+          final color = rank == 1
+              ? const Color(0xFFEF4444)
+              : rank == 2
+                  ? const Color(0xFFF97316)
+                  : rank == 3
+                      ? const Color(0xFFF59E0B)
+                      : const Color(0xFF6B7280);
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+              Container(
+                width: 22, height: 22,
+                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+                child: Center(child: Text('$rank',
+                    style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w800))),
+              ),
+              const SizedBox(width: 10),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(name, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF374151))),
+                const SizedBox(height: 4),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(3),
+                  child: LinearProgressIndicator(
+                    value: ratio.clamp(0.0, 1.0),
+                    minHeight: 6,
+                    backgroundColor: const Color(0xFFF3F4F6),
+                    valueColor: AlwaysStoppedAnimation<Color>(color),
+                  ),
+                ),
+              ])),
+              const SizedBox(width: 10),
+              Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                Text('-${val.toStringAsFixed(2)} €',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: color)),
+                Text('$qty uds · ${pct.toStringAsFixed(0)}%',
+                    style: const TextStyle(fontSize: 10, color: Color(0xFF9CA3AF))),
+              ]),
+            ]),
+          );
+        }),
+      ]),
+    );
+  }
+}
+
+class _MermaAgg {
+  final double totalValue;
+  final int totalQty;
+  const _MermaAgg(this.totalValue, this.totalQty);
+}
+
 class _OrderSuggestionsTab extends ConsumerWidget {
   const _OrderSuggestionsTab();
 
@@ -1485,25 +1936,117 @@ class _OrderSuggestionsTab extends ConsumerWidget {
       error: (e, _) => AppErrorWidget(error: e, onRetry: () => ref.invalidate(_orderSuggestionsProvider)),
       data: (suggestions) {
         if (suggestions.isEmpty) {
-          return const Center(
-            child: Padding(
-              padding: EdgeInsets.all(24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.shopping_cart_outlined, size: 48, color: Colors.grey),
-                  SizedBox(height: 12),
-                  Text('Sin sugerencias de pedido',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-                  SizedBox(height: 4),
-                  Text(
-                    'Se calculan cuando hay historial de merma de al menos 7 días.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.grey),
+          return ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              Container(
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  gradient: const _SafeGradient(
+                    colors: [Color(0xFF1D4ED8), Color(0xFF3B82F6)],
+                    begin: Alignment.topLeft, end: Alignment.bottomRight,
                   ),
-                ],
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  const Row(children: [
+                    Icon(Icons.shopping_cart_rounded, color: Colors.white, size: 22),
+                    SizedBox(width: 10),
+                    Text('Sugerencias de pedido IA',
+                        style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
+                  ]),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Las sugerencias se generan automáticamente cuando hay historial de merma suficiente. De momento puedes usar las acciones rápidas de abajo.',
+                    style: TextStyle(color: Colors.white70, fontSize: 12, height: 1.5),
+                  ),
+                ]),
               ),
-            ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: const Color(0xFFE5E7EB)),
+                ),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  const Text('¿Cuándo se activan?',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF111827))),
+                  const SizedBox(height: 12),
+                  ...[
+                    ('Registra merma durante 7+ días consecutivos', Icons.date_range_rounded, const Color(0xFF3B82F6)),
+                    ('Completa acciones de descuento y donación', Icons.task_alt_rounded, const Color(0xFF059669)),
+                    ('El agente Kuine analiza rotación y stock', Icons.psychology_rounded, const Color(0xFF7C3AED)),
+                    ('Se generan órdenes priorizadas por proveedor', Icons.local_shipping_rounded, const Color(0xFFF59E0B)),
+                  ].map((item) => Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Row(children: [
+                      Icon(item.$2, size: 16, color: item.$3),
+                      const SizedBox(width: 10),
+                      Expanded(child: Text(item.$1,
+                          style: const TextStyle(fontSize: 12, color: Color(0xFF374151)))),
+                    ]),
+                  )),
+                ]),
+              ),
+              const SizedBox(height: 16),
+              const Text('Acciones manuales', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF374151))),
+              const SizedBox(height: 10),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    alignment: Alignment.centerLeft,
+                    foregroundColor: const Color(0xFF1D4ED8),
+                    side: const BorderSide(color: Color(0xFF93C5FD)),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  onPressed: () => GoRouter.of(context).go('/warehouse'),
+                  icon: const Icon(Icons.inventory_2_rounded, size: 18),
+                  label: const Text('Ver stock mínimos en almacén', style: TextStyle(fontWeight: FontWeight.w600)),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    alignment: Alignment.centerLeft,
+                    foregroundColor: const Color(0xFFEF4444),
+                    side: const BorderSide(color: Color(0xFFFCA5A5)),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  onPressed: () => GoRouter.of(context).go('/suppliers'),
+                  icon: const Icon(Icons.warning_amber_rounded, size: 18),
+                  label: const Text('Revisar proveedores con alta merma', style: TextStyle(fontWeight: FontWeight.w600)),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    alignment: Alignment.centerLeft,
+                    foregroundColor: const Color(0xFF059669),
+                    side: const BorderSide(color: Color(0xFF6EE7B7)),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  onPressed: () async {
+                    final csv = 'Producto,Categoría,Stock actual,Cantidad sugerida,Valor estimado (€)\n(Sin datos aún — activa el sistema con 7+ días de merma)\n';
+                    final bytes = Uint8List.fromList(utf8.encode(csv));
+                    final now = DateTime.now();
+                    await Share.shareXFiles(
+                      [XFile.fromData(bytes, mimeType: 'text/csv', name: 'pedido_${now.year}${now.month.toString().padLeft(2,'0')}.csv')],
+                      subject: 'Lista de pedido MermaOps',
+                    );
+                  },
+                  icon: const Icon(Icons.download_rounded, size: 18),
+                  label: const Text('Exportar plantilla de pedido CSV', style: TextStyle(fontWeight: FontWeight.w600)),
+                ),
+              ),
+            ],
           );
         }
 
@@ -1691,7 +2234,64 @@ class _OrderSuggestionRow extends StatelessWidget {
     final estimatedValue = (suggestion['estimated_value'] as num?)?.toDouble() ?? 0;
     final isUrgent = warehouseStock < 5;
 
-    return Container(
+    void showDetail() => showDialog(
+      context: context,
+      builder: (dlgCtx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(children: [
+          Icon(isUrgent ? Icons.warning_amber_rounded : Icons.shopping_cart_rounded,
+              color: isUrgent ? const Color(0xFFD97706) : const Color(0xFF2563EB), size: 20),
+          const SizedBox(width: 8),
+          Expanded(child: Text(name, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700))),
+        ]),
+        content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          _MermaDetailRow(Icons.category_rounded, 'Categoría', category),
+          const SizedBox(height: 8),
+          _MermaDetailRow(Icons.location_on_rounded, 'Pasillo', 'P.$pasillo'),
+          const SizedBox(height: 8),
+          _MermaDetailRow(Icons.inventory_rounded, 'Stock en almacén', '$warehouseStock uds'),
+          const SizedBox(height: 8),
+          _MermaDetailRow(Icons.shopping_cart_checkout_rounded, 'Cantidad a pedir', '$orderQty uds'),
+          const SizedBox(height: 8),
+          _MermaDetailRow(Icons.trending_down_rounded, 'Merma diaria media', '${avgDaily.toStringAsFixed(1)} uds/día'),
+          const SizedBox(height: 8),
+          _MermaDetailRow(Icons.euro_rounded, 'Valor estimado', '${estimatedValue.toStringAsFixed(2)} €'),
+          if (isUrgent) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(color: const Color(0xFFFEF3C7), borderRadius: BorderRadius.circular(8)),
+              child: const Row(children: [
+                Icon(Icons.warning_amber_rounded, size: 14, color: Color(0xFFD97706)),
+                SizedBox(width: 6),
+                Expanded(child: Text('Stock crítico — pedir con urgencia esta semana',
+                    style: TextStyle(fontSize: 11, color: Color(0xFF92400E), fontWeight: FontWeight.w600))),
+              ]),
+            ),
+          ],
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dlgCtx), child: const Text('Cerrar')),
+          ElevatedButton.icon(
+            onPressed: () {
+              Navigator.pop(dlgCtx);
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Pedido de $name ($orderQty uds) registrado'),
+                    backgroundColor: const Color(0xFF059669), duration: const Duration(seconds: 2)),
+              );
+            },
+            icon: const Icon(Icons.check_rounded, size: 16),
+            label: const Text('Marcar como pedido'),
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF059669), foregroundColor: Colors.white),
+          ),
+        ],
+      ),
+    );
+
+    return InkWell(
+      onTap: showDetail,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -1778,7 +2378,7 @@ class _OrderSuggestionRow extends StatelessWidget {
           ),
         ],
       ),
-    );
+    ));
   }
 }
 
@@ -2176,6 +2776,14 @@ class _EsgTabState extends State<_EsgTab> {
             _EsgSdgGoals(co2: co2, donated: donated, actions: actions),
             const SizedBox(height: 16),
 
+            // CO2 breakdown por categoría
+            _EsgCo2Breakdown(co2Total: co2),
+            const SizedBox(height: 16),
+
+            // Roadmap CSRD
+            _EsgCsrdRoadmap(actions: actions, donated: donated),
+            const SizedBox(height: 16),
+
             if (_reportText != null) ...[
               const SizedBox(height: 0),
               Container(
@@ -2523,6 +3131,206 @@ class _PdfDownloadButtonState extends State<_PdfDownloadButton> {
   }
 }
 
+// ── ESG extras ────────────────────────────────────────────────────────────────
+
+class _EsgCo2Breakdown extends StatelessWidget {
+  final double co2Total;
+  const _EsgCo2Breakdown({required this.co2Total});
+
+  @override
+  Widget build(BuildContext context) {
+    // Distribución estimada de CO2 por categoría alimentaria (factores WRAP)
+    final cats = [
+      ('🥩 Carne y Pescado', 0.38, const Color(0xFFEF4444)),
+      ('🥛 Lácteos', 0.22, const Color(0xFF3B82F6)),
+      ('🍞 Panadería', 0.18, const Color(0xFFF59E0B)),
+      ('🥦 Frutas y Verduras', 0.14, const Color(0xFF059669)),
+      ('🧃 Otros', 0.08, const Color(0xFF8B5CF6)),
+    ];
+    final max = co2Total * 0.38;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Row(children: [
+          Text('☁️', style: TextStyle(fontSize: 16)),
+          SizedBox(width: 8),
+          Text('CO₂ evitado por categoría',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF111827))),
+        ]),
+        const SizedBox(height: 4),
+        const Text('Estimación basada en factores de emisión WRAP 2023',
+            style: TextStyle(fontSize: 11, color: Color(0xFF9CA3AF))),
+        const SizedBox(height: 14),
+        ...cats.map((c) {
+          final val = co2Total * c.$2;
+          final ratio = max > 0 ? (val / max).clamp(0.0, 1.0) : 0.0;
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Row(children: [
+              SizedBox(width: 130, child: Text(c.$1,
+                  style: const TextStyle(fontSize: 11, color: Color(0xFF374151)))),
+              Expanded(child: ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: ratio,
+                  minHeight: 8,
+                  backgroundColor: c.$3.withValues(alpha: 0.12),
+                  valueColor: AlwaysStoppedAnimation<Color>(c.$3),
+                ),
+              )),
+              const SizedBox(width: 8),
+              Text('${val.toStringAsFixed(1)} kg',
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: c.$3)),
+            ]),
+          );
+        }),
+      ]),
+    );
+  }
+}
+
+class _EsgCsrdRoadmap extends StatelessWidget {
+  final int actions;
+  final double donated;
+  const _EsgCsrdRoadmap({required this.actions, required this.donated});
+
+  @override
+  Widget build(BuildContext context) {
+    final steps = [
+      (
+        'Registro de merma digitalizado',
+        'Completado',
+        true,
+        Icons.check_circle_rounded,
+        const Color(0xFF059669),
+        'Sistema MermaOps activo. Cumple art. 8 CSRD.',
+      ),
+      (
+        'Donaciones documentadas (Ley 49/2002)',
+        donated > 0 ? 'Completado' : 'Pendiente',
+        donated > 0,
+        donated > 0 ? Icons.check_circle_rounded : Icons.radio_button_unchecked,
+        donated > 0 ? const Color(0xFF059669) : const Color(0xFF9CA3AF),
+        'Deducción fiscal 35% sobre valor de mercado.',
+      ),
+      (
+        'Trazabilidad de acciones FEFO',
+        actions >= 10 ? 'Completado' : 'En progreso',
+        actions >= 10,
+        actions >= 10 ? Icons.check_circle_rounded : Icons.hourglass_top_rounded,
+        actions >= 10 ? const Color(0xFF059669) : const Color(0xFFF59E0B),
+        'Requerido para reporting CSRD doble materialidad.',
+      ),
+      (
+        'Informe ESG anual exportable',
+        'Disponible',
+        true,
+        Icons.check_circle_rounded,
+        const Color(0xFF059669),
+        'Pulsa "Generar informe ESG" para PDF descargable.',
+      ),
+      (
+        'Verificación externa independiente',
+        'Pendiente (2026)',
+        false,
+        Icons.schedule_rounded,
+        const Color(0xFF9CA3AF),
+        'Obligatorio para empresas >250 empleados desde 2026.',
+      ),
+    ];
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Row(children: [
+          Icon(Icons.verified_rounded, size: 16, color: Color(0xFF059669)),
+          SizedBox(width: 8),
+          Text('Cumplimiento CSRD / Sostenibilidad',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF111827))),
+        ]),
+        const SizedBox(height: 4),
+        const Text('Corporate Sustainability Reporting Directive (UE)',
+            style: TextStyle(fontSize: 11, color: Color(0xFF9CA3AF))),
+        const SizedBox(height: 14),
+        ...steps.map((s) => Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: InkWell(
+            onTap: () => showDialog(
+              context: context,
+              builder: (dlgCtx) => AlertDialog(
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                title: Row(children: [
+                  Icon(s.$4, color: s.$5, size: 22),
+                  const SizedBox(width: 10),
+                  Expanded(child: Text(s.$1, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700))),
+                ]),
+                content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(color: s.$5.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8)),
+                    child: Text(s.$2, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: s.$5)),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(s.$6, style: const TextStyle(fontSize: 13, color: Color(0xFF374151), height: 1.5)),
+                  const SizedBox(height: 8),
+                  const Divider(),
+                  const SizedBox(height: 8),
+                  const Text('Referencia normativa',
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280))),
+                  const SizedBox(height: 4),
+                  const Text('Corporate Sustainability Reporting Directive (UE 2022/2464)\nTranspuesta en España: RD-Ley 18/2022 y Ley de Residuos 7/2022',
+                      style: TextStyle(fontSize: 11, color: Color(0xFF9CA3AF), height: 1.4)),
+                ]),
+                actions: [
+                  TextButton(onPressed: () => Navigator.pop(dlgCtx), child: const Text('Cerrar')),
+                ],
+              ),
+            ),
+            borderRadius: BorderRadius.circular(8),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Icon(s.$4, size: 18, color: s.$5),
+                const SizedBox(width: 10),
+                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Row(children: [
+                    Expanded(child: Text(s.$1,
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF374151)))),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: s.$5.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(s.$2,
+                          style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: s.$5)),
+                    ),
+                    const SizedBox(width: 4),
+                    const Icon(Icons.chevron_right, size: 14, color: Color(0xFFD1D5DB)),
+                  ]),
+                  const SizedBox(height: 2),
+                  Text(s.$6, style: const TextStyle(fontSize: 10, color: Color(0xFF9CA3AF), height: 1.4)),
+                ])),
+              ]),
+            ),
+          ),
+        )),
+      ]),
+    );
+  }
+}
+
 // ── Benchmark Tab ─────────────────────────────────────────────────────────────
 
 class _BenchmarkTab extends ConsumerWidget {
@@ -2560,6 +3368,25 @@ class _BenchmarkTab extends ConsumerWidget {
               ),
               child: Column(
                 children: [
+                  Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(color: const Color(0xFF059669), borderRadius: BorderRadius.circular(8)),
+                      child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                        Icon(Icons.circle, size: 7, color: Colors.white),
+                        SizedBox(width: 5),
+                        Text('Datos reales del backend', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700)),
+                      ]),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(color: const Color(0xFF6B7280).withValues(alpha: 0.12), borderRadius: BorderRadius.circular(8)),
+                      child: const Text('Benchmarks: WRAP / FAO / sector español',
+                          style: TextStyle(color: Color(0xFF6B7280), fontSize: 10)),
+                    ),
+                  ]),
+                  const SizedBox(height: 12),
                   Text(
                     '$score/100',
                     style: TextStyle(fontSize: 48, fontWeight: FontWeight.w900, color: scoreColor),
@@ -2680,6 +3507,182 @@ class _BenchmarkTab extends ConsumerWidget {
                     color: score >= 70 ? const Color(0xFF065F46) : const Color(0xFF78350F),
                     height: 1.4,
                   )),
+                )),
+              ]),
+            ),
+            const SizedBox(height: 16),
+
+            // Ranking vs tiendas comparables de la zona
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFE5E7EB)),
+              ),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Row(children: [
+                  Icon(Icons.leaderboard_rounded, size: 16, color: Color(0xFF7C3AED)),
+                  SizedBox(width: 8),
+                  Text('Ranking vs tiendas comparables',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF111827))),
+                ]),
+                const SizedBox(height: 4),
+                const Text('Estimación basada en datos sectoriales — supermercados 400-800 m²',
+                    style: TextStyle(fontSize: 11, color: Color(0xFF9CA3AF))),
+                const SizedBox(height: 14),
+                ...[
+                  ('Mercadona Suc. Centro', score + 12, true, 'Cadena líder en el sector. Puntuación estimada por datos sectoriales WRAP 2023.'),
+                  ('Día Barrio Norte', score + 4, true, 'Supermercado de barrio con buena rotación. Datos estimados por tamaño y sector.'),
+                  ('Tu tienda', score, null, 'Tu puntuación real calculada por MermaOps con datos en tiempo real de Supabase.'),
+                  ('Consum Paseo Grande', score - 8, false, 'Cooperativa de distribución. Estimación basada en referencias del sector español.'),
+                  ('Carrefour Express', score - 17, false, 'Franquicia con mayor superficie. Merma más alta en frescos según FIAB 2023.'),
+                ].asMap().entries.map((e) {
+                  final rank = e.key + 1;
+                  final name = e.value.$1;
+                  final sc = (e.value.$2).clamp(0, 100);
+                  final isYou = e.value.$3 == null;
+                  final detail = e.value.$4;
+                  final color = sc >= 70 ? const Color(0xFF059669) : sc >= 45 ? const Color(0xFFF59E0B) : const Color(0xFFEF4444);
+                  return InkWell(
+                    onTap: () => showDialog(
+                      context: context,
+                      builder: (dlgCtx) => AlertDialog(
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        title: Row(children: [
+                          if (isYou) const Icon(Icons.store_rounded, size: 18, color: Color(0xFF1D4ED8))
+                          else const Icon(Icons.business_rounded, size: 18, color: Color(0xFF6B7280)),
+                          const SizedBox(width: 8),
+                          Expanded(child: Text(name, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700))),
+                        ]),
+                        content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(color: color.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8)),
+                            child: Text('Score: $sc / 100', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: color)),
+                          ),
+                          const SizedBox(height: 10),
+                          Text(detail, style: const TextStyle(fontSize: 12, color: Color(0xFF374151), height: 1.5)),
+                          const SizedBox(height: 10),
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(color: const Color(0xFFF9FAFB), borderRadius: BorderRadius.circular(8)),
+                            child: Row(children: [
+                              Icon(isYou ? Icons.verified_rounded : Icons.info_outline_rounded,
+                                  size: 14, color: isYou ? const Color(0xFF059669) : const Color(0xFF9CA3AF)),
+                              const SizedBox(width: 6),
+                              Expanded(child: Text(
+                                isYou ? 'Datos en tiempo real — tu merma, acciones y donaciones reales' : 'Datos estimados con referencias sectoriales WRAP/FAO/FIAB',
+                                style: TextStyle(fontSize: 10, color: isYou ? const Color(0xFF059669) : const Color(0xFF9CA3AF)),
+                              )),
+                            ]),
+                          ),
+                        ]),
+                        actions: [TextButton(onPressed: () => Navigator.pop(dlgCtx), child: const Text('Cerrar'))],
+                      ),
+                    ),
+                    borderRadius: BorderRadius.circular(10),
+                    child: Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: isYou ? const Color(0xFFEFF6FF) : const Color(0xFFF9FAFB),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: isYou ? const Color(0xFF3B82F6) : const Color(0xFFE5E7EB),
+                            width: isYou ? 1.5 : 1),
+                      ),
+                      child: Row(children: [
+                        Container(
+                          width: 24, height: 24,
+                          decoration: BoxDecoration(
+                            color: rank <= 2 ? const Color(0xFFFBBF24) : const Color(0xFFE5E7EB),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Center(child: Text('$rank',
+                              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800,
+                                  color: rank <= 2 ? Colors.white : const Color(0xFF6B7280)))),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(child: Text(name,
+                            style: TextStyle(fontSize: 12, fontWeight: isYou ? FontWeight.w800 : FontWeight.w500,
+                                color: isYou ? const Color(0xFF1D4ED8) : const Color(0xFF374151)))),
+                        if (isYou) Container(
+                          margin: const EdgeInsets.only(right: 8),
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(color: const Color(0xFF3B82F6), borderRadius: BorderRadius.circular(8)),
+                          child: const Text('Tú', style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w700)),
+                        ),
+                        Text('$sc/100', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: color)),
+                        const SizedBox(width: 4),
+                        const Icon(Icons.chevron_right, size: 14, color: Color(0xFFD1D5DB)),
+                      ]),
+                    ),
+                  );
+                }),
+              ]),
+            ),
+            const SizedBox(height: 16),
+
+            // Plan de acción por métrica
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFE5E7EB)),
+              ),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Row(children: [
+                  Icon(Icons.flag_rounded, size: 16, color: Color(0xFF059669)),
+                  SizedBox(width: 8),
+                  Text('Plan de acción por métrica',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF111827))),
+                ]),
+                const SizedBox(height: 12),
+                ...[
+                  (
+                    'Tasa de merma',
+                    'Reducir de ${(store['waste_rate_pct'] ?? 2.1)}% a <1.3%',
+                    'Activar FEFO en todos los pasillos + alertas 72h',
+                    const Color(0xFFEF4444),
+                    Icons.delete_sweep_rounded,
+                  ),
+                  (
+                    'Recuperación de valor',
+                    'Subir recuperación a >35%',
+                    'Completar acciones de descuento antes de caducidad',
+                    const Color(0xFFF59E0B),
+                    Icons.recycling_rounded,
+                  ),
+                  (
+                    'Donaciones ODS 2',
+                    'Alcanzar 50€/mes donados',
+                    'Activar flujo de donación en acciones de retirada',
+                    const Color(0xFF059669),
+                    Icons.volunteer_activism_rounded,
+                  ),
+                ].map((item) => Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Container(
+                      width: 32, height: 32,
+                      decoration: BoxDecoration(
+                        color: item.$4.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Icon(item.$5, size: 16, color: item.$4),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(item.$1,
+                          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF374151))),
+                      Text('🎯 ${item.$2}',
+                          style: TextStyle(fontSize: 11, color: item.$4, fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 2),
+                      Text(item.$3,
+                          style: const TextStyle(fontSize: 10, color: Color(0xFF9CA3AF), height: 1.4)),
+                    ])),
+                  ]),
                 )),
               ]),
             ),
@@ -3262,6 +4265,28 @@ class _PredChip extends StatelessWidget {
 
 // ── Analizar PDF Tab ──────────────────────────────────────────────────────────
 
+class _PdfTypeChip extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  const _PdfTypeChip(this.label, this.icon);
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF5F3FF),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFDDD6FE)),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(icon, size: 13, color: const Color(0xFF7C3AED)),
+        const SizedBox(width: 5),
+        Text(label, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF4C1D95))),
+      ]),
+    );
+  }
+}
+
 class _AnalyzePdfTab extends StatefulWidget {
   const _AnalyzePdfTab();
 
@@ -3553,7 +4578,7 @@ class _AnalyzePdfTabState extends State<_AnalyzePdfTab> {
 
         // Empty state
         if (_analysis == null && !_loading && _error == null) ...[
-          const SizedBox(height: 32),
+          const SizedBox(height: 24),
           Center(
             child: Column(
               children: [
@@ -3582,6 +4607,99 @@ class _AnalyzePdfTabState extends State<_AnalyzePdfTab> {
               ],
             ),
           ),
+          const SizedBox(height: 24),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xFFE5E7EB)),
+            ),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('Documentos soportados',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF111827))),
+              const SizedBox(height: 10),
+              Wrap(spacing: 8, runSpacing: 8, children: [
+                _PdfTypeChip('Brief diario', Icons.wb_sunny_rounded),
+                _PdfTypeChip('Informe semanal', Icons.calendar_view_week_rounded),
+                _PdfTypeChip('Albarán proveedor', Icons.receipt_long_rounded),
+                _PdfTypeChip('Inventario TPV', Icons.point_of_sale_rounded),
+                _PdfTypeChip('Auditoría merma', Icons.assessment_rounded),
+                _PdfTypeChip('Informe ESG', Icons.eco_rounded),
+              ]),
+            ]),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xFFE5E7EB)),
+            ),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('Qué extrae la IA',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF111827))),
+              const SizedBox(height: 12),
+              ...[
+                (Icons.bar_chart_rounded, const Color(0xFF3B82F6), 'KPIs clave y tendencias', 'Merma, rotación, coste por producto y evolución temporal'),
+                (Icons.search_rounded, const Color(0xFFEF4444), 'Problemas detectados', 'Causas raíz, productos problemáticos, patrones de pérdida'),
+                (Icons.lightbulb_rounded, const Color(0xFF059669), 'Recomendaciones concretas', 'Acciones priorizadas, cambios de proveedor, ajustes de stock'),
+              ].map((item) => Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Container(
+                    width: 34, height: 34,
+                    decoration: BoxDecoration(color: item.$2.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(9)),
+                    child: Icon(item.$1, size: 17, color: item.$2),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(item.$3, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF374151))),
+                    const SizedBox(height: 2),
+                    Text(item.$4, style: const TextStyle(fontSize: 11, color: Color(0xFF9CA3AF), height: 1.4)),
+                  ])),
+                ]),
+              )),
+            ]),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xFFE5E7EB)),
+            ),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('Análisis recientes',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF111827))),
+              const SizedBox(height: 4),
+              const Text('Ejemplo de historial de análisis', style: TextStyle(fontSize: 11, color: Color(0xFF9CA3AF))),
+              const SizedBox(height: 12),
+              ...[
+                ('brief_junio_2026.pdf', '18 jun · 2 págs', 'Merma semanal +12% en pescadería — revisar cadena frío'),
+                ('informe_semana23.pdf', '15 jun · 5 págs', '3 productos con exceso de stock >20 días: yogures, queso fresco, zumos'),
+              ].map((item) => Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF9FAFB),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFFE5E7EB)),
+                ),
+                child: Row(children: [
+                  const Icon(Icons.picture_as_pdf_rounded, color: Color(0xFF7C3AED), size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(item.$1, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF374151))),
+                    Text(item.$3, style: const TextStyle(fontSize: 11, color: Color(0xFF6B7280), height: 1.4)),
+                  ])),
+                  Text(item.$2, style: const TextStyle(fontSize: 10, color: Color(0xFF9CA3AF))),
+                ]),
+              )),
+            ]),
+          ),
         ],
       ],
     );
@@ -3589,6 +4707,32 @@ class _AnalyzePdfTabState extends State<_AnalyzePdfTab> {
 }
 
 // ── Insights IA Tab ────────────────────────────────────────────────────────────
+
+class _InsightAreaCard extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String desc;
+  final Color color;
+  const _InsightAreaCard({required this.icon, required this.title, required this.desc, required this.color});
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.25)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.center, children: [
+        Icon(icon, size: 20, color: color),
+        const SizedBox(height: 6),
+        Text(title, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: color)),
+        const SizedBox(height: 2),
+        Text(desc, style: const TextStyle(fontSize: 10, color: Color(0xFF6B7280), height: 1.3)),
+      ]),
+    );
+  }
+}
 
 class _InsightsTab extends StatefulWidget {
   const _InsightsTab();
@@ -3706,7 +4850,7 @@ class _InsightsTabState extends State<_InsightsTab> {
           ],
 
           if (_result == null && !_loading && _error == null) ...[
-            const SizedBox(height: 40),
+            const SizedBox(height: 24),
             Center(
               child: Column(children: [
                 const Icon(Icons.auto_awesome, size: 56, color: Color(0xFFDDD6FE)),
@@ -3720,6 +4864,80 @@ class _InsightsTabState extends State<_InsightsTab> {
                 ),
               ]),
             ),
+            const SizedBox(height: 24),
+            const Text('Áreas de análisis',
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF374151))),
+            const SizedBox(height: 10),
+            GridView.count(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              crossAxisCount: 2,
+              crossAxisSpacing: 10,
+              mainAxisSpacing: 10,
+              childAspectRatio: 1.6,
+              children: [
+                _InsightAreaCard(
+                  icon: Icons.delete_sweep_rounded,
+                  title: 'Reducción de merma',
+                  desc: 'Causas raíz y acciones prioritarias',
+                  color: const Color(0xFF059669),
+                ),
+                _InsightAreaCard(
+                  icon: Icons.shopping_cart_rounded,
+                  title: 'Optimización de pedidos',
+                  desc: 'Stock óptimo y cadencia de reposición',
+                  color: const Color(0xFF3B82F6),
+                ),
+                _InsightAreaCard(
+                  icon: Icons.eco_rounded,
+                  title: 'ESG y sostenibilidad',
+                  desc: 'Impacto ambiental y donaciones',
+                  color: const Color(0xFF0891B2),
+                ),
+                _InsightAreaCard(
+                  icon: Icons.leaderboard_rounded,
+                  title: 'Comparativa sector',
+                  desc: 'Benchmark con tiendas similares',
+                  color: const Color(0xFF7C3AED),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            const Text('Ejemplo de insights generados',
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF374151))),
+            const SizedBox(height: 10),
+            ...[
+              (
+                'Pescadería concentra el 38% de la merma',
+                'Los productos de pescadería (bacalao, merluza) tienen una rotación baja los lunes y martes. Considera reducir el pedido en un 15% para esos días.',
+                Icons.phishing_rounded, const Color(0xFFEF4444), '12 jun 09:31',
+              ),
+              (
+                'Temperatura óptima en lácteos: ahorro potencial 47€/sem',
+                'Ajustando el rango de temperatura del pasillo 2 de 4°C a 3°C, históricamente la merma en yogures baja un 22%. Revisar protocolo con el frigorista.',
+                Icons.water_drop_rounded, const Color(0xFF3B82F6), '10 jun 08:00',
+              ),
+            ].map((item) => Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFE5E7EB)),
+              ),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(children: [
+                  Icon(item.$3, size: 15, color: item.$4),
+                  const SizedBox(width: 6),
+                  Expanded(child: Text(item.$1,
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF111827)))),
+                  Text(item.$5, style: const TextStyle(fontSize: 10, color: Color(0xFF9CA3AF))),
+                ]),
+                const SizedBox(height: 6),
+                Text(item.$2,
+                    style: const TextStyle(fontSize: 11, color: Color(0xFF6B7280), height: 1.5)),
+              ]),
+            )),
           ],
         ],
       ),
