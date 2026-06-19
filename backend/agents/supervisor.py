@@ -1332,7 +1332,7 @@ def run_intraday_check(store_id: str) -> str:
         .eq("store_id", store_id) \
         .eq("status", "completed") \
         .gte("completed_at", (
-            __import__("datetime").datetime.now()
+            __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
             - __import__("datetime").timedelta(hours=8)
         ).isoformat()) \
         .execute().data or []
@@ -1369,6 +1369,7 @@ def run_closing(store_id: str) -> str:
     value_at_risk = brief.get("value_at_risk", 0) if brief else 0
 
     # Usar merma_log real del día en lugar de estimación del 20%
+    merma_today = []
     try:
         merma_today = database.get_merma_history(store_id, days=1)
         real_value_lost = sum(float(l.get("value_lost", 0)) for l in merma_today)
@@ -1377,7 +1378,7 @@ def run_closing(store_id: str) -> str:
     mem.record_daily_stats(
         store_id,
         value_lost=real_value_lost,
-        items_discarded=len(merma_today),  # registros reales de merma, no pendientes
+        items_discarded=len(merma_today),
     )
 
     closing_report = reporter.generate_closing_report(store_id)

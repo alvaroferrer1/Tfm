@@ -1539,7 +1539,7 @@ async def _action_pedido(update_or_query, context, user: Optional[dict], is_call
 
         text = "\n".join(lines)
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📄 Exportar PDF", callback_data="cmd:semana"),
+            [InlineKeyboardButton("📄 Exportar PDF", callback_data="cmd:semana_pdf"),
              InlineKeyboardButton("↩ Menú", callback_data="cmd:menu")],
         ])
 
@@ -2697,21 +2697,25 @@ async def _action_sistema(update_or_query, context, user: Optional[dict], is_cal
 
 async def _action_mapa(update_or_query, context, user: Optional[dict], is_callback=False):
     """Mapa visual del supermercado por pasillo."""
-    await _cmds._run_cmd_from_action(_cmds._cmd_mapa, update_or_query, context, is_callback)
+    from backend.core import chuwi_commands as _cmds_lazy
+    await _cmds_lazy._run_cmd_from_action(_cmds_lazy._cmd_mapa, update_or_query, context, is_callback)
 
 
 async def _action_historial(update_or_query, context, user: Optional[dict], is_callback=False):
     """Historial de acciones completadas."""
-    await _cmds._run_cmd_from_action(_cmds._cmd_historial, update_or_query, context, is_callback)
+    from backend.core import chuwi_commands as _cmds_lazy
+    await _cmds_lazy._run_cmd_from_action(_cmds_lazy._cmd_historial, update_or_query, context, is_callback)
 
 
 async def _action_merma7(update_or_query, context, user: Optional[dict], is_callback=False):
     """Proyección de merma a 7 días."""
-    await _cmds._run_cmd_from_action(_cmds._cmd_merma7, update_or_query, context, is_callback)
+    from backend.core import chuwi_commands as _cmds_lazy
+    await _cmds_lazy._run_cmd_from_action(_cmds_lazy._cmd_merma7, update_or_query, context, is_callback)
 
 
 async def _cmd_simular(update, context):
-    user = await _get_or_create_user(update)
+    _loop = asyncio.get_running_loop()
+    user = await _loop.run_in_executor(None, _get_user, update.effective_user.id)
     await _action_simular(update, context, user, is_callback=False)
 
 
@@ -3227,7 +3231,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if data.startswith("action_detail:"):
         action_id = data[14:]
         pending = await _loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
-        action = next((a for a in pending if a.get("id") == action_id), None)
+        action = next((a for a in pending if str(a.get("id", "")) == action_id), None)
         if not action:
             await query.edit_message_text("Esta acción ya no está pendiente.", reply_markup=_back_keyboard())
             return
@@ -3245,7 +3249,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         try:
             # Recuperar info antes de completar — guard contra doble-tap
             pending = await _loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
-            action = next((a for a in pending if a.get("id") == action_id), None)
+            action = next((a for a in pending if str(a.get("id", "")) == action_id), None)
             if not action:
                 remaining = await _loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
                 text = "✅ <b>Ya estaba completada</b>\n\nEsta acción ya fue registrada anteriormente."
@@ -3340,30 +3344,61 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             except Exception:
                 pass
 
-            # Mostrar siguiente acción pendiente
-            remaining = await _loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
-            if remaining:
-                next_a = remaining[0]
-                next_batch = next_a.get("batches") or {}
-                next_prod = (next_batch.get("products") or {}) if next_batch else {}
-                next_name = next_prod.get("name", "siguiente producto")
-                score = next_a.get("priority_score", 0)
-                icon = "🔴" if score >= 85 else "🟡"
-                text = (
-                    f"{summary}\n\n"
-                    f"Quedan <b>{len(remaining)}</b> acciones pendientes.\n"
-                    f"Siguiente {icon}: <b>{next_name}</b>"
-                )
-                keyboard = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("▶️ Ver siguiente", callback_data=f"action_detail:{next_a['id']}")],
-                    [InlineKeyboardButton("📋 Ver todas", callback_data="cmd:acciones"),
-                     InlineKeyboardButton("↩ Menú", callback_data="cmd:menu")],
-                ])
+            # Avanzar modo ruta si está activo
+            route_state = _get_conv_state(user_id)
+            if route_state["mode"] == "route_active":
+                rdata = route_state["data"]
+                rdata.setdefault("completed", []).append(action_id)
+                rdata["current_index"] = rdata.get("current_index", 0) + 1
+                _set_conv_state(user_id, "route_active", rdata)
+                action_ids = rdata.get("action_ids", [])
+                current_idx = rdata["current_index"]
+                if current_idx >= len(action_ids):
+                    _clear_conv_state(user_id)
+                    done_count = len(rdata.get("completed", []))
+                    skip_count = len(rdata.get("skipped", []))
+                    text = (f"{summary}\n\n"
+                            f"🏁 <b>RUTA COMPLETADA</b>\n"
+                            f"✅ {done_count} completadas · ⏭ {skip_count} saltadas")
+                    keyboard = _main_menu_keyboard(_is_manager(user))
+                else:
+                    route_actions = await _loop.run_in_executor(None, _get_route_actions)
+                    next_id = str(action_ids[current_idx])
+                    next_action = next((a for a in route_actions if str(a.get("id", "")) == next_id), None)
+                    if next_action:
+                        total = len(action_ids)
+                        card = _format_action_card(next_action, index=current_idx + 1, total=total)
+                        text = f"{summary}\n\n🗺 <b>Siguiente en ruta ({current_idx + 1}/{total})</b>\n\n{card}"
+                        keyboard = _action_card_keyboard(next_action, remaining=total - current_idx - 1)
+                    else:
+                        _clear_conv_state(user_id)
+                        text = f"{summary}\n\n✅ Ruta terminada."
+                        keyboard = _main_menu_keyboard(_is_manager(user))
+                await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
             else:
-                text = f"{summary}\n\n🏆 <b>¡Sin acciones pendientes!</b>\nTodo gestionado por hoy."
-                keyboard = _main_menu_keyboard(_is_manager(user))
-
-            await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+                # Mostrar siguiente acción pendiente (fuera de modo ruta)
+                remaining = await _loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
+                if remaining:
+                    next_a = remaining[0]
+                    next_batch = next_a.get("batches") or {}
+                    next_prod = (next_batch.get("products") or {}) if next_batch else {}
+                    next_name = next_prod.get("name", "siguiente producto")
+                    score = next_a.get("priority_score", 0)
+                    icon = "🔴" if score >= 85 else "🟡"
+                    text = (
+                        f"{summary}\n\n"
+                        f"Quedan <b>{len(remaining)}</b> acciones pendientes.\n"
+                        f"Siguiente {icon}: <b>{next_name}</b>"
+                    )
+                    keyboard = InlineKeyboardMarkup([
+                        [InlineKeyboardButton("▶️ Ver siguiente", callback_data=f"action_detail:{next_a['id']}")],
+                        [InlineKeyboardButton("📋 Ver todas", callback_data="cmd:acciones"),
+                         InlineKeyboardButton("↩ Menú", callback_data="cmd:menu")],
+                    ])
+                else:
+                    text = f"{summary}\n\n🏆 <b>¡Sin acciones pendientes!</b>\nTodo gestionado por hoy."
+                    keyboard = _main_menu_keyboard(_is_manager(user))
+                await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
         except Exception as e:
             await query.edit_message_text("Error al completar la acción. Inténtalo de nuevo.", reply_markup=_back_keyboard())
         return
@@ -3372,7 +3407,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if data.startswith("action_donate:"):
         action_id = data[14:]
         pending = await _loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
-        action = next((a for a in pending if a.get("id") == action_id), None)
+        action = next((a for a in pending if str(a.get("id", "")) == action_id), None)
         if not action:
             await query.edit_message_text("Acción no encontrada.", reply_markup=_back_keyboard())
             return
@@ -3412,7 +3447,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         u_name = (user.get("email") or "empleado").split("@")[0] if user else "empleado"
         try:
             pending = await _loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
-            action = next((a for a in pending if a.get("id") == action_id), None)
+            action = next((a for a in pending if str(a.get("id", "")) == action_id), None)
             if not action:
                 rem = await _loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
                 text = "✅ <b>Ya estaba completada</b>\n\nEsta donación ya fue registrada anteriormente."
@@ -3469,7 +3504,32 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 text += _streak_text(streak)
             except Exception:
                 pass
-            if remaining:
+            # Avanzar modo ruta si está activo
+            route_state_d = _get_conv_state(user_id)
+            if route_state_d["mode"] == "route_active":
+                rdata_d = route_state_d["data"]
+                rdata_d.setdefault("completed", []).append(action_id)
+                rdata_d["current_index"] = rdata_d.get("current_index", 0) + 1
+                _set_conv_state(user_id, "route_active", rdata_d)
+                action_ids_d = rdata_d.get("action_ids", [])
+                cur_idx_d = rdata_d["current_index"]
+                if cur_idx_d >= len(action_ids_d):
+                    _clear_conv_state(user_id)
+                    keyboard = _main_menu_keyboard(_is_manager(user))
+                    text += f"\n\n🏁 <b>RUTA COMPLETADA</b> — {len(rdata_d.get('completed', []))} acciones gestionadas."
+                else:
+                    route_acts_d = await _loop.run_in_executor(None, _get_route_actions)
+                    next_id_d = str(action_ids_d[cur_idx_d])
+                    next_act_d = next((a for a in route_acts_d if str(a.get("id", "")) == next_id_d), None)
+                    if next_act_d:
+                        total_d = len(action_ids_d)
+                        card_d = _format_action_card(next_act_d, index=cur_idx_d + 1, total=total_d)
+                        text += f"\n\n🗺 <b>Siguiente en ruta ({cur_idx_d + 1}/{total_d})</b>\n\n{card_d}"
+                        keyboard = _action_card_keyboard(next_act_d, remaining=total_d - cur_idx_d - 1)
+                    else:
+                        _clear_conv_state(user_id)
+                        keyboard = _main_menu_keyboard(_is_manager(user))
+            elif remaining:
                 keyboard = InlineKeyboardMarkup([
                     [InlineKeyboardButton("▶️ Siguiente acción", callback_data=f"action_detail:{remaining[0]['id']}")],
                     [InlineKeyboardButton("📋 Ver todas", callback_data="cmd:acciones"),
@@ -3493,7 +3553,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 "notes": "Escalado desde revisión — necesita acción urgente",
             }).eq("id", action_id).execute())
             pending = await _loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
-            action = next((a for a in pending if a.get("id") == action_id), None)
+            action = next((a for a in pending if str(a.get("id", "")) == action_id), None)
             if action:
                 card = _format_action_card(action)
                 keyboard = _action_card_keyboard(action, remaining=len(pending) - 1)
@@ -3512,7 +3572,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         action_id = data[23:]
         try:
             pending = await _loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
-            action = next((a for a in pending if a.get("id") == action_id), None)
+            action = next((a for a in pending if str(a.get("id", "")) == action_id), None)
             if action:
                 batch = action.get("batches") or {}
                 product = (batch.get("products") or {}) if batch else {}
@@ -3525,7 +3585,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     "notes": "Cambiado de donación a rebaja de precio",
                 }).eq("id", action_id).execute())
                 updated = await _loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
-                action = next((a for a in updated if a.get("id") == action_id), action)
+                action = next((a for a in updated if str(a.get("id", "")) == action_id), action)
                 card = _format_action_card(action)
                 keyboard = _action_card_keyboard(action, remaining=len(updated) - 1)
                 await query.edit_message_text(card, parse_mode=ParseMode.HTML, reply_markup=keyboard)
@@ -3767,7 +3827,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             action_id = payload
             try:
                 actions = await _loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
-                action = next((a for a in actions if a.get("id") == action_id), None)
+                action = next((a for a in actions if str(a.get("id", "")) == action_id), None)
             except Exception:
                 action = None
 
@@ -3810,6 +3870,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             entity_name = next((n for n, k in _DONATION_ENTITIES if k == entity_key), entity_key)
 
             state = _get_conv_state(user_id)
+            if state.get("mode") != "donation_flow" or not state.get("data", {}).get("action_id"):
+                await query.edit_message_text(
+                    "Flujo de donación expirado. Inicia de nuevo.",
+                    reply_markup=_back_keyboard()
+                )
+                return
             state_data = state.get("data", {})
             state_data.update({"step": "enter_quantity", "entity": entity_key})
             _set_conv_state(user_id, "donation_flow", state_data)
@@ -3864,7 +3930,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 donation_cost = 0.0
                 try:
                     pending_actions = await _loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
-                    matched_action = next((a for a in pending_actions if a.get("id") == action_id), None)
+                    matched_action = next((a for a in pending_actions if str(a.get("id", "")) == action_id), None)
                     if matched_action:
                         b_info = (matched_action.get("batches") or {})
                         p_info = (b_info.get("products") or {}) if b_info else {}
@@ -3901,14 +3967,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 )
             return
 
-        if step == "cancel":
-            _clear_conv_state(user_id)
-            await query.edit_message_text(
-                "Donación cancelada.",
-                reply_markup=_main_menu_keyboard(_is_manager(user))
-            )
-            return
-
     # ── Selección de cantidad de donación (botones directos) ──
     if data.startswith("donation_qty:"):
         parts = data.split(":", 2)
@@ -3925,7 +3983,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         cost_per_unit = 0.0
         try:
             actions = await _loop.run_in_executor(None, database.get_pending_actions, STORE_ID)
-            matched = next((a for a in actions if a.get("id") == action_id), None)
+            matched = next((a for a in actions if str(a.get("id", "")) == action_id), None)
             if matched:
                 cost_per_unit = float(((matched.get("batches") or {}).get("products") or {}).get("cost", 0) or 0)
         except Exception:
@@ -4127,7 +4185,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     # ── Callbacks de alertas de stock ──────────────────────────────────────────
     if data == "stock_skip":
-        await query.answer("Entendido.")
         await query.edit_message_reply_markup(reply_markup=None)
         return
 
@@ -4139,7 +4196,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             _notifier.acknowledge_alert(action_id)
         except Exception:
             pass
-        await query.answer("Entendido. Te avisaré si la situación empeora.")
         await query.edit_message_reply_markup(reply_markup=None)
         return
 
