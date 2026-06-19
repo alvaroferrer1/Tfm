@@ -80,7 +80,7 @@ Producto próximo a caducar
 
 ---
 
-## 🤖 Telegram — @ChuwiMermaOpsBot
+## 🤖 Agente Telegram — @ChuwiMermaOpsBot
 
 <div align="center">
 
