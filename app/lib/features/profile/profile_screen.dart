@@ -132,10 +132,10 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   decoration: BoxDecoration(
                     color: const Color(0xFFFEF3C7),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFFF59E0B).withValues(alpha: 0.4)),
+                    border: Border.all(color: const Color(0xFFD97706).withValues(alpha: 0.4)),
                   ),
                   child: Row(children: [
-                    const Icon(Icons.cloud_off_rounded, color: Color(0xFFF59E0B), size: 18),
+                    const Icon(Icons.cloud_off_rounded, color: Color(0xFFD97706), size: 18),
                     const SizedBox(width: 10),
                     Expanded(child: Text(
                       '$count acción${count > 1 ? 'es' : ''} pendiente${count > 1 ? 's' : ''} de sincronizar — se enviarán al conectarse.',
@@ -366,7 +366,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Introduce un ID de Telegram válido (solo números)'),
-          backgroundColor: Colors.orange,
+          backgroundColor: const Color(0xFFEA580C),
         ),
       );
       return;

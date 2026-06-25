@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 
 const _emeraldGreen = Color(0xFF059669);
 const _emeraldLight = Color(0xFF10B981);
-const _amber = Color(0xFFF59E0B);
+const _amber = Color(0xFF2563EB);      // azul corporativo (antes amarillo)
+const _warning = Color(0xFFD97706);   // ambar oscuro solo para urgencia ALTO
 const _critical = Color(0xFFEF4444);
 const _surface = Color(0xFFF9FAFB);
 const _surfaceDark = Color(0xFF111827);
@@ -95,7 +96,7 @@ final appDarkTheme = ThemeData(
 // Colores de urgencia para uso en widgets
 class UrgencyColors {
   static const critical = _critical;
-  static const high = _amber;
+  static const high = _warning;
   static const medium = Color(0xFF3B82F6);
   static const low = _emeraldGreen;
 

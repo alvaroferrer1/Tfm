@@ -507,7 +507,7 @@ class _ProductsAnalysisSummary extends StatelessWidget {
         Row(children: [
           _AnalysisStat('$totalProducts', 'productos totales', const Color(0xFF3B82F6)),
           const SizedBox(width: 10),
-          _AnalysisStat('${avgMerma.toStringAsFixed(1)}%', 'merma media', const Color(0xFFF59E0B)),
+          _AnalysisStat('${avgMerma.toStringAsFixed(1)}%', 'merma media', const Color(0xFFD97706)),
           const SizedBox(width: 10),
           _AnalysisStat('${count}', 'proveedores', const Color(0xFF059669)),
         ]),
@@ -576,7 +576,7 @@ class _SupplierProductCard extends StatelessWidget {
 
     final rankColor = avgMerma >= 15
         ? const Color(0xFFEF4444)
-        : avgMerma >= 8 ? const Color(0xFFF59E0B) : const Color(0xFF059669);
+        : avgMerma >= 8 ? const Color(0xFFD97706) : const Color(0xFF059669);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -677,7 +677,7 @@ class _ProductRow extends StatelessWidget {
 
     final mermaColor = merma >= 15
         ? const Color(0xFFEF4444)
-        : merma >= 8 ? const Color(0xFFF59E0B) : const Color(0xFF059669);
+        : merma >= 8 ? const Color(0xFFD97706) : const Color(0xFF059669);
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -719,7 +719,7 @@ class _ProductRow extends StatelessWidget {
             final altName = alt['supplier_name'] as String? ?? '';
             final altMerma = (alt['avg_merma_pct'] as num?)?.toDouble() ?? 0;
             final isBetter = altMerma < merma;
-            final altColor = isBetter ? const Color(0xFF059669) : const Color(0xFFF59E0B);
+            final altColor = isBetter ? const Color(0xFF059669) : const Color(0xFFD97706);
             return Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
@@ -991,7 +991,7 @@ class _OrderItemCard extends StatelessWidget {
 
     final riskColor = avgLoss > 2
         ? const Color(0xFFEF4444)
-        : avgLoss > 0.5 ? const Color(0xFFF59E0B) : const Color(0xFF059669);
+        : avgLoss > 0.5 ? const Color(0xFFD97706) : const Color(0xFF059669);
 
     return GestureDetector(
       onTap: onToggle,
@@ -1113,7 +1113,7 @@ class _SupplierCard extends StatelessWidget {
       rankColor = const Color(0xFFEF4444);
       decision = 'Revisar contrato';
     } else if (avgMerma >= 8) {
-      rankColor = const Color(0xFFF59E0B);
+      rankColor = const Color(0xFFD97706);
       decision = 'Monitorizar';
     } else {
       rankColor = const Color(0xFF059669);
@@ -1207,7 +1207,7 @@ class _DecisionCard extends StatelessWidget {
           _Rec(icon: Icons.warning_amber_rounded, color: const Color(0xFFEF4444),
               text: '$highRisk proveedor${highRisk > 1 ? "es" : ""} con merma ≥15%. Negocia o cambia.'),
         if (medium > 0)
-          _Rec(icon: Icons.info_outline, color: const Color(0xFFF59E0B),
+          _Rec(icon: Icons.info_outline, color: const Color(0xFFD97706),
               text: '$medium proveedor${medium > 1 ? "es" : ""} en riesgo moderado. Solicita mejoras.'),
         _Rec(icon: Icons.check_circle_outline, color: const Color(0xFF059669),
             text: 'Prioriza proveedores con merma <8%.'),

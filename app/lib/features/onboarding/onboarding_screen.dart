@@ -58,8 +58,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       body:
           'Introduce el código de tienda que te facilita tu responsable.\n\n'
           'Si no lo tienes ahora, puedes dejarlo vacío y configurarlo desde el perfil más tarde.',
-      color: Color(0xFFF59E0B),
-      bgColor: Color(0xFFFFFBEB),
+      color: Color(0xFFD97706),
+      bgColor: Color(0xFFEFF6FF),
       isStorePage: true,
     ),
   ];

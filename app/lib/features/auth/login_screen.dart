@@ -756,7 +756,7 @@ class _PasswordStrength extends StatelessWidget {
   Color _color(int s) {
     if (s <= 1) return const Color(0xFFEF4444);
     if (s == 2) return const Color(0xFFF97316);
-    if (s == 3) return const Color(0xFFF59E0B);
+    if (s == 3) return const Color(0xFFD97706);
     if (s == 4) return const Color(0xFF22C55E);
     return const Color(0xFF059669);
   }

@@ -665,7 +665,7 @@ class _BatchScanBody extends StatelessWidget {
                       } else if (score >= 85) {
                         urgencyColor = const Color(0xFFEF4444);
                       } else if (score >= 65) {
-                        urgencyColor = const Color(0xFFF59E0B);
+                        urgencyColor = const Color(0xFFD97706);
                       }
 
                       final actionIcon = {
@@ -1266,7 +1266,7 @@ class _ScanHistoryWidget extends ConsumerWidget {
             if (score >= 85) {
               scoreColor = const Color(0xFFDC2626);
             } else if (score >= 65) {
-              scoreColor = const Color(0xFFF59E0B);
+              scoreColor = const Color(0xFFD97706);
             }
 
             return ListTile(
@@ -1321,7 +1321,7 @@ void _showScanHistoryDetail(BuildContext context, Map<String, dynamic> item) {
     scoreColor = const Color(0xFFDC2626);
     scoreLabel = 'CRÍTICO';
   } else if (score >= 65) {
-    scoreColor = const Color(0xFFF59E0B);
+    scoreColor = const Color(0xFFD97706);
     scoreLabel = 'URGENTE';
   } else if (score > 0) {
     scoreColor = const Color(0xFF059669);

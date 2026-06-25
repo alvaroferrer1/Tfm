@@ -122,10 +122,10 @@ class _AccessDenied extends StatelessWidget {
               decoration: BoxDecoration(
                 color: const Color(0xFFFEF3C7),
                 shape: BoxShape.circle,
-                border: Border.all(color: const Color(0xFFF59E0B), width: 2),
+                border: Border.all(color: const Color(0xFFD97706), width: 2),
                 boxShadow: [
                   BoxShadow(
-                    color: const Color(0xFFF59E0B).withValues(alpha: 0.15),
+                    color: const Color(0xFFD97706).withValues(alpha: 0.15),
                     blurRadius: 20,
                     offset: const Offset(0, 6),
                   ),

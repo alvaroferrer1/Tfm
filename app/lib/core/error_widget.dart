@@ -25,12 +25,12 @@ class ErrorBanner extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
         color: isNetwork
-            ? const Color(0xFFFFF3CD)
+            ? const Color(0xFFEFF6FF)
             : Theme.of(context).colorScheme.errorContainer,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(
           color: isNetwork
-              ? const Color(0xFFFFC107)
+              ? const Color(0xFF2563EB)
               : Theme.of(context).colorScheme.error.withValues(alpha: 0.4),
         ),
       ),

@@ -1750,7 +1750,7 @@ class _FefoListState extends State<_FefoList> {
                 const SizedBox(width: 8),
               ],
               if (urgentItems > 0) ...[
-                _FefoStatBadge('$urgentItems', '2-3 días', const Color(0xFFF59E0B)),
+                _FefoStatBadge('$urgentItems', '2-3 días', const Color(0xFFD97706)),
                 const SizedBox(width: 8),
               ],
               const Spacer(),
@@ -1766,7 +1766,7 @@ class _FefoListState extends State<_FefoList> {
                 child: Row(children: [
                   if (todayItems > 0) Expanded(flex: todayItems, child: Container(color: const Color(0xFFEF4444))),
                   if (critItems > 0) Expanded(flex: critItems, child: Container(color: const Color(0xFFF97316))),
-                  if (urgentItems > 0) Expanded(flex: urgentItems, child: Container(color: const Color(0xFFF59E0B))),
+                  if (urgentItems > 0) Expanded(flex: urgentItems, child: Container(color: const Color(0xFFD97706))),
                   if (normalItems > 0) Expanded(flex: normalItems, child: Container(color: const Color(0xFF10B981))),
                 ]),
               ),
@@ -1828,7 +1828,7 @@ class _FefoListState extends State<_FefoList> {
                   badgeColor = const Color(0xFFF97316);
                 } else if (days <= 3) {
                   badgeText = '$days DÍAS';
-                  badgeColor = const Color(0xFFF59E0B);
+                  badgeColor = const Color(0xFFD97706);
                 } else {
                   badgeText = '$days d.';
                   badgeColor = const Color(0xFF10B981);
@@ -2054,7 +2054,7 @@ class _WarehouseQuickTab extends ConsumerWidget {
                 final unit = item['unit'] as String? ?? 'uds';
                 final statusColor = status == 'critical'
                     ? const Color(0xFFEF4444)
-                    : status == 'low' ? const Color(0xFFF59E0B) : const Color(0xFF059669);
+                    : status == 'low' ? const Color(0xFFD97706) : const Color(0xFF059669);
                 return Container(
                   margin: const EdgeInsets.only(bottom: 6),
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -2157,7 +2157,7 @@ class _InlineWarehouseCard extends ConsumerWidget {
               _WInlineStat('${batches.length}', 'lotes plano', const Color(0xFF60A5FA)),
               const SizedBox(width: 12),
               if (batchCritical > 0) _WInlineStat('$batchCritical', 'vencen hoy', const Color(0xFFF87171)),
-              if (batchUrgent > 0) _WInlineStat('$batchUrgent', 'en 3 días', const Color(0xFFFBBF24)),
+              if (batchUrgent > 0) _WInlineStat('$batchUrgent', 'en 3 días', const Color(0xFF3B82F6)),
             ]),
             data: (data) {
               final items = List<Map<String, dynamic>>.from(data['items'] ?? []);
@@ -2170,7 +2170,7 @@ class _InlineWarehouseCard extends ConsumerWidget {
                 _WInlineStat('${totalValue.toStringAsFixed(0)} €', 'valor', const Color(0xFF34D399)),
                 const SizedBox(width: 12),
                 if (criticalCount > 0) _WInlineStat('$criticalCount', 'sin stock', const Color(0xFFF87171)),
-                if (criticalCount == 0 && lowCount > 0) _WInlineStat('$lowCount', 'bajo stock', const Color(0xFFFBBF24)),
+                if (criticalCount == 0 && lowCount > 0) _WInlineStat('$lowCount', 'bajo stock', const Color(0xFF3B82F6)),
                 if (criticalCount == 0 && lowCount == 0) _WInlineStat('OK', 'todo en orden', const Color(0xFF34D399)),
               ]);
             },
@@ -2181,12 +2181,12 @@ class _InlineWarehouseCard extends ConsumerWidget {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               decoration: BoxDecoration(
-                color: batchCritical > 0 ? const Color(0xFFEF4444).withValues(alpha: 0.18) : const Color(0xFFF59E0B).withValues(alpha: 0.18),
+                color: batchCritical > 0 ? const Color(0xFFEF4444).withValues(alpha: 0.18) : const Color(0xFFD97706).withValues(alpha: 0.18),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Row(children: [
                 Icon(Icons.warning_amber_rounded, size: 13,
-                    color: batchCritical > 0 ? const Color(0xFFF87171) : const Color(0xFFFBBF24)),
+                    color: batchCritical > 0 ? const Color(0xFFF87171) : const Color(0xFF3B82F6)),
                 const SizedBox(width: 6),
                 Expanded(child: Text(
                   batchCritical > 0

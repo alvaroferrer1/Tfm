@@ -617,7 +617,7 @@ class _DashboardBodyState extends State<_DashboardBody>
                         child: _QuickAction(
                           icon: Icons.auto_awesome_rounded,
                           label: tr(ref, 'generate_brief'),
-                          color: const Color(0xFFF59E0B),
+                          color: const Color(0xFFD97706),
                           onTap: () => _runBrief(context, ref),
                         ),
                       ),
@@ -1047,7 +1047,7 @@ class _UrgencySection extends StatelessWidget {
                     total: total),
                 const SizedBox(height: 6),
                 _LegendRow(
-                    color: const Color(0xFFF59E0B),
+                    color: const Color(0xFFD97706),
                     label: 'Alto',
                     count: high - critical,
                     total: total),
@@ -1142,7 +1142,7 @@ class _DonutPainter extends CustomPainter {
 
     for (final (count, color) in [
       (critical, const Color(0xFFEF4444)),
-      (high - critical, const Color(0xFFF59E0B)),
+      (high - critical, const Color(0xFFD97706)),
       (total - high, const Color(0xFF3B82F6)),
     ]) {
       if (count <= 0) continue;
@@ -1686,7 +1686,7 @@ class _StoresComparisonCard extends ConsumerWidget {
             children: [
               Row(children: [
                 const Icon(Icons.emoji_events_rounded,
-                    color: Color(0xFFF59E0B), size: 18),
+                    color: Color(0xFFD97706), size: 18),
                 const SizedBox(width: 8),
                 const Expanded(
                     child: Text('Ranking de tiendas',
@@ -1817,7 +1817,7 @@ class _TodayProgressCard extends StatelessWidget {
         ? const Color(0xFF059669)
         : pct >= 0.5
             ? const Color(0xFF3B82F6)
-            : const Color(0xFFF59E0B);
+            : const Color(0xFFD97706);
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -1910,10 +1910,10 @@ class _PredictiveAlertsCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFF59E0B).withValues(alpha: 0.4)),
+        border: Border.all(color: const Color(0xFFD97706).withValues(alpha: 0.4)),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFFF59E0B).withValues(alpha: 0.08),
+            color: const Color(0xFFD97706).withValues(alpha: 0.08),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
@@ -1926,13 +1926,13 @@ class _PredictiveAlertsCard extends StatelessWidget {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(
-                color: const Color(0xFFF59E0B).withValues(alpha: 0.12),
+                color: const Color(0xFFD97706).withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(6),
               ),
               child: const Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(Icons.auto_graph_rounded, size: 12, color: Color(0xFFF59E0B)),
+                Icon(Icons.auto_graph_rounded, size: 12, color: Color(0xFFD97706)),
                 SizedBox(width: 4),
-                Text('PREDICCIÓN', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFFF59E0B), letterSpacing: 0.5)),
+                Text('PREDICCIÓN', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFFD97706), letterSpacing: 0.5)),
               ]),
             ),
             const SizedBox(width: 8),
@@ -1949,7 +1949,7 @@ class _PredictiveAlertsCard extends StatelessWidget {
 
             final urgency = hoursLeft < 12
                 ? const Color(0xFFEF4444)
-                : const Color(0xFFF59E0B);
+                : const Color(0xFFD97706);
             final timeLabel = hoursLeft < 24
                 ? '${hoursLeft}h'
                 : '${(hoursLeft / 24).round()}d';
@@ -2062,7 +2062,7 @@ class _ExpiringTodayCard extends StatelessWidget {
                   decoration: BoxDecoration(
                     color: isToday
                         ? const Color(0xFFDC2626)
-                        : const Color(0xFFF59E0B),
+                        : const Color(0xFFD97706),
                     shape: BoxShape.circle,
                   ),
                 ),
@@ -2212,7 +2212,7 @@ class _NoBriefCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFFBEB),
+        color: const Color(0xFFEFF6FF),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: const Color(0xFFFDE68A)),
       ),
@@ -2221,7 +2221,7 @@ class _NoBriefCard extends StatelessWidget {
           width: 36,
           height: 36,
           decoration: BoxDecoration(
-              color: const Color(0xFFF59E0B).withValues(alpha: 0.15),
+              color: const Color(0xFFD97706).withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(10)),
           child: const Icon(Icons.schedule_rounded,
               color: Color(0xFFD97706), size: 20),
@@ -2290,8 +2290,8 @@ class _PredictionsCard extends ConsumerWidget {
                   child: Row(children: events.take(3).map((e) => Container(
                     margin: const EdgeInsets.only(right: 6),
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(color: const Color(0xFFFBBF24).withValues(alpha: 0.25), borderRadius: BorderRadius.circular(6)),
-                    child: Text(e, style: const TextStyle(color: Color(0xFFFBBF24), fontSize: 10, fontWeight: FontWeight.w600)),
+                    decoration: BoxDecoration(color: const Color(0xFF3B82F6).withValues(alpha: 0.25), borderRadius: BorderRadius.circular(6)),
+                    child: Text(e, style: const TextStyle(color: Color(0xFF3B82F6), fontSize: 10, fontWeight: FontWeight.w600)),
                   )).toList()),
                 ),
               ],
@@ -2318,12 +2318,12 @@ class _PredictionsCard extends ConsumerWidget {
                         Text(date, style: const TextStyle(color: Colors.white60, fontSize: 9)),
                         const SizedBox(height: 2),
                         Icon(isHot ? Icons.wb_sunny_rounded : isRainy ? Icons.water_drop_rounded : Icons.cloud_outlined,
-                            color: isHot ? const Color(0xFFFBBF24) : isRainy ? const Color(0xFF93C5FD) : Colors.white60,
+                            color: isHot ? const Color(0xFF3B82F6) : isRainy ? const Color(0xFF93C5FD) : Colors.white60,
                             size: 16),
                         const SizedBox(height: 2),
                         Text(temp != null ? '${temp.toStringAsFixed(0)}°' : '?',
                             style: TextStyle(
-                              color: isHot ? const Color(0xFFFBBF24) : Colors.white,
+                              color: isHot ? const Color(0xFF3B82F6) : Colors.white,
                               fontSize: 11, fontWeight: FontWeight.w700)),
                       ]),
                     );
@@ -2338,7 +2338,7 @@ class _PredictionsCard extends ConsumerWidget {
                 final score = (pred['risk_score'] as num?)?.toInt() ?? 0;
                 final action = pred['recommended_preemptive_action'] as String? ?? '';
                 final scoreColor = score >= 70 ? const Color(0xFFEF4444)
-                    : score >= 50 ? const Color(0xFFFBBF24)
+                    : score >= 50 ? const Color(0xFF3B82F6)
                     : const Color(0xFF34D399);
                 return Container(
                   margin: const EdgeInsets.only(bottom: 8),
@@ -2411,7 +2411,7 @@ class _EsgMiniCard extends StatelessWidget {
           const SizedBox(width: 12),
           _EsgStat('${donationValue.toStringAsFixed(0)} €', 'Donado', Icons.volunteer_activism_rounded, const Color(0xFF3B82F6)),
           const SizedBox(width: 12),
-          _EsgStat('$donationQty uds', 'Productos salvados', Icons.save_rounded, const Color(0xFFF59E0B)),
+          _EsgStat('$donationQty uds', 'Productos salvados', Icons.save_rounded, const Color(0xFFD97706)),
           const SizedBox(width: 12),
           _EsgStat('$completedToday hoy', 'Acciones', Icons.check_circle_rounded, const Color(0xFF8B5CF6)),
         ]),
@@ -2478,7 +2478,7 @@ class _DailyProgressBar extends StatelessWidget {
             minHeight: 10,
             backgroundColor: const Color(0xFFE5E7EB),
             valueColor: AlwaysStoppedAnimation<Color>(
-              pct >= 1.0 ? const Color(0xFF059669) : pct >= 0.5 ? const Color(0xFF3B82F6) : const Color(0xFFF59E0B),
+              pct >= 1.0 ? const Color(0xFF059669) : pct >= 0.5 ? const Color(0xFF3B82F6) : const Color(0xFFD97706),
             ),
           ),
         ),
@@ -2528,7 +2528,7 @@ class _WeatherCard extends StatelessWidget {
   }
 
   Color _wxColor(int code) {
-    if (code <= 1) return const Color(0xFFF59E0B);
+    if (code <= 1) return const Color(0xFFD97706);
     if (code <= 3) return const Color(0xFF64748B);
     if (code <= 48) return const Color(0xFF94A3B8);
     if (code <= 77) return const Color(0xFF3B82F6);

@@ -1147,7 +1147,7 @@ class _SuppliersReportActions extends StatelessWidget {
                             Row(children: [
                               Text('Merma est. ${alt.$3}', style: const TextStyle(fontSize: 11, color: Color(0xFF6B7280))),
                               const SizedBox(width: 8),
-                              Text(alt.$4, style: const TextStyle(fontSize: 11, color: Color(0xFFF59E0B))),
+                              Text(alt.$4, style: const TextStyle(fontSize: 11, color: Color(0xFFD97706))),
                             ]),
                           ])),
                           TextButton(
@@ -1198,7 +1198,7 @@ class _SuppliersReportActions extends StatelessWidget {
             const SizedBox(width: 8),
             _ReportStatBox('${highRisk.length}', 'con riesgo ALTO', const Color(0xFFEF4444)),
             const SizedBox(width: 8),
-            _ReportStatBox('${avgAll.toStringAsFixed(1)}%', 'merma media', const Color(0xFFF59E0B)),
+            _ReportStatBox('${avgAll.toStringAsFixed(1)}%', 'merma media', const Color(0xFFD97706)),
           ]),
           const SizedBox(height: 14),
           if (highRisk.isNotEmpty) ...[
@@ -1693,7 +1693,7 @@ class _MermaCategoryBreakdown extends StatelessWidget {
     final sorted = byCategory.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
     final total = sorted.fold<double>(0, (s, e) => s + e.value);
     final colors = [
-      const Color(0xFFEF4444), const Color(0xFFF97316), const Color(0xFFF59E0B),
+      const Color(0xFFEF4444), const Color(0xFFF97316), const Color(0xFFD97706),
       const Color(0xFF10B981), const Color(0xFF3B82F6), const Color(0xFF8B5CF6),
     ];
 
@@ -1879,7 +1879,7 @@ class _MermaTop5 extends StatelessWidget {
               : rank == 2
                   ? const Color(0xFFF97316)
                   : rank == 3
-                      ? const Color(0xFFF59E0B)
+                      ? const Color(0xFFD97706)
                       : const Color(0xFF6B7280);
           return Padding(
             padding: const EdgeInsets.only(bottom: 12),
@@ -1978,7 +1978,7 @@ class _OrderSuggestionsTab extends ConsumerWidget {
                     ('Registra merma durante 7+ días consecutivos', Icons.date_range_rounded, const Color(0xFF3B82F6)),
                     ('Completa acciones de descuento y donación', Icons.task_alt_rounded, const Color(0xFF059669)),
                     ('El agente Kuine analiza rotación y stock', Icons.psychology_rounded, const Color(0xFF7C3AED)),
-                    ('Se generan órdenes priorizadas por proveedor', Icons.local_shipping_rounded, const Color(0xFFF59E0B)),
+                    ('Se generan órdenes priorizadas por proveedor', Icons.local_shipping_rounded, const Color(0xFFD97706)),
                   ].map((item) => Padding(
                     padding: const EdgeInsets.only(bottom: 10),
                     child: Row(children: [
@@ -2111,7 +2111,7 @@ class _OrderSuggestionsTab extends ConsumerWidget {
                           const Text('Stock crítico', style: TextStyle(color: Colors.white60, fontSize: 10)),
                           Text('$urgentCount productos',
                               style: TextStyle(
-                                  color: urgentCount > 0 ? const Color(0xFFFBBF24) : Colors.white,
+                                  color: urgentCount > 0 ? const Color(0xFF3B82F6) : Colors.white,
                                   fontSize: 14,
                                   fontWeight: FontWeight.w800)),
                         ],
@@ -2123,13 +2123,13 @@ class _OrderSuggestionsTab extends ConsumerWidget {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFFBBF24).withValues(alpha: 0.2),
+                        color: const Color(0xFF3B82F6).withValues(alpha: 0.2),
                         borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: const Color(0xFFFBBF24).withValues(alpha: 0.5)),
+                        border: Border.all(color: const Color(0xFF3B82F6).withValues(alpha: 0.5)),
                       ),
                       child: Row(
                         children: [
-                          const Icon(Icons.warning_amber_rounded, size: 14, color: Color(0xFFFBBF24)),
+                          const Icon(Icons.warning_amber_rounded, size: 14, color: Color(0xFF3B82F6)),
                           const SizedBox(width: 6),
                           Text('$urgentCount productos con stock de almacén bajo (<5 uds) — pedir con urgencia',
                               style: const TextStyle(color: Color(0xFFFDE68A), fontSize: 11)),
@@ -2298,12 +2298,12 @@ class _OrderSuggestionRow extends StatelessWidget {
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: isUrgent ? const Color(0xFFFBBF24).withValues(alpha: 0.6) : const Color(0xFFE5E7EB),
+          color: isUrgent ? const Color(0xFF3B82F6).withValues(alpha: 0.6) : const Color(0xFFE5E7EB),
           width: isUrgent ? 1.5 : 1,
         ),
         boxShadow: isUrgent ? [
           BoxShadow(
-            color: const Color(0xFFFBBF24).withValues(alpha: 0.12),
+            color: const Color(0xFF3B82F6).withValues(alpha: 0.12),
             blurRadius: 6,
             offset: const Offset(0, 2),
           ),
@@ -2724,7 +2724,7 @@ class _EsgTabState extends State<_EsgTab> {
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: const Color(0xFFFFFBEB),
+                color: const Color(0xFFEFF6FF),
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(color: const Color(0xFFFDE68A)),
               ),
@@ -3143,7 +3143,7 @@ class _EsgCo2Breakdown extends StatelessWidget {
     final cats = [
       ('🥩 Carne y Pescado', 0.38, const Color(0xFFEF4444)),
       ('🥛 Lácteos', 0.22, const Color(0xFF3B82F6)),
-      ('🍞 Panadería', 0.18, const Color(0xFFF59E0B)),
+      ('🍞 Panadería', 0.18, const Color(0xFFD97706)),
       ('🥦 Frutas y Verduras', 0.14, const Color(0xFF059669)),
       ('🧃 Otros', 0.08, const Color(0xFF8B5CF6)),
     ];
@@ -3224,7 +3224,7 @@ class _EsgCsrdRoadmap extends StatelessWidget {
         actions >= 10 ? 'Completado' : 'En progreso',
         actions >= 10,
         actions >= 10 ? Icons.check_circle_rounded : Icons.hourglass_top_rounded,
-        actions >= 10 ? const Color(0xFF059669) : const Color(0xFFF59E0B),
+        actions >= 10 ? const Color(0xFF059669) : const Color(0xFFD97706),
         'Requerido para reporting CSRD doble materialidad.',
       ),
       (
@@ -3352,7 +3352,7 @@ class _BenchmarkTab extends ConsumerWidget {
         final scoreColor = score >= 70
             ? const Color(0xFF059669)
             : score >= 40
-                ? const Color(0xFFF59E0B)
+                ? const Color(0xFFD97706)
                 : const Color(0xFFDC2626);
 
         return ListView(
@@ -3543,7 +3543,7 @@ class _BenchmarkTab extends ConsumerWidget {
                   final sc = (e.value.$2).clamp(0, 100);
                   final isYou = e.value.$3 == null;
                   final detail = e.value.$4;
-                  final color = sc >= 70 ? const Color(0xFF059669) : sc >= 45 ? const Color(0xFFF59E0B) : const Color(0xFFEF4444);
+                  final color = sc >= 70 ? const Color(0xFF059669) : sc >= 45 ? const Color(0xFFD97706) : const Color(0xFFEF4444);
                   return InkWell(
                     onTap: () => showDialog(
                       context: context,
@@ -3595,7 +3595,7 @@ class _BenchmarkTab extends ConsumerWidget {
                         Container(
                           width: 24, height: 24,
                           decoration: BoxDecoration(
-                            color: rank <= 2 ? const Color(0xFFFBBF24) : const Color(0xFFE5E7EB),
+                            color: rank <= 2 ? const Color(0xFF3B82F6) : const Color(0xFFE5E7EB),
                             shape: BoxShape.circle,
                           ),
                           child: Center(child: Text('$rank',
@@ -3651,7 +3651,7 @@ class _BenchmarkTab extends ConsumerWidget {
                     'Recuperación de valor',
                     'Subir recuperación a >35%',
                     'Completar acciones de descuento antes de caducidad',
-                    const Color(0xFFF59E0B),
+                    const Color(0xFFD97706),
                     Icons.recycling_rounded,
                   ),
                   (
@@ -4827,7 +4827,7 @@ class _InsightsTabState extends State<_InsightsTab> {
             Row(children: [
               _InsightPill(Icons.location_city_rounded, _result!['city'] as String? ?? '', const Color(0xFF0891B2)),
               const SizedBox(width: 8),
-              _InsightPill(Icons.thermostat_rounded, _result!['weather_summary'] as String? ?? '', const Color(0xFFF59E0B)),
+              _InsightPill(Icons.thermostat_rounded, _result!['weather_summary'] as String? ?? '', const Color(0xFFD97706)),
               const Spacer(),
               Text(
                 _result!['generated_at'] != null

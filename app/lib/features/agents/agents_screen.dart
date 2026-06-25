@@ -82,7 +82,7 @@ const _agentIcons = <String, IconData>{
 const _agentColors = <String, Color>{
   'orchestrator': Color(0xFF7C3AED),
   'conversational': Color(0xFF3B82F6),
-  'evaluator': Color(0xFFF59E0B),
+  'evaluator': Color(0xFFD97706),
   'validator': Color(0xFFEF4444),
   'consensus': Color(0xFF0891B2),
   'predictor': Color(0xFF4F46E5),
@@ -449,7 +449,7 @@ class _FeedItem {
     final color = score >= 85
         ? const Color(0xFFEF4444)
         : score >= 65
-            ? const Color(0xFFF59E0B)
+            ? const Color(0xFFD97706)
             : const Color(0xFF059669);
     return _FeedItem(
       agent: 'orchestrator',
@@ -618,7 +618,7 @@ class _SystemMetricsCard extends StatelessWidget {
             _MetricChip(
               label: 'Precisión IA',
               value: '${precision.toStringAsFixed(0)}% vs $baseline% base',
-              color: const Color(0xFFF59E0B),
+              color: const Color(0xFFD97706),
             ),
           ]),
           if (donationsEur > 0) ...[
@@ -855,7 +855,7 @@ class _SubagentStack extends StatelessWidget {
   const _SubagentStack({required this.anim});
 
   static const _colors = [
-    Color(0xFFFBBF24),
+    Color(0xFF3B82F6),
     Color(0xFFEF4444),
     Color(0xFF0EA5E9),
     Color(0xFF10B981),
@@ -2007,7 +2007,7 @@ class _PlaybackStep extends StatelessWidget {
 
   static const _toolColors = <String, Color>{
     'think': Color(0xFF7C3AED),
-    'evaluate_product_risk': Color(0xFFF59E0B),
+    'evaluate_product_risk': Color(0xFFD97706),
     'create_action': Color(0xFF059669),
     'calculate_discount': Color(0xFFF97316),
     'get_expiring_batches': Color(0xFF0891B2),
@@ -2129,7 +2129,7 @@ class _DecisionsTab extends ConsumerWidget {
 }
 
 const _dColors = <String, Color>{
-  'rebajar': Color(0xFFF59E0B),
+  'rebajar': Color(0xFFD97706),
   'donar': Color(0xFF059669),
   'retirar': Color(0xFFEF4444),
   'revisar': Color(0xFFD97706),

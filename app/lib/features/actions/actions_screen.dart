@@ -658,7 +658,7 @@ class _ActionsScreenState extends ConsumerState<ActionsScreen>
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text('Foto no guardada: ${e.toString().split(':').first}'),
-            backgroundColor: Colors.orange,
+            backgroundColor: const Color(0xFFEA580C),
             duration: const Duration(seconds: 3),
           ));
         }
@@ -681,7 +681,7 @@ class _ActionsScreenState extends ConsumerState<ActionsScreen>
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text('Sin conexión — acción guardada (${e2.toString().split(':').first})'),
-          backgroundColor: const Color(0xFFF59E0B),
+          backgroundColor: const Color(0xFFD97706),
           duration: const Duration(seconds: 4),
         ));
       }
@@ -1003,8 +1003,8 @@ class _ProposalCard extends StatelessWidget {
           Expanded(child: OutlinedButton(
             onPressed: onOverride,
             style: OutlinedButton.styleFrom(
-              foregroundColor: const Color(0xFFF59E0B),
-              side: const BorderSide(color: Color(0xFFF59E0B)),
+              foregroundColor: const Color(0xFFD97706),
+              side: const BorderSide(color: Color(0xFFD97706)),
               padding: const EdgeInsets.symmetric(vertical: 6),
             ),
             child: const Text('Decidir', style: TextStyle(fontSize: 12)),
@@ -1028,7 +1028,7 @@ class _ProposalCard extends StatelessWidget {
 // ── Historial Tab (rediseño) ──────────────────────────────────────────────────
 
 const _typeColors = {
-  'rebajar': Color(0xFFF59E0B),
+  'rebajar': Color(0xFFD97706),
   'donar': Color(0xFF7C3AED),
   'revisar': Color(0xFF3B82F6),
   'desechar': Color(0xFFEF4444),
@@ -1575,7 +1575,7 @@ class _SwipeableActionCard extends ConsumerWidget {
             HapticFeedback.vibrate();
             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
               content: Text('Solo los encargados pueden confirmar acciones. Avisa a tu responsable.'),
-              backgroundColor: Color(0xFFF59E0B),
+              backgroundColor: Color(0xFFD97706),
               duration: Duration(seconds: 3),
             ));
             return false;
@@ -1784,8 +1784,8 @@ class _ActionCard extends ConsumerWidget {
                   label: const Text('Ver etiqueta de descuento'),
                   onPressed: () => _showDiscountLabel(context, action),
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: const Color(0xFFF59E0B),
-                    side: const BorderSide(color: Color(0xFFF59E0B)),
+                    foregroundColor: const Color(0xFFD97706),
+                    side: const BorderSide(color: Color(0xFFD97706)),
                     padding: const EdgeInsets.symmetric(vertical: 10),
                   ),
                 ),
@@ -2062,7 +2062,7 @@ class _DiscountLabelSheetState extends State<_DiscountLabelSheet> {
   Color get _marginColor {
     if (widget.cost <= 0) return const Color(0xFF059669);
     if (_customPrice < widget.cost * 1.05) return const Color(0xFFEF4444);
-    if (_customPrice < widget.cost * 1.15) return const Color(0xFFF59E0B);
+    if (_customPrice < widget.cost * 1.15) return const Color(0xFFD97706);
     return const Color(0xFF059669);
   }
 
@@ -2115,9 +2115,9 @@ class _DiscountLabelSheetState extends State<_DiscountLabelSheet> {
               width: double.infinity,
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                color: const Color(0xFFFFFBEB),
+                color: const Color(0xFFEFF6FF),
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: const Color(0xFFFCD34D), width: 2),
+                border: Border.all(color: const Color(0xFF93C5FD), width: 2),
               ),
               child: Column(
                 children: [
@@ -2235,7 +2235,7 @@ class _DiscountLabelSheetState extends State<_DiscountLabelSheet> {
                           'Precio especial por proximidad a caducidad.';
                       Share.share(text);
                     },
-                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFF59E0B), foregroundColor: Colors.white),
+                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFD97706), foregroundColor: Colors.white),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -2283,7 +2283,7 @@ class _DailyProgressHeader extends ConsumerWidget {
         ? const Color(0xFF059669)
         : pct >= 0.5
             ? const Color(0xFF3B82F6)
-            : const Color(0xFFF59E0B);
+            : const Color(0xFFD97706);
 
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),

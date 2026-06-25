@@ -87,7 +87,7 @@ const _categoryIcons = <String, IconData>{
 };
 
 const _categoryColors = <String, Color>{
-  'panaderia': Color(0xFFF59E0B),
+  'panaderia': Color(0xFFD97706),
   'lacteos': Color(0xFF3B82F6),
   'carne': Color(0xFFEF4444),
   'carniceria': Color(0xFFEF4444),
@@ -486,7 +486,7 @@ class _WarehouseItemCard extends StatelessWidget {
     final statusColor = status == 'critical'
         ? const Color(0xFFEF4444)
         : status == 'low'
-            ? const Color(0xFFF59E0B)
+            ? const Color(0xFFD97706)
             : const Color(0xFF059669);
 
     final catColor = _catColor(cat);
@@ -638,7 +638,7 @@ class _CategoryTab extends StatelessWidget {
       final borderColor = criticalInCat > 0
           ? const Color(0xFFEF4444)
           : lowInCat > 0
-              ? const Color(0xFFF59E0B)
+              ? const Color(0xFFD97706)
               : const Color(0xFF059669);
 
       // Top 3 items sorted by value desc
@@ -768,9 +768,9 @@ class _CategoryCardState extends State<_CategoryCard> {
               if (widget.lowInCat > 0) ...[
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(color: const Color(0xFFF59E0B).withValues(alpha: 0.1), borderRadius: BorderRadius.circular(4)),
+                  decoration: BoxDecoration(color: const Color(0xFFD97706).withValues(alpha: 0.1), borderRadius: BorderRadius.circular(4)),
                   child: Text('${widget.lowInCat} bajo${widget.lowInCat > 1 ? "s" : ""}',
-                      style: const TextStyle(fontSize: 10, color: Color(0xFFF59E0B), fontWeight: FontWeight.w700)),
+                      style: const TextStyle(fontSize: 10, color: Color(0xFFD97706), fontWeight: FontWeight.w700)),
                 ),
                 const SizedBox(width: 6),
               ],
@@ -817,7 +817,7 @@ class _CategoryCardState extends State<_CategoryCard> {
             final unit = item['unit'] as String? ?? 'uds';
             final statusColor = status == 'critical'
                 ? const Color(0xFFEF4444)
-                : status == 'low' ? const Color(0xFFF59E0B) : const Color(0xFF059669);
+                : status == 'low' ? const Color(0xFFD97706) : const Color(0xFF059669);
             return Padding(
               padding: const EdgeInsets.fromLTRB(14, 2, 14, 2),
               child: Row(children: [
