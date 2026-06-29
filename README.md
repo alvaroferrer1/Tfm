@@ -14,7 +14,7 @@
 ![Tests](https://img.shields.io/badge/Tests-774%2F774%20✓-brightgreen?style=for-the-badge)
 ![Agentes](https://img.shields.io/badge/Agentes%20IA-12-006644?style=for-the-badge)
 ![Modelos](https://img.shields.io/badge/Claude-Opus%20·%20Sonnet%20·%20Haiku-7C3AED?style=for-the-badge)
-![Coste](https://img.shields.io/badge/Coste%20real-0.80%20EUR%2Fmes-F59E0B?style=for-the-badge)
+![Coste](https://img.shields.io/badge/Coste%20real-22--94%20EUR%2Fmes-F59E0B?style=for-the-badge)
 ![Precisión](https://img.shields.io/badge/Precisión-100%25-green?style=for-the-badge)
 
 </div>
@@ -215,8 +215,8 @@ Kuine (Opus 4.7)          ← orquestador, 16 tools, 20 iter, extended thinking
 | 🛡️ Ataques adversariales bloqueados | **23 / 23** |
 | 💰 Merma identificada (datos reales) | **483,95 EUR** |
 | ✅ Acciones completadas | **45** |
-| 💸 Coste operativo real/mes | **~0,80 EUR** (con prompt caching) |
-| 📈 ROI estimado | **> 500:1** |
+| 💸 Coste operativo real/mes | **22-94 EUR/mes** según tamaño de tienda |
+| 📈 ROI estimado | **9-33:1** (tienda pequeña → grande, fuente: AECOC 2019 + INE 2022) |
 
 </div>
 
@@ -225,7 +225,7 @@ Kuine (Opus 4.7)          ← orquestador, 16 tools, 20 iter, extended thinking
 | Criterio | **MermaOps** | Winnow V2 | Orbisk | Manual |
 |----------|-------------|-----------|--------|--------|
 | Coste implantación | **0 EUR** | >20.000 EUR | >15.000 EUR | 0 EUR |
-| Coste operativo/mes | **~0,80 EUR** | ~300 EUR | ~250 EUR | ~120 EUR |
+| Coste operativo/mes | **22-94 EUR** | ~300 EUR | ~250 EUR | ~120 EUR |
 | Hardware requerido | **Ninguno** | Báscula+cámara | Cámara+servidor | Ninguno |
 | Autonomía 24/7 | **Sí (15 crons)** | Parcial | Parcial | No |
 | Normativa CSRD | **Sí (RAG)** | No | No | No |
@@ -245,52 +245,6 @@ Scheduler   APScheduler · 15 jobs cron 07:00–21:30
 PDF         fpdf2 · 6 tipos de PDF generados server-side
 Clima       Open-Meteo API · Sin API key · Coordenadas GPS tienda
 Tests       pytest · 774/774 · < 2s · Sin conexión real
-```
-
----
-
-## ⚡ Quick Start
-
-### 1. Variables de entorno
-
-```bash
-cp .env.example .env
-```
-
-```env
-ANTHROPIC_API_KEY=sk-ant-...
-SUPABASE_URL=https://XXXX.supabase.co
-SUPABASE_KEY=eyJ...
-SUPABASE_SERVICE_KEY=eyJ...
-TELEGRAM_BOT_TOKEN=123456:ABC...
-STORE_ID=demo-store-001
-APP_PORT=8001
-```
-
-### 2. Instalar y arrancar
-
-```bash
-pip install -r requirements.txt
-make seed        # datos demo
-make start       # verifica .env → Supabase → Telegram → arranca en puerto 8001
-```
-
-### 3. App Flutter
-
-```bash
-make flutter-run   # imprime el comando con variables del .env
-```
-
-### Comandos útiles
-
-```bash
-make start          # verificar + arrancar backend
-make verify         # solo verificar sin arrancar
-make check          # diagnóstico completo (con backend corriendo)
-make seed           # datos demo
-make advance N=2    # simula 2 días de paso del tiempo
-make brief          # fuerza generación de brief ahora
-make test           # 774 tests
 ```
 
 ---
@@ -320,8 +274,9 @@ mermaops/
 │   └── tests/                 # 774 tests
 ├── app/                       # Flutter — 9 pantallas
 ├── docs/
+│   ├── MermaOps — Sistema Multi-Agente de IA · TFM 2026.pdf  # Documento TFM principal
 │   └── pdf/
-│       └── MermaOps_Sistema_Completo.pdf   # Documentación técnica completa
+│       └── MermaOps_Sistema_Completo.pdf   # Documentación técnica detallada
 ├── generate_master_pdf.py     # Generador del PDF técnico
 ├── Makefile
 └── CLAUDE.md
@@ -355,9 +310,10 @@ Deducción fiscal calculada al instante · CO2 evitado registrado · CSRD cubier
 
 ## 📄 Documentación técnica
 
-El PDF completo del sistema (29 páginas, con capturas reales, diagramas y explicación de todos los agentes) está disponible en:
-
-👉 [`docs/pdf/MermaOps_Sistema_Completo.pdf`](docs/pdf/MermaOps_Sistema_Completo.pdf)
+| Documento | Descripción |
+|-----------|-------------|
+| 📘 [`docs/MermaOps — Sistema Multi-Agente de IA · TFM 2026.pdf`](docs/MermaOps%20—%20Sistema%20Multi-Agente%20de%20IA%20·%20TFM%202026.pdf) | **Documento principal TFM** — arquitectura completa, resultados reales, tabla de viabilidad económica por tamaño de tienda, comparativa de mercado, ESG CSRD 2026 |
+| 📗 [`docs/pdf/MermaOps_Sistema_Completo.pdf`](docs/pdf/MermaOps_Sistema_Completo.pdf) | Documentación técnica detallada — 20 páginas, capturas reales de la app, desglose de agentes y API |
 
 ---
 
