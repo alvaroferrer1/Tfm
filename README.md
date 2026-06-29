@@ -308,6 +308,27 @@ Deducción fiscal calculada al instante · CO2 evitado registrado · CSRD cubier
 
 ---
 
+## 📑 Vista previa — TFM 2026
+
+<div align="center">
+
+<table>
+<tr>
+<td align="center" valign="top">
+<img src="docs/screenshots_now/pdf_app.png" width="380"/><br/>
+<sub>Arquitectura multi-agente · Kuine · Chuwi · Scheduler</sub>
+</td>
+<td align="center" valign="top">
+<img src="docs/screenshots_now/pdf_backcover.png" width="380"/><br/>
+<sub>Contraportada · KPIs reales · Cumplimiento normativo</sub>
+</td>
+</tr>
+</table>
+
+</div>
+
+---
+
 ## 📄 Documentación técnica
 
 | Documento | Descripción |
